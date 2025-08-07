@@ -57,6 +57,21 @@ contextBridge.exposeInMainWorld('api', {
   
   // Smart Prompts setting APIs
   getSmartPromptsSetting: () => ipcRenderer.invoke('getSmartPromptsSetting'),
-  setSmartPromptsSetting: (enabled) => ipcRenderer.invoke('setSmartPromptsSetting', enabled)
+  setSmartPromptsSetting: (enabled) => ipcRenderer.invoke('setSmartPromptsSetting', enabled),
+  
+  // Auto-updater APIs
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  
+  // Listen for update events from main process
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on('update-available', (event, version) => callback(version));
+  },
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.on('update-downloaded', (event, version) => callback(version));
+  },
+  onDownloadProgress: (callback) => {
+    ipcRenderer.on('download-progress', (event, progress) => callback(progress));
+  }
   // Add more functions here as you expose them in main.js
 });
