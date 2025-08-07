@@ -1,0 +1,77 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Production builds
+dist/
+build/
+
+# Environment variables (NEVER commit these!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# API Keys and credentials (NEVER commit these!)
+*api_key*
+*API_KEY*
+*secret*
+*SECRET*
+*.pem
+*.key
+*.crt
+
+# Database files (customer data)
+*.db
+*.sqlite
+*.sqlite3
+appdata.db
+backend/appdata.db
+
+# Logs
+*.log
+logs/
+backend/*.log
+backend/*.txt
+backend/cliniko_*.log
+backend/cliniko_*.txt
+
+# Data files that might contain customer info
+backend/purchase_requests.json
+backend/receipt_log.json
+backend/pr_counter.txt
+backend/MasterFile.xlsx
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Electron build artifacts
+out/
+dist-electron/
+
+# Test files with real data
+test_results/
+*.test.db
+
+# Uploads and user files
+uploads/
+backend/uploads/
+!backend/uploads/.gitkeep
+
+# Backup files
+*.backup
+backups/

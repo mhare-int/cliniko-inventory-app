@@ -1,0 +1,68 @@
+.tabsnav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background-color: #006bb6; /* nice blue */
+  border-radius: 6px;
+  color: white;
+}
+
+.tabsnav__links {
+  display: flex;
+  gap: 10px;
+}
+
+.tabsnav__link {
+  color: white;
+  padding: 10px 18px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+  transition: background-color 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  line-height: 1;
+}
+
+.tabsnav__link:hover {
+  background-color: #004a86;
+}
+
+.tabsnav__link.active {
+  background-color: #004a86;
+  font-weight: 700;
+}
+
+.tabsnav__user {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+  text-align: center;
+}
+
+.tabsnav__welcome {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.tabsnav__btn {
+  background-color: #004a86;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 5px;
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.3s;
+}
+
+.tabsnav__btn:hover {
+  background-color: #00315a;
+}

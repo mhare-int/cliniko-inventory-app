@@ -1,0 +1,63 @@
+{
+  "name": "goodlife-stockapp",
+  "productName": "Goodlife StockApp",
+  "version": "1.0.0",
+  "description": "Cliniko App packaged with Electron.",
+  "author": "The Good Life Stok App",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "bcryptjs": "^3.0.2",
+    "electron-updater": "^6.6.2",
+    "exceljs": "^4.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "react-select": "^5.10.1",
+    "sqlite3": "^5.1.7",
+    "xlsx": "^0.18.5"
+  },
+  "main": "main.js",
+  "scripts": {
+    "electron": "electron .",
+    "package": "electron-builder --win --x64",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "files": [
+      "main.js",
+      "backend/**",
+      "client/build/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/appdata.db",
+        "to": "backend/appdata.db"
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "backend/*.js",
+      "backend/node_modules/express/**",
+      "backend/node_modules/cors/**",
+      "backend/node_modules/jsonwebtoken/**",
+      "backend/node_modules/sqlite3/**",
+      "backend/node_modules/bcryptjs/**",
+      "backend/node_modules/body-parser/**"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^37.2.3",
+    "electron-builder": "^26.0.12"
+  }
+}
