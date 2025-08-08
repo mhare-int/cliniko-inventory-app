@@ -227,106 +227,97 @@ function MasterStockList() {
     <div style={{ maxWidth: 1200, margin: "20px auto", padding: 20, background: "#fff", borderRadius: 8 }}>
       <h2 style={{ textAlign: "center", marginBottom: 20 }}>Master Stock List</h2>
 
-      {/* Custom upload UI */}
-      <div style={{
-        display: "flex",
-        alignItems: "flex-end",
-        gap: 16,
-        marginBottom: 20,
-        justifyContent: "flex-start",
-        flexWrap: "wrap"
-      }}>
-        {/* Choose File Button */}
+      {/* Custom upload UI - Single horizontal line */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 18, marginBottom: 20, minHeight: 48 }}>
+        {/* Choose File Button - 33% */}
         <button
           type="button"
           onClick={handleFakeButtonClick}
           style={{
             background: "#e8f0fe",
             color: "#1867c0",
-            minWidth: 120,
-            height: 44,
-            borderRadius: 8,
-            border: "1.5px solid #1867c0",
-            fontWeight: 700,
-            fontSize: 16,
+            padding: "0 16px",
+            borderRadius: 4,
+            border: "1px solid #1867c0",
+            fontWeight: 600,
+            fontSize: "1em",
             cursor: "pointer",
-            padding: "0 18px",
+            boxSizing: "border-box",
+            width: "33%",
+            height: 48,
             display: "flex",
             alignItems: "center",
-            boxSizing: "border-box"
+            justifyContent: "center"
           }}
         >
           Choose File
         </button>
         
-        {/* Filename field */}
-        <div style={{
-          minWidth: 260,
-          maxWidth: 400,
-          height: 44,
-          display: "flex",
-          alignItems: "center",
-          fontWeight: 700,
-          fontSize: 16,
+        {/* Filename field - 33% */}
+        <span style={{
+          fontSize: "1em",
           color: fileInput ? "#222" : "#999",
           fontStyle: fileInput ? "normal" : "italic",
           overflow: "hidden",
           whiteSpace: "nowrap",
           textOverflow: "ellipsis",
           background: "#f6fafd",
-          borderRadius: 8,
-          padding: "0 14px",
-          border: "1.5px solid #e3e3e3",
+          borderRadius: 4,
+          border: "1px solid #ccc",
           boxSizing: "border-box",
-          userSelect: "text"
+          width: "33%",
+          display: "flex",
+          alignItems: "center",
+          height: 48,
+          paddingLeft: 12,
+          paddingRight: 12
         }}>
           {fileInput ? fileInput.name : "No file chosen"}
-        </div>
+        </span>
         
-        {/* Upload Button */}
+        {/* Upload Button - 20% */}
         <button
           onClick={handleUploadClick}
           disabled={uploading}
           style={{
-            padding: "0 32px",
-            height: 44,
-            fontSize: 16,
-            fontWeight: 700,
-            background: "#1867c0",
+            padding: "0 16px",
+            fontSize: "1em",
+            fontWeight: 600,
+            background: uploading ? "#999" : "#1867c0",
             color: "#fff",
             border: "none",
-            borderRadius: 8,
-            boxShadow: "0 1px 4px rgba(24,103,192,0.09)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            minWidth: 320,
+            borderRadius: 4,
             cursor: uploading ? "wait" : "pointer",
             transition: "background 0.2s",
-            boxSizing: "border-box"
+            boxSizing: "border-box",
+            width: "20%",
+            height: 48,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center"
           }}
         >
           {uploading ? "Uploading..." : "Update Reorder Levels from File"}
         </button>
         
-        {/* Small Template Button */}
+        {/* Small Template Button - 14% */}
         <button
           onClick={handleDownloadTemplate}
           style={{
             background: "#f0f9ff",
             color: "#0369a1",
-            height: 36,
-            borderRadius: 6,
+            padding: "0 12px",
+            borderRadius: 4,
             border: "1px solid #0369a1",
             fontWeight: 600,
-            fontSize: 14,
+            fontSize: "1em",
             cursor: "pointer",
-            padding: "0 12px",
+            boxSizing: "border-box",
+            width: "14%",
+            height: 48,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
-            boxSizing: "border-box"
+            justifyContent: "center"
           }}
         >
           📥 Template

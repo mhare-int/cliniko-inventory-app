@@ -23,8 +23,10 @@
     "dist": "electron-builder",
     "validate-db": "node validate-database.js",
     "validate-dist-db": "node validate-dist-db.js",
+    "clean-db": "node clean-database-for-dist.js",
     "pre-dist": "npm run validate-db && npm run validate-dist-db",
-    "build-validated": "./build-with-validation.sh"
+    "build-validated": "./build-with-validation.sh",
+    "build-clean": "npm run clean-db && npm run build-validated"
   },
   "build": {
     "appId": "com.goodlife.stockapp",
