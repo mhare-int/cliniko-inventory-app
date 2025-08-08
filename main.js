@@ -427,6 +427,24 @@ ipcMain.handle('updateReorderLevels', async (event, updates) => {
   return await db.updateReorderLevels(updates);
 });
 
+ipcMain.handle('updateReorderLevelsFromFile', async (event, fileData) => {
+  try {
+    return await db.updateReorderLevelsFromFile(fileData);
+  } catch (err) {
+    logErrorToFile('updateReorderLevelsFromFile error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err && err.error ? err.error : 'Failed to update reorder levels from file', details: err.details || err.message || err };
+  }
+});
+
+ipcMain.handle('generateReorderLevelsTemplate', async () => {
+  try {
+    return await db.generateReorderLevelsTemplate();
+  } catch (err) {
+    logErrorToFile('generateReorderLevelsTemplate error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err && err.error ? err.error : 'Failed to generate template', details: err.details || err.message || err };
+  }
+});
+
 ipcMain.handle('updateProductReorderLevel', async (event, product_id, new_level) => {
   return await db.updateProductReorderLevel(product_id, new_level);
 });

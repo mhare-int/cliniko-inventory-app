@@ -37,8 +37,17 @@ function MasterStockList() {
     setUploadMessage("");
     try {
       if (!window.api || !window.api.updateReorderLevelsFromFile) throw new Error("updateReorderLevelsFromFile not available");
-      const message = await window.api.updateReorderLevelsFromFile(fileInput);
-      setUploadMessage(message || "Upload successful.");
+      
+      // Read file content as ArrayBuffer
+      const arrayBuffer = await fileInput.arrayBuffer();
+      const fileData = {
+        name: fileInput.name,
+        content: Array.from(new Uint8Array(arrayBuffer)), // Convert to regular array for IPC
+        type: fileInput.type
+      };
+      
+      const result = await window.api.updateReorderLevelsFromFile(fileData);
+      setUploadMessage(result.message || "Upload successful.");
       fetchProducts();
     } catch (err) {
       setUploadMessage(err?.error || err?.message || "Upload failed. Please check your file.");
@@ -46,6 +55,32 @@ function MasterStockList() {
     setUploading(false);
     setFileInput(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const result = await window.api.generateReorderLevelsTemplate();
+      if (result.error) {
+        setUploadMessage(result.error);
+        return;
+      }
+      
+      // Create blob and download file
+      const blob = new Blob([result.content], { type: result.mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      setUploadMessage("Template downloaded successfully!");
+    } catch (err) {
+      setUploadMessage("Failed to download template.");
+      console.error("Template download error:", err);
+    }
   };
 
   useEffect(() => {
@@ -198,8 +233,33 @@ function MasterStockList() {
         alignItems: "flex-end",      // <--- BOTTOM ALIGNED!
         gap: 16,
         marginBottom: 20,
-        justifyContent: "flex-start"
+        justifyContent: "flex-start",
+        flexWrap: "wrap"  // Allow wrapping on smaller screens
       }}>
+        {/* Download Template Button */}
+        <button
+          onClick={handleDownloadTemplate}
+          style={{
+            background: "#f0f9ff",
+            color: "#0369a1",
+            minWidth: 140,
+            height: 44,
+            borderRadius: 8,
+            border: "1.5px solid #0369a1",
+            fontWeight: 700,
+            fontSize: 16,
+            cursor: "pointer",
+            padding: "0 18px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
+            boxSizing: "border-box"
+          }}
+        >
+          📥 Download Template
+        </button>
+        
         {/* Choose File Button */}
         <button
           type="button"
@@ -270,11 +330,39 @@ function MasterStockList() {
         >
           {uploading ? "Uploading..." : "Update Reorder Levels from File"}
         </button>
+      </div>
+      
+      {/* Instructions and upload message */}
+      <div style={{ marginBottom: 20 }}>
         {uploadMessage && (
-          <span style={{ marginLeft: 10, color: uploadMessage.includes("failed") ? "red" : "green" }}>
+          <div style={{ 
+            marginBottom: 10,
+            color: uploadMessage.includes("failed") || uploadMessage.includes("error") ? "red" : "green",
+            fontWeight: 600,
+            fontSize: 14
+          }}>
             {uploadMessage}
-          </span>
+          </div>
         )}
+        <div style={{ 
+          fontSize: 14, 
+          color: "#666", 
+          background: "#f8f9fa", 
+          padding: "12px 16px", 
+          borderRadius: 8,
+          border: "1px solid #e9ecef"
+        }}>
+          <strong>How to use:</strong>
+          <ol style={{ margin: "8px 0 0 20px", padding: 0 }}>
+            <li>Click "Download Template" to get a CSV with all your current products</li>
+            <li>Open the CSV file and update the "Reorder Level" column as needed</li>
+            <li>Save the file and click "Choose File" to select it</li>
+            <li>Click "Update Reorder Levels from File" to apply the changes</li>
+          </ol>
+          <div style={{ marginTop: 8, fontSize: 13, color: "#888" }}>
+            <strong>Supported formats:</strong> .csv, .xlsx, .xls
+          </div>
+        </div>
       </div>
 
       {/* Hidden file input */}

@@ -1367,6 +1367,165 @@ function updateProductReorderLevel(product_id, new_level) {
 module.exports.updateReorderLevels = updateReorderLevels;
 module.exports.updateProductReorderLevel = updateProductReorderLevel;
 
+// Update reorder levels from uploaded file (Excel/CSV)
+function updateReorderLevelsFromFile(fileData) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!fileData || !fileData.content || !fileData.name) {
+        return reject({ error: 'Invalid file data' });
+      }
+
+      // Convert array back to Buffer
+      const buffer = Buffer.from(fileData.content);
+      const fileName = fileData.name.toLowerCase();
+      
+      let worksheet;
+      let updates = [];
+      
+      if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        // Handle Excel files
+        const XLSX = require('xlsx');
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        worksheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+      } else if (fileName.endsWith('.csv')) {
+        // Handle CSV files
+        const csvContent = buffer.toString('utf8');
+        const lines = csvContent.split('\n').filter(line => line.trim());
+        if (lines.length < 2) {
+          return reject({ error: 'CSV file must have at least a header row and one data row' });
+        }
+        
+        const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+        worksheet = lines.slice(1).map(line => {
+          const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] || '';
+          });
+          return row;
+        });
+      } else {
+        return reject({ error: 'Unsupported file format. Please use .xlsx, .xls, or .csv files.' });
+      }
+      
+      // Process the worksheet data
+      // Expected columns: Product Name, Product ID, Cliniko ID, Reorder Level
+      // We'll be flexible about column names
+      for (const row of worksheet) {
+        let cliniko_id = null;
+        let reorder_level = null;
+        let product_name = null;
+        
+        // Try to find cliniko_id from various possible column names
+        const clinikoIdFields = ['cliniko_id', 'Cliniko ID', 'ID', 'Product ID', 'cliniko id'];
+        for (const field of clinikoIdFields) {
+          if (row[field] !== undefined && row[field] !== '') {
+            cliniko_id = row[field];
+            break;
+          }
+        }
+        
+        // Try to find product name from various possible column names
+        const nameFields = ['name', 'Name', 'Product Name', 'product_name', 'Product'];
+        for (const field of nameFields) {
+          if (row[field] !== undefined && row[field] !== '') {
+            product_name = row[field];
+            break;
+          }
+        }
+        
+        // Try to find reorder level from various possible column names
+        const reorderFields = ['reorder_level', 'Reorder Level', 'Reorder', 'Min Stock', 'Minimum Stock'];
+        for (const field of reorderFields) {
+          if (row[field] !== undefined && row[field] !== '') {
+            const parsed = parseInt(row[field]);
+            if (!isNaN(parsed) && parsed >= 0) {
+              reorder_level = parsed;
+              break;
+            }
+          }
+        }
+        
+        // If we have either cliniko_id or product_name, and a reorder_level, try to update
+        if ((cliniko_id || product_name) && reorder_level !== null) {
+          // If we only have product name, try to find the cliniko_id
+          if (!cliniko_id && product_name) {
+            await new Promise((resolveFind) => {
+              db.get('SELECT cliniko_id FROM products WHERE name = ?', [product_name], (err, productRow) => {
+                if (!err && productRow) {
+                  cliniko_id = productRow.cliniko_id;
+                }
+                resolveFind();
+              });
+            });
+          }
+          
+          if (cliniko_id) {
+            updates.push({
+              cliniko_id: cliniko_id,
+              reorder_level: reorder_level
+            });
+          }
+        }
+      }
+      
+      if (updates.length === 0) {
+        return reject({ error: 'No valid product updates found in file. Please check column names and data format.' });
+      }
+      
+      // Use existing updateReorderLevels function to perform the updates
+      const result = await updateReorderLevels(updates);
+      resolve({ 
+        message: `Successfully updated reorder levels for ${updates.length} products.`,
+        updatedCount: updates.length 
+      });
+      
+    } catch (error) {
+      console.error('Error processing file:', error);
+      reject({ error: 'Failed to process file', details: error.message });
+    }
+  });
+}
+
+module.exports.updateReorderLevelsFromFile = updateReorderLevelsFromFile;
+
+// Generate CSV template for reorder levels
+function generateReorderLevelsTemplate() {
+  return new Promise((resolve, reject) => {
+    try {
+      // Get all products with their current data
+      db.all('SELECT cliniko_id, name, reorder_level FROM products ORDER BY name', [], (err, products) => {
+        if (err) {
+          return reject({ error: 'Failed to fetch products', details: err.message });
+        }
+        
+        // Create CSV content
+        let csvContent = 'Cliniko ID,Product Name,Reorder Level\n';
+        
+        products.forEach(product => {
+          const clinikoId = product.cliniko_id || '';
+          const productName = `"${(product.name || '').replace(/"/g, '""')}"`;  // Escape quotes
+          const reorderLevel = product.reorder_level || 0;
+          
+          csvContent += `${clinikoId},${productName},${reorderLevel}\n`;
+        });
+        
+        resolve({
+          success: true,
+          filename: `reorder_levels_template_${new Date().toISOString().slice(0, 10)}.csv`,
+          content: csvContent,
+          mimeType: 'text/csv'
+        });
+      });
+    } catch (error) {
+      reject({ error: 'Failed to generate template', details: error.message });
+    }
+  });
+}
+
+module.exports.generateReorderLevelsTemplate = generateReorderLevelsTemplate;
+
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 const { runMigrations, backupDatabase } = require('./migrations');
@@ -2465,6 +2624,8 @@ module.exports = {
   deleteUser,
   changeUserPassword,
   updateReorderLevels,
+  updateReorderLevelsFromFile,
+  generateReorderLevelsTemplate,
   updateProductReorderLevel,
   getProductSales,
   getSalesInsights,

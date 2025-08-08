@@ -1,6 +1,6 @@
 {
   "name": "cliniko-inventory-app",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Healthcare Inventory Management System",
   "main": "main.js",
   "scripts": {

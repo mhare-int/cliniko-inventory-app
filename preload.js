@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('api', {
   getAllUsers: () => ipcRenderer.invoke('getAllUsers'),
   addUser: (username, password_hash, is_admin) => ipcRenderer.invoke('addUser', username, password_hash, is_admin),
   updateReorderLevels: (updates) => ipcRenderer.invoke('updateReorderLevels', updates),
+  updateReorderLevelsFromFile: (fileData) => ipcRenderer.invoke('updateReorderLevelsFromFile', fileData),
+  generateReorderLevelsTemplate: () => ipcRenderer.invoke('generateReorderLevelsTemplate'),
   updateProductReorderLevel: (product_id, new_level) => ipcRenderer.invoke('updateProductReorderLevel', product_id, new_level),
   createPurchaseRequest: (data) => ipcRenderer.invoke('createPurchaseRequest', data),
   getPurchaseRequests: (active_only, group_by) => ipcRenderer.invoke('getPurchaseRequests', active_only, group_by),
