@@ -230,36 +230,12 @@ function MasterStockList() {
       {/* Custom upload UI */}
       <div style={{
         display: "flex",
-        alignItems: "flex-end",      // <--- BOTTOM ALIGNED!
+        alignItems: "flex-end",
         gap: 16,
         marginBottom: 20,
         justifyContent: "flex-start",
-        flexWrap: "wrap"  // Allow wrapping on smaller screens
+        flexWrap: "wrap"
       }}>
-        {/* Download Template Button */}
-        <button
-          onClick={handleDownloadTemplate}
-          style={{
-            background: "#f0f9ff",
-            color: "#0369a1",
-            minWidth: 140,
-            height: 44,
-            borderRadius: 8,
-            border: "1.5px solid #0369a1",
-            fontWeight: 700,
-            fontSize: 16,
-            cursor: "pointer",
-            padding: "0 18px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px",
-            boxSizing: "border-box"
-          }}
-        >
-          📥 Download Template
-        </button>
-        
         {/* Choose File Button */}
         <button
           type="button"
@@ -282,6 +258,7 @@ function MasterStockList() {
         >
           Choose File
         </button>
+        
         {/* Filename field */}
         <div style={{
           minWidth: 260,
@@ -305,6 +282,7 @@ function MasterStockList() {
         }}>
           {fileInput ? fileInput.name : "No file chosen"}
         </div>
+        
         {/* Upload Button */}
         <button
           onClick={handleUploadClick}
@@ -329,6 +307,29 @@ function MasterStockList() {
           }}
         >
           {uploading ? "Uploading..." : "Update Reorder Levels from File"}
+        </button>
+        
+        {/* Small Template Button */}
+        <button
+          onClick={handleDownloadTemplate}
+          style={{
+            background: "#f0f9ff",
+            color: "#0369a1",
+            height: 36,
+            borderRadius: 6,
+            border: "1px solid #0369a1",
+            fontWeight: 600,
+            fontSize: 14,
+            cursor: "pointer",
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "6px",
+            boxSizing: "border-box"
+          }}
+        >
+          📥 Template
         </button>
       </div>
       
