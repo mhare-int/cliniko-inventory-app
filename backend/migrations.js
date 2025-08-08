@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 6;
+const CURRENT_DB_VERSION = 5;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -218,46 +218,6 @@ const migrations = [
         }));
         
         Promise.all(promises).then(() => resolve()).catch(reject);
-      });
-    }
-  },
-  {
-    version: 6,
-    description: "Deduplicate products and enforce unique cliniko_id",
-    up: (db) => {
-      return new Promise((resolve, reject) => {
-        db.serialize(() => {
-          db.run('BEGIN TRANSACTION');
-
-          // Delete duplicate rows keeping the lowest rowid for each non-null cliniko_id
-          db.run(`DELETE FROM products
-                  WHERE cliniko_id IS NOT NULL
-                    AND rowid NOT IN (
-                      SELECT MIN(rowid)
-                      FROM products
-                      WHERE cliniko_id IS NOT NULL
-                      GROUP BY cliniko_id
-                    )`, function (err) {
-            if (err) {
-              db.run('ROLLBACK');
-              return reject(err);
-            }
-
-            // Add unique index on cliniko_id to prevent future duplicates
-            db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_cliniko_id_unique ON products(cliniko_id)`, function (err2) {
-              if (err2) {
-                db.run('ROLLBACK');
-                return reject(err2);
-              }
-
-              db.run('COMMIT', (err3) => {
-                if (err3) return reject(err3);
-                console.log('✅ Deduplicated products and added UNIQUE index on products.cliniko_id');
-                resolve();
-              });
-            });
-          });
-        });
       });
     }
   }

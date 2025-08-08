@@ -50,7 +50,8 @@ const CLEAR_COMMANDS = [
   "DELETE FROM receipt_log",
   "DELETE FROM product_change_log",
   "DELETE FROM item_receipt_log",
-  "DELETE FROM settings WHERE key IN ('CLINIKO_API_KEY', 'GITHUB_TOKEN')",
+  // Preserve GITHUB_TOKEN so auto-updater continues to work
+  "DELETE FROM settings WHERE key IN ('CLINIKO_API_KEY')",
   "DELETE FROM sqlite_sequence"
 ];
 
@@ -104,7 +105,7 @@ function finishCleaning(failed) {
         console.log('✅ Database compacted');
       }
       
-      console.log('\n🎉 Database cleaning completed!');
+      console.log('\n🎉 Database cleaning completed! (GITHUB_TOKEN preserved)');
       console.log(`💾 Backup saved as: ${backupPath}`);
       
       db.close();

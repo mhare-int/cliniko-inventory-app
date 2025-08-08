@@ -98,3 +98,4 @@ build-with-validation.sh
 # Sample data files
 backend/cliniko_*.json
 !backend/cliniko_schema.json
+temp_release_check/
