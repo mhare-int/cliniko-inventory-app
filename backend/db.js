@@ -95,10 +95,18 @@ function changeUserPassword(userId, newPassword) {
     }
     try {
       const hash = await bcrypt.hash(newPassword, 10);
-      db.run('UPDATE users SET password_hash=? WHERE id=?', [hash, userId], function (err) {
+      db.run('UPDATE users SET password_hash=? WHERE id=?', [hash, userId], async function (err) {
         if (err) return reject({ error: 'DB error', details: err.message || err });
         if (this.changes === 0) return reject({ error: 'User not found' });
-        resolve({ message: 'Password updated' });
+        
+        // Clear default password warning if this was a password change from default
+        try {
+          await clearDefaultPasswordWarning();
+        } catch (warningErr) {
+          console.log('Note: Could not clear password warning (may not exist):', warningErr.message);
+        }
+        
+        resolve({ message: 'Password updated successfully' });
       });
     } catch (e) {
       reject({ error: 'Hashing error', details: e.message || e });
@@ -124,7 +132,7 @@ function setSessionTimeout(hours) {
     if (!hours || isNaN(Number(hours)) || Number(hours) <= 0) {
       return reject({ error: 'Invalid session timeout value' });
     }
-    db.run('REPLACE INTO settings (key, value) VALUES (?, ?)', ['SESSION_TIMEOUT_HOURS', String(Number(hours))], function (err) {
+    db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)', ['SESSION_TIMEOUT_HOURS', String(Number(hours))], function (err) {
       if (err) return reject(err);
       resolve({ message: 'Session timeout updated', hours: Number(hours) });
     });
@@ -136,15 +144,136 @@ module.exports.setSessionTimeout = setSessionTimeout;
 // --- Update stock from Cliniko API ---
 const https = require('https');
 const { URL } = require('url');
-const httpOrHttps = require('follow-redirects').https || https;
-function updateStockFromCliniko() {
+const { https: httpsFollowRedirects } = require('follow-redirects');
+
+// Use follow-redirects https for API calls that might redirect
+const httpOrHttps = httpsFollowRedirects;
+
+// --- Sync Products from Cliniko API (Create/Insert) ---
+function syncProductsFromCliniko() {
   return new Promise((resolve, reject) => {
-    db.get('SELECT value FROM settings WHERE key = ?', ['CLINIKO_API_KEY'], (err, row) => {
-      if (err || !row || !row.value) return reject({ error: 'No Cliniko API key set' });
-      const apiKey = row.value.trim();
+    getActualApiKey().then(apiKey => {
       const allProducts = [];
       let nextUrl = 'https://api.au1.cliniko.com/v1/products';
-      // Use Basic Auth as in the working test script
+      // Format as Basic Auth: 'Basic ' + base64(token + ':')
+      const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
+      const headers = {
+        'Authorization': authHeader,
+        'Accept': 'application/json',
+        'User-Agent': 'MyAPP (mitch.hare34@gmail.com)'
+      };
+
+      function fetchPage(url) {
+        let data = '';
+        const urlObj = new URL(url);
+        const options = {
+          hostname: urlObj.hostname,
+          path: urlObj.pathname + urlObj.search,
+          method: 'GET',
+          headers
+        };
+        const req = httpOrHttps.request(options, (res) => {
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            let json;
+            try {
+              json = JSON.parse(data);
+            } catch (e) {
+              // Log the raw response to a file for debugging
+              const fs = require('fs');
+              const logPath = require('path').join(__dirname, 'cliniko_products_error.log');
+              fs.writeFileSync(logPath, data, { encoding: 'utf8' });
+              return reject({ error: 'Failed to parse Cliniko response', details: data });
+            }
+            if (!json.products) return reject({ error: 'No products in Cliniko response', details: data });
+            // Filter out archived products from this page
+            const pageProducts = Array.isArray(json.products) ? json.products.filter(p => !p.archived_at) : [];
+            allProducts.push(...pageProducts);
+            const next = json.links && json.links.next;
+            if (next) {
+              setTimeout(() => fetchPage(next), 2000); // 2 seconds delay between pages
+            } else {
+              // De-duplicate by Cliniko ID across all pages
+              const uniqueById = new Map();
+              for (const p of allProducts) {
+                const id = String(p.id);
+                if (!uniqueById.has(id)) uniqueById.set(id, p);
+              }
+              const productsToProcess = Array.from(uniqueById.values());
+
+              // Insert/Update products in local DB
+              let processed = 0;
+              let total = productsToProcess.length;
+              let inserted = 0;
+              let updated = 0;
+              
+              console.log(`Processing ${total} products from Cliniko (after filtering archived and de-duplication)...`);
+              
+              if (total === 0) return resolve({ message: 'No products to sync', products_synced: 0 });
+              
+              productsToProcess.forEach(product => {
+                const cliniko_id = String(product.id);
+                const name = product.name || 'Unknown Product';
+                const stock = product.stock_level || 0;
+                const barcode = product.barcode || '';
+                // Use the correct Cliniko field for supplier name
+                const supplier_name = product.product_supplier_name || '';
+                
+                // Use UPSERT to avoid duplicates and correctly update existing rows
+                db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level)
+                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0))
+                        ON CONFLICT(cliniko_id) DO UPDATE SET
+                          name=excluded.name,
+                          barcode=excluded.barcode,
+                          stock=excluded.stock,
+                          supplier_name=excluded.supplier_name,
+                          reorder_level=COALESCE(products.reorder_level, excluded.reorder_level)`,
+                  [cliniko_id, name, barcode, stock, supplier_name, cliniko_id], 
+                  function(err) {
+                    if (err) {
+                      console.error('Error upserting product:', err, 'Product:', product);
+                    } else {
+                      // changes === 1 when insert, 2 when update in SQLite UPSERT
+                      if (this.changes === 1) inserted++;
+                      else if (this.changes === 2) updated++;
+                    }
+                    
+                    processed++;
+                    if (processed === total) {
+                      console.log(`Product sync completed: ${inserted} inserted, ${updated} updated`);
+                      resolve({ 
+                        message: 'Products synced from Cliniko', 
+                        products_synced: total,
+                        inserted: inserted,
+                        updated: updated
+                      });
+                    }
+                  }
+                );
+              });
+            }
+          });
+        });
+        req.on('error', (e) => reject({ error: e.message }));
+        req.setTimeout(30000, () => {
+          req.destroy();
+          reject({ error: 'Request timeout' });
+        });
+        req.end();
+      }
+      fetchPage(nextUrl);
+    }).catch(error => {
+      reject(error);
+    });
+  });
+}
+
+function updateStockFromCliniko() {
+  return new Promise((resolve, reject) => {
+    getActualApiKey().then(apiKey => {
+      const allProducts = [];
+      let nextUrl = 'https://api.au1.cliniko.com/v1/products';
+      // Format as Basic Auth: 'Basic ' + base64(token + ':')
       const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
       const headers = {
         'Authorization': authHeader,
@@ -207,17 +336,151 @@ function updateStockFromCliniko() {
         req.end();
       }
       fetchPage(nextUrl);
+    }).catch(error => {
+      reject(error);
     });
   });
 }
 const path = require('path');
 
+// Helper function to get the correct log path for both dev and production
+function getLogPath() {
+  try {
+    const { app } = require('electron');
+    if (app && app.isPackaged) {
+      return path.join(app.getPath('userData'), 'backend.log');
+    } else {
+      return path.join(__dirname, 'backend.log');
+    }
+  } catch (e) {
+    // Fallback to __dirname if electron is not available
+    return path.join(__dirname, 'backend.log');
+  }
+}
+
+// --- Preview Sales Data Count from Cliniko ---
+function previewSalesDataCount(startDate = null, endDate = null, providedApiKey = null) {
+  return new Promise((resolve, reject) => {
+    console.log('🔍 previewSalesDataCount called with:');
+    console.log('  - startDate:', startDate);
+    console.log('  - endDate:', endDate);
+    console.log('  - providedApiKey:', providedApiKey ? 'PROVIDED (length: ' + providedApiKey.length + ')' : 'NOT PROVIDED');
+    
+    // Use provided API key if available, otherwise get from database
+    const keyPromise = providedApiKey ? Promise.resolve(providedApiKey) : getActualApiKey();
+    
+    keyPromise.then(apiKey => {
+      
+      // Use provided startDate or default to 2 years ago
+      if (!startDate) {
+        const twoYearsAgo = new Date();
+        twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+        startDate = twoYearsAgo.toISOString();
+      }
+      
+      // Use provided endDate or default to now
+      if (!endDate) {
+        endDate = new Date().toISOString();
+      }
+      
+      console.log(`Previewing invoice count from ${startDate} to ${endDate}...`);
+      
+      // Query Cliniko API to get total count of invoices in date range
+      const previewUrl = `https://api.au1.cliniko.com/v1/invoices?per_page=1&q[]=created_at:>${startDate}&q[]=created_at:<${endDate}`;
+      const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
+      const headers = {
+        'Authorization': authHeader,
+        'Accept': 'application/json',
+        'User-Agent': 'StockProcurementApp'
+      };
+      
+      const urlObj = new URL(previewUrl);
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: 'GET',
+        headers
+      };
+      
+      const req = httpOrHttps.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            
+            // Check if there are any invoices in the response
+            const hasInvoices = json.invoices && json.invoices.length > 0;
+            const totalEntries = json.total_entries || 0;
+            
+            console.log(`Preview API response:`, { 
+              hasInvoices, 
+              invoiceCount: json.invoices ? json.invoices.length : 0,
+              totalEntries: totalEntries,
+              hasLinks: !!json.links 
+            });
+            
+            console.log(`Preview found ${totalEntries} total invoices in date range`);
+            
+            // Calculate estimated sync time based on rate limits
+            const invoicesPerPage = 100; // From sync function
+            const delayBetweenPages = 2; // seconds
+            const estimatedPages = Math.ceil(totalEntries / invoicesPerPage);
+            const estimatedTimeSeconds = estimatedPages * delayBetweenPages;
+            const estimatedTimeMinutes = Math.round(estimatedTimeSeconds / 60 * 10) / 10; // Round to 1 decimal
+            
+            // Format time estimate
+            let timeEstimate = '';
+            if (estimatedTimeMinutes < 1) {
+              timeEstimate = `${estimatedTimeSeconds} seconds`;
+            } else if (estimatedTimeMinutes < 60) {
+              timeEstimate = `${estimatedTimeMinutes} minutes`;
+            } else {
+              const hours = Math.floor(estimatedTimeMinutes / 60);
+              const minutes = Math.round(estimatedTimeMinutes % 60);
+              timeEstimate = `${hours} hour${hours > 1 ? 's' : ''} ${minutes} minutes`;
+            }
+            
+            console.log(`Estimated sync time: ${timeEstimate} (${estimatedPages} pages with ${delayBetweenPages}s delays)`);
+            
+            resolve({
+              success: true,
+              totalInvoices: totalEntries,
+              estimatedSalesRecords: totalEntries * 3, // Rough estimate: 3 line items per invoice on average
+              estimatedPages: estimatedPages,
+              estimatedTimeSeconds: estimatedTimeSeconds,
+              estimatedTimeMinutes: estimatedTimeMinutes,
+              estimatedTimeFormatted: timeEstimate,
+              dateRange: {
+                start: startDate.split('T')[0],
+                end: endDate.split('T')[0]
+              }
+            });
+          } catch (parseErr) {
+            console.error('Error parsing preview response:', parseErr);
+            reject({ error: 'Failed to parse Cliniko API response', details: parseErr.message });
+          }
+        });
+      });
+      
+      req.on('error', (err) => {
+        console.error('Preview request error:', err);
+        reject({ error: 'Failed to connect to Cliniko API', details: err.message });
+      });
+      
+      req.end();
+      
+    }).catch(apiErr => {
+      console.error('API key error during preview:', apiErr);
+      reject({ error: 'Failed to get API key', details: apiErr.message || apiErr });
+    });
+  });
+}
+
 // --- Update Sales Data from Cliniko ---
 function updateSalesDataFromCliniko(startDate = null, endDate = null) {
   return new Promise((resolve, reject) => {
-    db.get('SELECT value FROM settings WHERE key = ?', ['CLINIKO_API_KEY'], (err, row) => {
-      if (err || !row || !row.value) return reject({ error: 'No Cliniko API key set' });
-      const apiKey = row.value.trim();
+    getActualApiKey().then(apiKey => {
       
       // Check latest date in database if no dates provided
       if (!startDate) {
@@ -231,11 +494,14 @@ function updateSalesDataFromCliniko(startDate = null, endDate = null) {
           } else if (result && result.latest_date) {
             // Start from the latest date we have
             startDate = result.latest_date;
+            // Start from the latest date we have
+            startDate = result.latest_date;
             console.log(`Resuming sync from latest date in DB: ${startDate}`);
             
             // Check if there are actually any new invoices since our latest date
             // Use created_at instead of updated_at for more reliable checking
             const checkUrl = `https://api.au1.cliniko.com/v1/invoices?per_page=5&q[]=created_at:>${startDate}&sort=created_at:desc`;
+            // Format as Basic Auth: 'Basic ' + base64(token + ':')
             const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
             const headers = {
               'Authorization': authHeader,
@@ -336,6 +602,7 @@ function updateSalesDataFromCliniko(startDate = null, endDate = null) {
         // Use created_at instead of updated_at for more reliable sync
         let nextUrl = `https://api.au1.cliniko.com/v1/invoices?per_page=100&q[]=created_at:>${startDate}&sort=created_at:desc`;
         
+        // Format as Basic Auth: 'Basic ' + base64(token + ':')
         const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
         const headers = {
           'Authorization': authHeader,
@@ -571,6 +838,8 @@ function updateSalesDataFromCliniko(startDate = null, endDate = null) {
         
         fetchPage(nextUrl);
       }
+    }).catch(error => {
+      reject(error);
     });
   });
 }
@@ -600,18 +869,27 @@ function getProductSales(start_date, end_date) {
 // --- Sales Insights ---
 function getSalesInsights(limit = 500, offset = 0) {
   return new Promise((resolve, reject) => {
+    // Get proper log path - use helper function that handles electron availability
+    const logPath = getLogPath();
+    
+    const logMsg = `[${new Date().toISOString()}] getSalesInsights called with limit: ${limit}, offset: ${offset}\n`;
+    fs.appendFileSync(logPath, logMsg);
+    
     const today = new Date();
-    const lastYear = today.getFullYear() - 1;
-    const nextMonth = today.getMonth() + 2 > 12 ? 1 : today.getMonth() + 2;
-    const yearForNextMonth = today.getMonth() + 2 > 12 ? lastYear + 1 : lastYear;
-    const start_date = new Date(yearForNextMonth, nextMonth - 1, 1);
-    const end_date = nextMonth === 12 ? new Date(yearForNextMonth + 1, 0, 1) : new Date(yearForNextMonth, nextMonth, 1);
+    // Show last 12 months of data instead of complex "next month last year" calculation
+    const start_date = new Date(today.getFullYear() - 1, today.getMonth(), 1);
+    const end_date = new Date(today.getFullYear(), today.getMonth() + 1, 1);
     const start_date_str = start_date.toISOString().slice(0, 10);
     const end_date_str = end_date.toISOString().slice(0, 10);
-    const last_month_start = new Date(today.getFullYear(), today.getMonth(), 1);
-    const last_month_end = today.getMonth() < 11 ? new Date(today.getFullYear(), today.getMonth() + 1, 1) : new Date(today.getFullYear() + 1, 0, 1);
+    
+    // Last month for comparison
+    const last_month_start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const last_month_end = new Date(today.getFullYear(), today.getMonth(), 1);
     const last_month_start_str = last_month_start.toISOString().slice(0, 10);
     const last_month_end_str = last_month_end.toISOString().slice(0, 10);
+    
+    const dateLogMsg = `[${new Date().toISOString()}] Date ranges - Main: ${start_date_str} to ${end_date_str}, Last month: ${last_month_start_str} to ${last_month_end_str}\n`;
+    fs.appendFileSync(logPath, dateLogMsg);
     const query = `
         SELECT ps.product_name,
                SUM(ps.quantity) as total_quantity,
@@ -641,8 +919,20 @@ function getSalesInsights(limit = 500, offset = 0) {
       start_date_str, end_date_str,
       limit, offset
     ];
+    
+    const paramsLogMsg = `[${new Date().toISOString()}] getSalesInsights query params: ${JSON.stringify(params)}\n`;
+    fs.appendFileSync(logPath, paramsLogMsg);
+    
     db.all(query, params, (err, rows) => {
-      if (err) return reject({ error: 'DB error' });
+      if (err) {
+        const errorLogMsg = `[${new Date().toISOString()}] getSalesInsights DB ERROR: ${err.message || err}\nStack: ${err.stack || 'No stack trace'}\n`;
+        fs.appendFileSync(logPath, errorLogMsg);
+        return reject({ error: 'DB error', details: err.message || err });
+      }
+      
+      const resultLogMsg = `[${new Date().toISOString()}] getSalesInsights query returned ${rows ? rows.length : 0} rows\n`;
+      fs.appendFileSync(logPath, resultLogMsg);
+      
       const insights = rows.map(row => ({
         product_name: row.product_name,
         total_quantity: row.total_quantity,
@@ -650,6 +940,9 @@ function getSalesInsights(limit = 500, offset = 0) {
         last_month_sales: row.last_month_sales || 0,
         currently_ordered: row.currently_ordered || 0
       }));
+      
+      const successLogMsg = `[${new Date().toISOString()}] getSalesInsights processed ${insights.length} insights successfully\n`;
+      fs.appendFileSync(logPath, successLogMsg);
       resolve(insights);
     });
   });
@@ -657,18 +950,26 @@ function getSalesInsights(limit = 500, offset = 0) {
 
 function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset = 0) {
   return new Promise((resolve, reject) => {
+    const logPath = getLogPath();
+    
+    const logMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges called with customRanges: ${JSON.stringify(customRanges)}, limit: ${limit}, offset: ${offset}\n`;
+    fs.appendFileSync(logPath, logMsg);
+    
     const today = new Date();
-    const lastYear = today.getFullYear() - 1;
-    const nextMonth = today.getMonth() + 2 > 12 ? 1 : today.getMonth() + 2;
-    const yearForNextMonth = today.getMonth() + 2 > 12 ? lastYear + 1 : lastYear;
-    const start_date = new Date(yearForNextMonth, nextMonth - 1, 1);
-    const end_date = nextMonth === 12 ? new Date(yearForNextMonth + 1, 0, 1) : new Date(yearForNextMonth, nextMonth, 1);
+    // Show last 12 months of data instead of complex "next month last year" calculation
+    const start_date = new Date(today.getFullYear() - 1, today.getMonth(), 1);
+    const end_date = new Date(today.getFullYear(), today.getMonth() + 1, 1);
     const start_date_str = start_date.toISOString().slice(0, 10);
     const end_date_str = end_date.toISOString().slice(0, 10);
-    const last_month_start = new Date(today.getFullYear(), today.getMonth(), 1);
-    const last_month_end = today.getMonth() < 11 ? new Date(today.getFullYear(), today.getMonth() + 1, 1) : new Date(today.getFullYear() + 1, 0, 1);
+    
+    // Last month for comparison
+    const last_month_start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const last_month_end = new Date(today.getFullYear(), today.getMonth(), 1);
     const last_month_start_str = last_month_start.toISOString().slice(0, 10);
     const last_month_end_str = last_month_end.toISOString().slice(0, 10);
+    
+    const dateLogMsg = `[${new Date().toISOString()}] Date ranges - Main: ${start_date_str} to ${end_date_str}, Last month: ${last_month_start_str} to ${last_month_end_str}\n`;
+    fs.appendFileSync(logPath, dateLogMsg);
     
     // Build custom range subqueries
     const customRangeSelects = customRanges.map((range, index) => `
@@ -679,6 +980,9 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
                      AND ps${index + 3}.invoice_date >= ?
                      AND ps${index + 3}.invoice_date <= ?
                ) as custom_range_${index}`).join(',');
+    
+    const customRangeLogMsg = `[${new Date().toISOString()}] Built custom range selects: ${customRangeSelects}\n`;
+    fs.appendFileSync(logPath, customRangeLogMsg);
     
     const query = `
         SELECT ps.product_name,
@@ -712,8 +1016,20 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
       limit, offset
     ];
     
+    const paramsLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges query params: ${JSON.stringify(params)}\n`;
+    const queryLogMsg = `[${new Date().toISOString()}] Query structure: ${query.substring(0, 300)}...\n`;
+    fs.appendFileSync(logPath, paramsLogMsg + queryLogMsg);
+    
     db.all(query, params, (err, rows) => {
-      if (err) return reject({ error: 'DB error' });
+      if (err) {
+        const errorLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges DB ERROR: ${err.message || err}\nStack: ${err.stack || 'No stack trace'}\n`;
+        fs.appendFileSync(logPath, errorLogMsg);
+        return reject({ error: 'DB error', details: err.message || err });
+      }
+      
+      const resultLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges query returned ${rows ? rows.length : 0} rows\n`;
+      fs.appendFileSync(logPath, resultLogMsg);
+      
       const insights = rows.map(row => {
         const result = {
           product_name: row.product_name,
@@ -730,6 +1046,15 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
         
         return result;
       });
+      
+      const successLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges processed ${insights.length} insights successfully\n`;
+      if (insights.length > 0) {
+        const sampleLogMsg = `[${new Date().toISOString()}] Sample insight: ${JSON.stringify(insights[0])}\n`;
+        fs.appendFileSync(logPath, successLogMsg + sampleLogMsg);
+      } else {
+        fs.appendFileSync(logPath, successLogMsg);
+      }
+      
       resolve(insights);
     });
   });
@@ -796,6 +1121,18 @@ function login(username, password) {
           console.warn('Login failed: password mismatch for username', username);
           return reject({ error: 'Invalid username or password' });
         }
+        
+        // Check if user needs to change default password
+        let passwordWarning = null;
+        try {
+          const warningCheck = await checkDefaultPasswordWarning(username);
+          if (warningCheck.needsPasswordChange) {
+            passwordWarning = warningCheck.message;
+          }
+        } catch (warningErr) {
+          console.error('Error checking password warning:', warningErr);
+        }
+        
         let token;
         try {
           token = jwt.sign({ id: user.id, username: user.username, is_admin: !!user.is_admin }, JWT_SECRET, { expiresIn: '7d' });
@@ -803,7 +1140,14 @@ function login(username, password) {
           console.error('JWT sign error:', jwtErr);
           return reject({ error: 'Token generation error', details: jwtErr.message || jwtErr });
         }
-        resolve({ token });
+        
+        const response = { token };
+        if (passwordWarning) {
+          response.passwordWarning = passwordWarning;
+          response.needsPasswordChange = true;
+        }
+        
+        resolve(response);
       } catch (e) {
         console.error('Unknown login error:', e);
         return reject({ error: 'Unknown error', details: e.message || e });
@@ -824,6 +1168,10 @@ function getCurrentUser(token) {
 
 module.exports.login = login;
 module.exports.getCurrentUser = getCurrentUser;
+module.exports.checkDefaultPasswordWarning = checkDefaultPasswordWarning;
+module.exports.clearDefaultPasswordWarning = clearDefaultPasswordWarning;
+module.exports.isFirstTimeSetup = isFirstTimeSetup;
+module.exports.createFirstAdminUser = createFirstAdminUser;
 // --- Purchase Requests ---
 // Create PR
 function createPurchaseRequest(data) {
@@ -1020,9 +1368,46 @@ module.exports.updateReorderLevels = updateReorderLevels;
 module.exports.updateProductReorderLevel = updateProductReorderLevel;
 
 const sqlite3 = require('sqlite3').verbose();
+const crypto = require('crypto');
 const { runMigrations, backupDatabase } = require('./migrations');
 
-const dbPath = path.join(__dirname, 'appdata.db');
+// Encryption configuration
+const ENCRYPTION_ALGORITHM = 'aes-256-cbc';
+const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || 'default-app-secret-key', 'salt', 32);
+
+// Encryption/Decryption functions
+function encryptApiKey(plaintext) {
+  console.log('Encrypting plaintext:', plaintext.substring(0, 10) + '...');
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const result = {
+    encrypted: encrypted,
+    iv: iv.toString('hex')
+  };
+  console.log('Encryption result:', { encrypted: result.encrypted.substring(0, 20) + '...', iv: result.iv });
+  return result;
+}
+
+function decryptApiKey(encryptedData) {
+  if (typeof encryptedData === 'string') {
+    // Handle legacy plain text API keys
+    console.log('Found legacy plain text API key');
+    return encryptedData;
+  }
+  
+  console.log('Decrypting encrypted data:', { encrypted: encryptedData.encrypted.substring(0, 20) + '...', iv: encryptedData.iv });
+  const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, ENCRYPTION_KEY, Buffer.from(encryptedData.iv, 'hex'));
+  let decrypted = decipher.update(encryptedData.encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  console.log('Decryption successful:', decrypted.substring(0, 10) + '...');
+  return decrypted;
+}
+
+// Allow external setting of database path (for Electron)
+let dbPath = process.env.DB_PATH || path.join(__dirname, 'appdata.db');
+
 const db = new sqlite3.Database(dbPath, async (err) => {
   if (err) {
     console.error('Failed to connect to database:', err);
@@ -1037,7 +1422,11 @@ const db = new sqlite3.Database(dbPath, async (err) => {
       await runMigrations(db);
       
       // Ensure settings table exists
-      db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+      db.run(`CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
       
       // Ensure product_sales table exists with proper unique constraint
       db.run(`CREATE TABLE IF NOT EXISTS product_sales (
@@ -1100,6 +1489,46 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         FOREIGN KEY (user_id) REFERENCES users(id)
       )`);
       
+      // Create core application tables if they don't exist
+      db.run(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password_hash TEXT,
+        is_admin INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+      
+      db.run(`CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        barcode TEXT,
+        cliniko_id TEXT,
+        reorder_level INTEGER DEFAULT 0,
+        current_stock INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+      
+      db.run(`CREATE TABLE IF NOT EXISTS purchase_requests (
+        pr_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        vendor TEXT,
+        order_total REAL,
+        status TEXT DEFAULT 'pending',
+        received INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+      
+      db.run(`CREATE TABLE IF NOT EXISTS purchase_request_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pr_id INTEGER,
+        product_name TEXT,
+        quantity INTEGER,
+        received INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (pr_id) REFERENCES purchase_requests(pr_id)
+      )`);
+      
       console.log('✅ Database initialization completed');
     } catch (migrationError) {
       console.error('❌ Database migration failed:', migrationError);
@@ -1120,15 +1549,158 @@ function getApiKey() {
   });
 }
 
+// Internal function to get the actual decrypted API key for API calls
+function getActualApiKey() {
+  return new Promise((resolve, reject) => {
+    console.log('🔑 getActualApiKey() called - fetching API key from database...');
+    db.get('SELECT value FROM settings WHERE key = ?', ['CLINIKO_API_KEY'], (err, row) => {
+      if (err) {
+        console.error('❌ Database error getting API key:', err);
+        return reject(err);
+      }
+      if (!row || !row.value) {
+        console.error('❌ No API key found in database');
+        return reject({ error: 'No API key found' });
+      }
+      
+      console.log('📥 Raw value from database:', row.value.substring(0, 50) + '...');
+      
+      try {
+        // Try to parse as JSON (encrypted format)
+        let decryptedKey;
+        try {
+          console.log('🔍 Attempting to parse as JSON (encrypted format)...');
+          const encryptedData = JSON.parse(row.value);
+          console.log('✅ Successfully parsed as JSON - decrypting...');
+          console.log('🔐 Encrypted data structure:', { 
+            hasEncrypted: !!encryptedData.encrypted, 
+            hasIv: !!encryptedData.iv,
+            encryptedLength: encryptedData.encrypted ? encryptedData.encrypted.length : 0
+          });
+          decryptedKey = decryptApiKey(encryptedData);
+          console.log('🔓 Decryption successful! Key starts with:', decryptedKey.substring(0, 15) + '...');
+        } catch (parseError) {
+          // If parsing fails, assume it's a legacy plain text key
+          console.log('⚠️  JSON parsing failed - assuming legacy plain text key');
+          console.log('📄 Parse error:', parseError.message);
+          decryptedKey = row.value;
+          console.warn('Found plain text API key - consider re-saving to encrypt it');
+        }
+        
+        console.log('✅ Returning decrypted API key (length:', decryptedKey.length, ')');
+        resolve(decryptedKey);
+      } catch (decryptionError) {
+        console.error('❌ Decryption failed:', decryptionError);
+        return reject({ error: 'Failed to decrypt API key', details: decryptionError.message });
+      }
+    });
+  });
+}
+
 function setApiKey(newKey) {
   return new Promise((resolve, reject) => {
     if (!newKey || typeof newKey !== 'string' || !newKey.trim()) {
       return reject({ error: 'Missing or invalid API key' });
     }
-    db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)', ['CLINIKO_API_KEY', newKey.trim()], function (err) {
-      if (err) return reject(err);
-      resolve({ message: 'API key updated' });
+    
+    try {
+      // Encrypt the API key before storing
+      const encryptedData = encryptApiKey(newKey.trim());
+      const encryptedString = JSON.stringify(encryptedData);
+      console.log('Encrypting API key:', { 
+        original: newKey.trim().substring(0, 10) + '...', 
+        encrypted: encryptedString.substring(0, 50) + '...' 
+      });
+      
+      const timestamp = new Date().toISOString();
+      db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', 
+        ['CLINIKO_API_KEY', encryptedString, timestamp], function (err) {
+        if (err) return reject(err);
+        console.log('API key encrypted and saved successfully');
+        resolve({ message: 'API key updated and encrypted' });
+      });
+    } catch (encryptionError) {
+      console.error('Encryption error:', encryptionError);
+      return reject({ error: 'Failed to encrypt API key', details: encryptionError.message });
+    }
+  });
+}
+
+// --- GitHub Token Management ---
+function getGitHubToken() {
+  return new Promise((resolve, reject) => {
+    console.log('🔑 getGitHubToken() called - fetching GitHub token from database...');
+    db.get('SELECT value FROM settings WHERE key = ?', ['GITHUB_TOKEN'], (err, row) => {
+      if (err) {
+        console.error('❌ Database error getting GitHub token:', err);
+        return reject(err);
+      }
+      if (!row || !row.value) {
+        console.log('⚠️ No GitHub token found in database');
+        return resolve({ token: null });
+      }
+      
+      console.log('📥 Raw GitHub token from database (first 20 chars):', row.value.substring(0, 20) + '...');
+      
+      try {
+        // Try to parse as JSON (encrypted format)
+        let decryptedToken;
+        try {
+          console.log('🔍 Attempting to parse GitHub token as JSON (encrypted format)...');
+          const encryptedData = JSON.parse(row.value);
+          console.log('✅ Successfully parsed GitHub token as JSON - decrypting...');
+          decryptedToken = decryptApiKey(encryptedData);
+          console.log('🔓 GitHub token decryption successful! Token starts with:', decryptedToken.substring(0, 15) + '...');
+        } catch (parseError) {
+          // If parsing fails, assume it's a legacy plain text token
+          console.log('⚠️ GitHub token JSON parsing failed - assuming legacy plain text token');
+          decryptedToken = row.value;
+          console.warn('Found plain text GitHub token - consider re-saving to encrypt it');
+        }
+        
+        console.log('✅ Returning decrypted GitHub token (length:', decryptedToken.length, ')');
+        resolve({ token: decryptedToken });
+      } catch (decryptionError) {
+        console.error('❌ GitHub token decryption failed:', decryptionError);
+        return reject({ error: 'Failed to decrypt GitHub token', details: decryptionError.message });
+      }
     });
+  });
+}
+
+function setGitHubToken(newToken) {
+  return new Promise((resolve, reject) => {
+    if (!newToken || typeof newToken !== 'string' || !newToken.trim()) {
+      return reject({ error: 'Missing or invalid GitHub token' });
+    }
+    
+    const trimmedToken = newToken.trim();
+    
+    // Validate token format (GitHub personal access tokens start with ghp_)
+    if (!trimmedToken.startsWith('ghp_')) {
+      return reject({ error: 'Invalid GitHub token format. Personal access tokens should start with "ghp_"' });
+    }
+    
+    try {
+      // Encrypt the GitHub token before storing
+      const encryptedData = encryptApiKey(trimmedToken);
+      const encryptedString = JSON.stringify(encryptedData);
+      console.log('Encrypting GitHub token:', { 
+        original: trimmedToken.substring(0, 15) + '...', 
+        encrypted: encryptedString.substring(0, 50) + '...' 
+      });
+      
+      const timestamp = new Date().toISOString();
+      db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', 
+        ['GITHUB_TOKEN', encryptedString, timestamp], function (err) {
+        if (err) return reject(err);
+        console.log('GitHub token encrypted and saved successfully');
+        resolve({ message: 'GitHub token updated and encrypted' });
+      });
+    } catch (encryptionError) {
+      console.error('GitHub token encryption error:', encryptionError);
+      return reject({ error: 'Failed to encrypt GitHub token', details: encryptionError.message });
+    }
   });
 }
 
@@ -1142,6 +1714,19 @@ function getAllProducts() {
   });
 }
 
+// Get all products with wrapper for error handling
+function getAllProductsWithWrapper() {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM products ORDER BY name', (err, rows) => {
+      if (err) {
+        console.error('Error getting products:', err);
+        return reject({ error: 'Failed to get products', details: err.message });
+      }
+      resolve({ products: rows });
+    });
+  });
+}
+
 // Example: Add user
 function addUser(username, password_hash, is_admin) {
   return new Promise((resolve, reject) => {
@@ -1151,6 +1736,145 @@ function addUser(username, password_hash, is_admin) {
       function (err) {
         if (err) return reject(err);
         resolve({ message: 'User added' });
+      }
+    );
+  });
+}
+
+// Check if this is first time setup (no users exist)
+function isFirstTimeSetup() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT COUNT(*) as count FROM users', [], (err, row) => {
+      if (err) return reject(err);
+      resolve({ isFirstTime: row.count === 0 });
+    });
+  });
+}
+
+// Create the first admin user during setup
+function createFirstAdminUser(username, password) {
+  return new Promise(async (resolve, reject) => {
+    if (!username || !password || username.length < 3 || password.length < 4) {
+      return reject({ error: 'Username must be at least 3 characters and password at least 4 characters' });
+    }
+
+    try {
+      // Double-check no users exist
+      const firstTimeCheck = await isFirstTimeSetup();
+      if (!firstTimeCheck.isFirstTime) {
+        return reject({ error: 'Setup already completed. Users already exist.' });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      db.run(
+        'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)',
+        [username, hashedPassword, 1],
+        function (err) {
+          if (err) {
+            if (err.message && err.message.includes('UNIQUE constraint failed')) {
+              return reject({ error: 'Username already exists' });
+            }
+            return reject({ error: 'Database error', details: err.message });
+          }
+          console.log(`✅ First admin user created: ${username}`);
+          resolve({ 
+            message: 'Admin user created successfully',
+            userId: this.lastID,
+            username: username
+          });
+        }
+      );
+    } catch (hashError) {
+      reject({ error: 'Password hashing error', details: hashError.message });
+    }
+  });
+}
+
+// Create default admin user if no users exist
+function createDefaultAdminUser() {
+  db.get('SELECT COUNT(*) as count FROM users', [], async (err, row) => {
+    if (err) {
+      console.error('Error checking user count:', err);
+      return;
+    }
+    
+    if (row.count === 0) {
+      try {
+        const hashedPassword = await bcrypt.hash('admin', 10);
+        db.run(
+          'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)',
+          ['Administrator', hashedPassword, 1],
+          function (err) {
+            if (err) {
+              console.error('Error creating default admin user:', err);
+            } else {
+              console.log('✅ Default admin user created (username: Administrator, password: admin)');
+              console.log('⚠️  SECURITY WARNING: Please change the default password immediately!');
+              
+              // Set a flag to remind user to change password
+              db.run(
+                'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+                ['default_password_warning', 'true'],
+                (err) => {
+                  if (err) console.error('Error setting password warning flag:', err);
+                }
+              );
+            }
+          }
+        );
+      } catch (hashError) {
+        console.error('Error hashing default admin password:', hashError);
+      }
+    }
+  });
+}
+
+// Check if user is using default password and needs to change it
+function checkDefaultPasswordWarning(username) {
+  return new Promise((resolve, reject) => {
+    // First check if warning flag is set
+    db.get('SELECT value FROM settings WHERE key = ?', ['default_password_warning'], (err, setting) => {
+      if (err) return reject(err);
+      
+      if (!setting || setting.value !== 'true') {
+        return resolve({ needsPasswordChange: false });
+      }
+      
+      // Check if this user is "Administrator" and still has default password
+      if (username === 'Administrator') {
+        db.get('SELECT password_hash FROM users WHERE username = ?', [username], async (err, user) => {
+          if (err) return reject(err);
+          if (!user) return resolve({ needsPasswordChange: false });
+          
+          try {
+            // Check if current password is still "admin"
+            const isDefaultPassword = await bcrypt.compare('admin', user.password_hash);
+            resolve({ 
+              needsPasswordChange: isDefaultPassword,
+              username: username,
+              message: isDefaultPassword ? 'Please change your default password for security.' : null
+            });
+          } catch (compareError) {
+            reject(compareError);
+          }
+        });
+      } else {
+        resolve({ needsPasswordChange: false });
+      }
+    });
+  });
+}
+
+// Clear the default password warning (call after password change)
+function clearDefaultPasswordWarning() {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'DELETE FROM settings WHERE key = ?',
+      ['default_password_warning'],
+      function (err) {
+        if (err) return reject(err);
+        console.log('✅ Default password warning cleared');
+        resolve({ message: 'Password warning cleared' });
       }
     );
   });
@@ -1582,13 +2306,10 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
         });
       }
 
-      // Get API key from settings (similar to updateStockFromCliniko)
-      db.get('SELECT value FROM settings WHERE key = ?', ['CLINIKO_API_KEY'], (err, row) => {
-        if (err || !row || !row.value) {
-          return reject({ error: 'Cliniko API key not configured' });
-        }
-        
-        const apiKey = row.value.trim();
+      // Get API key using the secure method
+      try {
+        const apiKey = await getActualApiKey();
+        // Format as Basic Auth: 'Basic ' + base64(token + ':')
         const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
 
         // Find the product in our database to get the Cliniko ID
@@ -1674,7 +2395,9 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
             reject({ error: 'Failed to update Cliniko stock', details: apiError.message });
           }
         });
-      });
+      } catch (keyError) {
+        reject({ error: 'Failed to get API key', details: keyError.message });
+      }
 
     } catch (error) {
       reject({ error: 'Failed to update Cliniko stock', details: error.message });
@@ -1731,6 +2454,7 @@ function setSmartPromptsSetting(enabled) {
 
 module.exports = {
   getAllProducts,
+  getAllProductsWithWrapper,
   addUser,
   getAllUsers,
   login,
@@ -1749,8 +2473,13 @@ module.exports = {
   downloadFile,
   getApiKey,
   setApiKey,
+  getActualApiKey,
+  getGitHubToken,
+  setGitHubToken,
+  syncProductsFromCliniko,
   updateStockFromCliniko,
   updateSalesDataFromCliniko,
+  previewSalesDataCount,
   getSessionTimeout,
   setSessionTimeout,
   updatePurchaseRequestReceived,
@@ -1772,5 +2501,10 @@ module.exports = {
   // Smart Prompts setting functions
   getSmartPromptsSetting,
   setSmartPromptsSetting,
+  // First time setup functions
+  isFirstTimeSetup,
+  createFirstAdminUser,
+  checkDefaultPasswordWarning,
+  clearDefaultPasswordWarning,
   db // Export db for advanced queries
 };

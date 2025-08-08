@@ -76,7 +76,7 @@ function Home() {
     <div className="center-card">
       <img
         src={"goodlife.png"}
-        alt="The Good Life"
+        alt="The Good Life Clinic"
         style={{
           width: 220,
           maxWidth: "70%",
@@ -87,6 +87,22 @@ function Home() {
           background: "#fff",
         }}
       />
+      
+      {/* Version Indicator */}
+      <div style={{
+        textAlign: "center",
+        margin: "0 0 24px 0",
+        padding: "8px 16px",
+        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        color: "white",
+        borderRadius: "20px",
+        fontSize: "14px",
+        fontWeight: "600",
+        display: "inline-block",
+        boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)"
+      }}>
+        ✨ Version 1.0.1 - Auto-Update Test ✨
+      </div>
       
       {/* Dashboard Summary */}
       <div style={{

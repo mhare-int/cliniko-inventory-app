@@ -74,4 +74,27 @@ backend/uploads/
 
 # Backup files
 *.backup
+*.backup.*
+*.db.backup*
 backups/
+backend/*.backup*
+backend/appdata.db.backup*
+backend/appdata.db.old
+
+# Documentation and debug files
+AUTO_UPDATER_STATUS.md
+AUTO_UPDATE_FIX.md
+DATABASE_VALIDATION.md
+GITHUB_TOKEN_MANAGEMENT.md
+*debug*.js
+*validate*.js
+*fix*.sh
+*setup*.sh
+*test*.js
+*admin*.js
+*update*.sh
+build-with-validation.sh
+
+# Sample data files
+backend/cliniko_*.json
+!backend/cliniko_schema.json

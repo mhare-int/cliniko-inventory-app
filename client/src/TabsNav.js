@@ -81,7 +81,7 @@ const TabsNav = ({ user, onLogout }) => {
             isActive ? "tabsnav__link active" : "tabsnav__link"
           }
         >
-          📚 Knowledge Base
+          📚 Knowledge Base v1.0.1 ✨
         </NavLink>
         {/* Admin tab always visible in open mode */}
         <NavLink

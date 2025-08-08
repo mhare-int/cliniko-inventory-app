@@ -1,6 +1,6 @@
 {
   "name": "cliniko-inventory-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Healthcare Inventory Management System",
   "main": "main.js",
   "scripts": {
@@ -15,12 +15,17 @@
   },
   "build": {
     "appId": "com.yourcompany.cliniko-inventory",
-    "productName": "Cliniko Inventory Manager",
+    "productName": "Good Life Clinic - Inventory Management",
     "directories": {
       "output": "dist"
     },
     "files": [
-      "**/*",
+      "main.js",
+      "preload.js",
+      "package.json",
+      "client/build/**/*",
+      "backend/**/*",
+      "node_modules/**/*",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
       "!**/node_modules/*.d.ts",
@@ -36,7 +41,7 @@
     "extraResources": [
       {
         "from": "backend/appdata.db",
-        "to": "appdata.db",
+        "to": "backend/appdata.db",
         "filter": ["**/*"]
       }
     ],

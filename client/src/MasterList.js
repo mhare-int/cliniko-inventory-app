@@ -61,11 +61,13 @@ function MasterStockList() {
         window.api.getPurchaseRequests(true, false) // active only
       ]);
       
-      setProducts(productsRes);
+      // Extract products array from API response
+      const productsArray = productsRes || [];
+      setProducts(productsArray);
       
       // Set up editing levels
       const levels = {};
-      productsRes.forEach(p => {
+      productsArray.forEach(p => {
         levels[p.cliniko_id] = p.reorder_level || 0;
       });
       setEditingLevels(levels);

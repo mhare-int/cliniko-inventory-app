@@ -22,8 +22,9 @@ function ApiKeyManagement({ apiKeySet, setApiKeySet, apiKeyInput, setApiKeyInput
     }
     setLoading(true);
     let keyToSend = apiKeyInput.trim();
-    if (!keyToSend.toUpperCase().startsWith("BASIC ")) {
-      keyToSend = "BASIC " + keyToSend;
+    // Remove any existing "BASIC " prefix - the backend will handle proper auth header formatting
+    if (keyToSend.toUpperCase().startsWith("BASIC ")) {
+      keyToSend = keyToSend.substring(6).trim();
     }
     try {
       if (!window.api || !window.api.setApiKey) throw new Error("API key set not available");

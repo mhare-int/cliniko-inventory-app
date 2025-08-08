@@ -18,6 +18,8 @@ import UserBehaviorAnalytics from "./UserBehaviorAnalytics";
 import SalesInsights from "./SalesInsights";
 import ReceiveItemsPage from "./ReceiveItemsPage";
 import KnowledgeBase from "./KnowledgeBase";
+import ApiKeyModal from "./ApiKeyModal";
+import FirstTimeSetup from "./FirstTimeSetup";
 import PageWrapper from "./PageWrapper";
 import { useBehaviorTracking } from "./hooks/useBehaviorTracking";
 import { SmartPromptsProvider } from "./contexts/SmartPromptsContext";
@@ -32,12 +34,52 @@ function MainApp() {
   const [loadingUser, setLoadingUser] = useState(true);
   const navigate = useNavigate();
 
+  // First time setup state
+  const [isFirstTime, setIsFirstTime] = useState(null); // null = checking, true = first time, false = already setup
+  const [checkingFirstTime, setCheckingFirstTime] = useState(true);
+
   // Auto-sync notification state
   const [autoSyncNotification, setAutoSyncNotification] = useState(null); // null, 'syncing', 'completed', 'error'
   const [autoSyncDetails, setAutoSyncDetails] = useState('');
 
+  // API Key state
+  const [apiKeySet, setApiKeySet] = useState(null); // null = checking, true = set, false = not set
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+
   // Initialize behavior tracking
   const behaviorTracking = useBehaviorTracking(user);
+
+  // Check if this is first time setup
+  const checkFirstTimeSetup = async () => {
+    setCheckingFirstTime(true);
+    try {
+      if (!window.api || !window.api.isFirstTimeSetup) {
+        console.error('First time setup check not available');
+        setIsFirstTime(false);
+        return;
+      }
+      
+      const result = await window.api.isFirstTimeSetup();
+      setIsFirstTime(result.isFirstTime);
+    } catch (error) {
+      console.error('Error checking first time setup:', error);
+      setIsFirstTime(false);
+    } finally {
+      setCheckingFirstTime(false);
+    }
+  };
+
+  // Run first time setup check on mount
+  useEffect(() => {
+    checkFirstTimeSetup();
+  }, []);
+
+  // Handle first time setup completion
+  const handleSetupComplete = () => {
+    setIsFirstTime(false);
+    setIsAuthed(true);
+    fetchCurrentUser();
+  };
 
   // Fetch the current user on load
 
@@ -87,6 +129,79 @@ function MainApp() {
     fetchCurrentUser();
     // eslint-disable-next-line
   }, [sessionTimeoutHours]);
+
+  // Check API key when user is authenticated
+  const checkApiKey = async () => {
+    if (!isAuthed || !window.api || !window.api.getApiKey) {
+      setApiKeySet(null);
+      return;
+    }
+    
+    try {
+      const res = await window.api.getApiKey();
+      const hasApiKey = !!(res && res.api_key);
+      setApiKeySet(hasApiKey);
+      
+      // Show modal if no API key is set
+      if (!hasApiKey) {
+        setShowApiKeyModal(true);
+      }
+    } catch (error) {
+      console.error('Error checking API key:', error);
+      setApiKeySet(false);
+      setShowApiKeyModal(true);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthed) {
+      checkApiKey();
+    }
+  }, [isAuthed]);
+
+  // Handle API key modal actions
+  const handleGoToAdmin = () => {
+    setShowApiKeyModal(false);
+    navigate('/admin');
+  };
+
+  const handleLogoutFromModal = () => {
+    setShowApiKeyModal(false);
+    handleLogout();
+  };
+
+  const handleSetApiKeyFromModal = async (newKey) => {
+    try {
+      if (!window.api || !window.api.setApiKey) throw new Error("API key set not available");
+      
+      let keyToSend = newKey.trim();
+      // Remove any existing "BASIC " prefix - the backend will handle proper auth header formatting
+      if (keyToSend.toUpperCase().startsWith("BASIC ")) {
+        keyToSend = keyToSend.substring(6).trim();
+      }
+      
+      await window.api.setApiKey(keyToSend);
+      setApiKeySet(true);
+      setShowApiKeyModal(false);
+    } catch (error) {
+      console.error('Error setting API key:', error);
+      // Modal will remain open to show error
+    }
+  };
+
+  const handleExitApp = async () => {
+    try {
+      if (window.api && window.api.exitApp) {
+        await window.api.exitApp();
+      } else {
+        // Fallback for development
+        window.close();
+      }
+    } catch (error) {
+      console.error('Error exiting app:', error);
+      window.close();
+    }
+  };
 
   // Auto-sync sales data when app starts (after authentication) - IMPROVED STARTUP
   useEffect(() => {
@@ -241,12 +356,18 @@ function MainApp() {
 
 
   useEffect(() => {
-    if (!isAuthed && !loadingUser && window.location.hash !== '#/login') {
+    if (!isAuthed && !loadingUser && !checkingFirstTime && !isFirstTime && window.location.hash !== '#/login') {
       navigate('/login');
     }
-  }, [isAuthed, loadingUser, navigate]);
+  }, [isAuthed, loadingUser, checkingFirstTime, isFirstTime, navigate]);
 
-  if (loadingUser) return <div>Loading...</div>;
+  // Show loading while checking first time setup or loading user
+  if (checkingFirstTime || loadingUser) return <div>Loading...</div>;
+
+  // Show first time setup if this is the first run
+  if (isFirstTime) {
+    return <FirstTimeSetup onSetupComplete={handleSetupComplete} />;
+  }
 
   return (
     <>
@@ -340,6 +461,16 @@ function MainApp() {
           </div>
         </div>
       )}
+
+      {/* API Key Modal */}
+      <ApiKeyModal 
+        open={showApiKeyModal}
+        isAdmin={user && user.is_admin}
+        onGoToAdmin={handleGoToAdmin}
+        onLogout={handleLogoutFromModal}
+        onSetApiKey={handleSetApiKeyFromModal}
+        onExitApp={handleExitApp}
+      />
 
       <Routes>
         <Route path="/login" element={<Login onLogin={handleLogin} />} />

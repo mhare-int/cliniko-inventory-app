@@ -35,9 +35,9 @@ const SalesInsights = ({ user }) => {
   // --- Filtering and Sorting State ---
   const baseColumns = [
     { key: "product_name", label: "Product Name", align: "left" },
-    { key: "total_quantity", label: "Total Quantity (Next Month Last Year)", align: "right" },
+    { key: "total_quantity", label: "Total Quantity (Last 12 Months)", align: "right" },
     { key: "current_stock", label: "Current Stock", align: "right" },
-    { key: "last_month_sales", label: "Last Month Sales (This Year)", align: "right" },
+    { key: "last_month_sales", label: "Last Month Sales", align: "right" },
     { key: "currently_ordered", label: "Currently Ordered (PUR)", align: "right" },
     { key: "total_stock", label: "Total Stock", align: "right" },
   ];

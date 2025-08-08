@@ -293,7 +293,7 @@ function CreatePurchaseRequests() {
       <div className="center-card">
         <img
           src={"goodlife.png"}
-          alt="The Good Life"
+          alt="The Good Life Clinic"
           style={{
             width: 220,
             maxWidth: "70%",

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   getSessionTimeout: () => ipcRenderer.invoke('getSessionTimeout'),
   setSessionTimeout: (hours) => ipcRenderer.invoke('setSessionTimeout', hours),
   getAllProducts: () => ipcRenderer.invoke('getAllProducts'),
+  getAllProductsWithWrapper: () => ipcRenderer.invoke('getAllProductsWithWrapper'),
   getAllUsers: () => ipcRenderer.invoke('getAllUsers'),
   addUser: (username, password_hash, is_admin) => ipcRenderer.invoke('addUser', username, password_hash, is_admin),
   updateReorderLevels: (updates) => ipcRenderer.invoke('updateReorderLevels', updates),
@@ -15,6 +16,10 @@ contextBridge.exposeInMainWorld('api', {
   deleteUser: (userId) => ipcRenderer.invoke('deleteUser', userId),
   login: (username, password) => ipcRenderer.invoke('login', username, password),
   getCurrentUser: (token) => ipcRenderer.invoke('getCurrentUser', token),
+  // First time setup
+  isFirstTimeSetup: () => ipcRenderer.invoke('isFirstTimeSetup'),
+  createFirstAdminUser: (username, password) => ipcRenderer.invoke('createFirstAdminUser', username, password),
+  resetFirstTimeSetup: () => ipcRenderer.invoke('resetFirstTimeSetup'),
   getProductOptions: (term) => ipcRenderer.invoke('getProductOptions', term),
   downloadFile: (filename) => ipcRenderer.invoke('downloadFile', filename),
   getProductSales: (start_date, end_date) => ipcRenderer.invoke('getProductSales', start_date, end_date),
@@ -29,9 +34,17 @@ contextBridge.exposeInMainWorld('api', {
     console.log('updateStockFromCliniko called from frontend');
     return ipcRenderer.invoke('updateStockFromCliniko');
   },
+  syncProductsFromCliniko: () => {
+    console.log('syncProductsFromCliniko called from frontend');
+    return ipcRenderer.invoke('syncProductsFromCliniko');
+  },
   updateSalesDataFromCliniko: (startDate = null, endDate = null) => {
     console.log('updateSalesDataFromCliniko called from frontend');
     return ipcRenderer.invoke('updateSalesDataFromCliniko', startDate, endDate);
+  },
+  previewSalesDataCount: (startDate = null, endDate = null, apiKey = null) => {
+    console.log('previewSalesDataCount called from frontend');
+    return ipcRenderer.invoke('previewSalesDataCount', startDate, endDate, apiKey);
   },
   // Folder picker for output directory
   pickFolder: () => ipcRenderer.invoke('pickFolder'),
@@ -62,6 +75,9 @@ contextBridge.exposeInMainWorld('api', {
   // Auto-updater APIs
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  
+  // App control
+  exitApp: () => ipcRenderer.invoke('exit-app'),
   
   // Listen for update events from main process
   onUpdateAvailable: (callback) => {

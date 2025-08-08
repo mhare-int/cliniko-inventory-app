@@ -1,9 +1,10 @@
 {
   "name": "goodlife-stockapp",
-  "productName": "Goodlife StockApp",
-  "version": "1.0.0",
+  "productName": "Good Life Clinic - Inventory Management",
+  "version": "1.0.2",
   "description": "Cliniko App packaged with Electron.",
   "author": "The Good Life Stok App",
+  "type": "commonjs",
   "dependencies": {
     "axios": "^1.10.0",
     "bcryptjs": "^3.0.2",
@@ -19,11 +20,26 @@
   "scripts": {
     "electron": "electron .",
     "package": "electron-builder --win --x64",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "validate-db": "node validate-database.js",
+    "validate-dist-db": "node validate-dist-db.js",
+    "pre-dist": "npm run validate-db && npm run validate-dist-db",
+    "build-validated": "./build-with-validation.sh"
   },
   "build": {
+    "appId": "com.goodlife.stockapp",
+    "productName": "Good Life Clinic - Inventory Management",
+    "icon": "client/public/goodlife-512.png",
+    "publish": {
+      "provider": "github",
+      "owner": "mhare-int",
+      "repo": "cliniko-inventory-app",
+      "private": true,
+      "releaseType": "release"
+    },
     "files": [
       "main.js",
+      "preload.js",
       "backend/**",
       "client/build/**",
       "package.json"
@@ -39,7 +55,16 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "client/public/goodlife-512.png"
+    },
+    "mac": {
+      "icon": "client/public/goodlife-512.png",
+      "category": "public.app-category.business"
+    },
+    "linux": {
+      "icon": "client/public/goodlife-512.png",
+      "category": "Office"
     },
     "nsis": {
       "oneClick": false,
