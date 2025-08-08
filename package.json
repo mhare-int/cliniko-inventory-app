@@ -1,7 +1,7 @@
 {
   "name": "goodlife-stockapp",
   "productName": "Good Life Clinic - Inventory Management",
-  "version": "1.1.5",
+  "version": "1.2.1",
   "description": "Cliniko App packaged with Electron.",
   "author": "The Good Life Stok App",
   "type": "commonjs",
@@ -50,19 +50,10 @@
       {
         "from": "backend/appdata.db",
         "to": "backend/appdata.db"
-      },
-      {
-        "from": "backend/node_modules",
-        "to": "backend/node_modules"
       }
     ],
     "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        }
-      ],
+      "target": "nsis",
       "icon": "client/public/goodlife-512.png"
     },
     "mac": {
@@ -82,12 +73,12 @@
     },
     "asarUnpack": [
       "backend/*.js",
-      "backend/node_modules/express/**",
-      "backend/node_modules/cors/**",
-      "backend/node_modules/jsonwebtoken/**",
-      "backend/node_modules/sqlite3/**",
-      "backend/node_modules/bcryptjs/**",
-      "backend/node_modules/body-parser/**"
+      "node_modules/express/**",
+      "node_modules/cors/**",
+      "node_modules/jsonwebtoken/**",
+      "node_modules/sqlite3/**",
+      "node_modules/bcryptjs/**",
+      "node_modules/body-parser/**"
     ]
   },
   "devDependencies": {

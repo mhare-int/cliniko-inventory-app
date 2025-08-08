@@ -1,5 +1,5 @@
 // --- Electron/Node.js requires at the very top ---
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -86,6 +86,81 @@ function createWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
       console.log('[Electron] Main window finished loading.');
     });
+
+    // Set up application menu
+    const template = [
+      {
+        label: 'File',
+        submenu: [
+          { role: 'quit' }
+        ]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' }
+        ]
+      },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'reload' },
+          { role: 'forceReload' },
+          { role: 'toggleDevTools' },
+          { type: 'separator' },
+          { role: 'resetZoom' },
+          { role: 'zoomIn' },
+          { role: 'zoomOut' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' }
+        ]
+      },
+      {
+        label: 'Help',
+        submenu: [
+          {
+            label: 'Check for Updates',
+            click: async () => {
+              try {
+                const result = await require('electron-updater').autoUpdater.checkForUpdates();
+                if (result && result.updateInfo) {
+                  dialog.showMessageBox(mainWindow, {
+                    type: 'info',
+                    title: 'Update Check',
+                    message: `Current version: ${app.getVersion()}\nLatest version: ${result.updateInfo.version}`,
+                    detail: result.updateInfo.version === app.getVersion() 
+                      ? 'You are using the latest version!' 
+                      : 'A new version is available!'
+                  });
+                }
+              } catch (error) {
+                dialog.showErrorBox('Update Check Failed', error.message);
+              }
+            }
+          },
+          {
+            label: 'About',
+            click: () => {
+              dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: 'About',
+                message: 'Good Life Clinic - Inventory Management',
+                detail: `Version: ${app.getVersion()}\nElectron-based inventory management system.`
+              });
+            }
+          }
+        ]
+      }
+    ];
+
+    const menu = Menu.buildFromTemplate(template);
+    Menu.setApplicationMenu(menu);
+
   } catch (error) {
     console.error('[Electron] Error creating window:', error);
     logErrorToFile('Error creating window: ' + error.message);
@@ -168,19 +243,21 @@ ipcMain.handle('logout', async (event) => {
   return { success: true };
 });
 
-// --- Auto-Updater Configuration ---
-// Configure auto-updater for GitHub releases
-if (!app.isPackaged) {
-  // Development mode - disable auto-updater
-  console.log('[Auto-Updater] Development mode - auto-updater disabled');
-} else {
-  // Production mode - enable auto-updater
-  (async () => {
+// --- Auto-Updater Configuration Function ---
+async function initializeAutoUpdater() {
+  if (!app.isPackaged) {
+    console.log('[Auto-Updater] Development mode - auto-updater disabled');
+    return;
+  }
+
+  console.log('[Auto-Updater] Initializing auto-updater in production mode...');
+  
+  try {
     const updateConfig = {
       provider: 'github',
-      owner: 'mhare-int', // Your GitHub username
-      repo: 'cliniko-inventory-app', // Your repo name
-      private: true // Mark as private repository
+      owner: 'mhare-int',
+      repo: 'cliniko-inventory-app',
+      private: true
     };
 
     // Add GitHub token if available (required for private repos)
@@ -189,25 +266,30 @@ if (!app.isPackaged) {
     // If no environment token, try to get from database/settings
     if (!githubToken) {
       try {
+        console.log('[Auto-Updater] Attempting to get GitHub token from database...');
         const tokenResult = await db.getGitHubToken();
         if (tokenResult && tokenResult.token) {
           githubToken = tokenResult.token;
-          console.log('[Auto-Updater] Using GitHub token from app settings');
+          console.log('[Auto-Updater] ✅ Successfully retrieved GitHub token from app settings');
+        } else {
+          console.log('[Auto-Updater] ⚠️ No token found in database result:', tokenResult);
         }
       } catch (err) {
-        console.warn('[Auto-Updater] Could not retrieve GitHub token from settings:', err.message);
+        console.warn('[Auto-Updater] ❌ Could not retrieve GitHub token from settings:', err.message);
+        logErrorToFile('Auto-updater token retrieval error: ' + err.message);
       }
     }
     
     if (githubToken) {
       updateConfig.token = githubToken;
-      console.log('[Auto-Updater] Using GitHub token for private repository access');
+      console.log('[Auto-Updater] ✅ Using GitHub token for private repository access (length:', githubToken.length, ')');
     } else {
-      console.warn('[Auto-Updater] No GitHub token found. Private repository updates may fail.');
+      console.warn('[Auto-Updater] ❌ No GitHub token found. Private repository updates will fail.');
       console.warn('[Auto-Updater] Set GH_TOKEN environment variable or configure in app settings.');
     }
 
     autoUpdater.setFeedURL(updateConfig);
+    console.log('[Auto-Updater] Feed URL configured successfully');
 
     // Auto-updater event handlers
     autoUpdater.on('checking-for-update', () => {
@@ -216,7 +298,6 @@ if (!app.isPackaged) {
 
     autoUpdater.on('update-available', (info) => {
       console.log('[Auto-Updater] Update available:', info.version);
-      // Show notification to user through main window
       if (mainWindow) {
         mainWindow.webContents.send('update-available', info.version);
       }
@@ -234,7 +315,6 @@ if (!app.isPackaged) {
     autoUpdater.on('download-progress', (progressObj) => {
       const { bytesPerSecond, percent, transferred, total } = progressObj;
       console.log(`[Auto-Updater] Download speed: ${bytesPerSecond} - Downloaded ${percent}% (${transferred}/${total})`);
-      // Send progress to renderer
       if (mainWindow) {
         mainWindow.webContents.send('download-progress', progressObj);
       }
@@ -242,14 +322,15 @@ if (!app.isPackaged) {
 
     autoUpdater.on('update-downloaded', (info) => {
       console.log('[Auto-Updater] Update downloaded:', info.version);
-      // Show "restart to install" dialog
       if (mainWindow) {
         mainWindow.webContents.send('update-downloaded', info.version);
       }
     });
-  })().catch(err => {
+
+  } catch (err) {
     console.error('[Auto-Updater] Initialization error:', err);
-  });
+    logErrorToFile('Auto-updater initialization error: ' + err.message);
+  }
 }
 
 // IPC handler for manual update check
@@ -277,16 +358,19 @@ ipcMain.handle('install-update', async () => {
   }
 });
 
-app.on('ready', () => {
+app.on('ready', async () => {
   console.log('[Electron] App ready. Starting backend...');
   createWindow();
   
-  // Check for updates after app is ready (in production only)
+  // Initialize auto-updater after app is ready and database is available
+  await initializeAutoUpdater();
+  
+  // Check for updates after initialization (in production only)
   if (app.isPackaged) {
     setTimeout(() => {
-      console.log('[Auto-Updater] Checking for updates...');
+      console.log('[Auto-Updater] Performing initial update check...');
       autoUpdater.checkForUpdatesAndNotify();
-    }, 3000); // Wait 3 seconds after startup
+    }, 5000); // Wait 5 seconds after startup to ensure everything is initialized
   }
 });
 

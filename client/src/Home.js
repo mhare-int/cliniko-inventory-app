@@ -101,7 +101,7 @@ function Home() {
         display: "inline-block",
         boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)"
       }}>
-        ✨ Version 1.0.1 - Auto-Update Test ✨
+                ✨ Version 1.2.1 - v1.1.5 Config + Auto-updater Fix! ✨
       </div>
       
       {/* Dashboard Summary */}
