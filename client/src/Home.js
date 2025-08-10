@@ -16,7 +16,7 @@ function Home() {
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch active purchase requests
+      // Fetch active purchase orders
       const pursResponse = await window.api.getPurchaseRequests(true, false);
       
       // Fetch all products to check reorder points
@@ -88,22 +88,6 @@ function Home() {
         }}
       />
       
-      {/* Version Indicator */}
-      <div style={{
-        textAlign: "center",
-        margin: "0 0 24px 0",
-        padding: "8px 16px",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        color: "white",
-        borderRadius: "20px",
-        fontSize: "14px",
-        fontWeight: "600",
-        display: "inline-block",
-        boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)"
-      }}>
-                ✨ Version 1.2.1 - v1.1.5 Config + Auto-updater Fix! ✨
-      </div>
-      
       {/* Dashboard Summary */}
       <div style={{
         background: "#f8fafc",
@@ -143,7 +127,7 @@ function Home() {
                 {dashboardData.activePURs}
               </div>
               <div style={{ color: "#64748b", fontSize: "0.9em", fontWeight: 500 }}>
-                Active Purchase Requests
+                Active Purchase Orders
               </div>
             </div>
             
@@ -200,48 +184,98 @@ function Home() {
         )}
       </div>
       
-      <div style={{ display: "flex", flexDirection: "column", gap: 18, marginTop: 32 }}>
-        <Link to="/create-pr">
+      <div style={{ 
+        display: "grid", 
+        gridTemplateColumns: "repeat(3, 1fr)", 
+        gap: "16px", 
+        marginTop: 32 
+      }}>
+        <Link to="/create-pr" style={{ textDecoration: "none" }}>
           <button style={{
             background: "#006bb6",
             color: "#fff",
             fontWeight: 600,
-            padding: "12px 32px",
+            padding: "16px",
             border: "none",
-            borderRadius: "5px",
-            fontSize: "1.1em",
-            marginBottom: 8,
-            cursor: "pointer"
+            borderRadius: "8px",
+            fontSize: "1em",
+            cursor: "pointer",
+            width: "100%",
+            height: "80px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.transform = "translateY(-2px)";
+            e.target.style.boxShadow = "0 4px 8px rgba(0,0,0,0.15)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.transform = "translateY(0)";
+            e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
-            Create Purchase Requests
+            Create Purchase Orders
           </button>
         </Link>
-        <Link to="/generate-supplier-files">
+        <Link to="/generate-supplier-files" style={{ textDecoration: "none" }}>
           <button style={{
             background: "#00a86b",
             color: "#fff",
             fontWeight: 600,
-            padding: "12px 32px",
+            padding: "16px",
             border: "none",
-            borderRadius: "5px",
-            fontSize: "1.1em",
-            marginBottom: 8,
-            cursor: "pointer"
+            borderRadius: "8px",
+            fontSize: "1em",
+            cursor: "pointer",
+            width: "100%",
+            height: "80px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.transform = "translateY(-2px)";
+            e.target.style.boxShadow = "0 4px 8px rgba(0,0,0,0.15)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.transform = "translateY(0)";
+            e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
             Generate Supplier Files
           </button>
         </Link>
-        <Link to="/receive-items">
+        <Link to="/purchase-requests" style={{ textDecoration: "none" }}>
           <button style={{
             background: "#f59e42",
             color: "#fff",
             fontWeight: 600,
-            padding: "12px 32px",
+            padding: "16px",
             border: "none",
-            borderRadius: "5px",
-            fontSize: "1.1em",
-            marginBottom: 8,
-            cursor: "pointer"
+            borderRadius: "8px",
+            fontSize: "1em",
+            cursor: "pointer",
+            width: "100%",
+            height: "80px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            transition: "all 0.2s ease",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.transform = "translateY(-2px)";
+            e.target.style.boxShadow = "0 4px 8px rgba(0,0,0,0.15)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.transform = "translateY(0)";
+            e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
             Receive Items
           </button>

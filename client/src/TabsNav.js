@@ -49,7 +49,7 @@ const TabsNav = ({ user, onLogout }) => {
             isActive ? "tabsnav__link active" : "tabsnav__link"
           }
         >
-          Active Purchase Requests
+          Active Purchase Orders
         </NavLink>
         <NavLink
           to="/archived"
@@ -57,7 +57,7 @@ const TabsNav = ({ user, onLogout }) => {
             isActive ? "tabsnav__link active" : "tabsnav__link"
           }
         >
-          Archived Purchase Requests
+          Archived Purchase Orders
         </NavLink>
         <NavLink
           to="/master-list"
@@ -81,7 +81,7 @@ const TabsNav = ({ user, onLogout }) => {
             isActive ? "tabsnav__link active" : "tabsnav__link"
           }
         >
-          📚 Knowledge Base v1.0.1 ✨
+          📚 Knowledge Base
         </NavLink>
         {/* Admin tab always visible in open mode */}
         <NavLink
@@ -95,11 +95,19 @@ const TabsNav = ({ user, onLogout }) => {
       </div>
 
       <div className="tabsnav__user">
-        <span className="tabsnav__welcome">
+        <span className="tabsnav__welcome" style={{ marginTop: "8px" }}>
           {user ? `Welcome, ${user.username}` : "Not Logged In"}
         </span>
+        <div style={{ 
+          fontSize: "11px", 
+          color: "rgba(255, 255, 255, 0.8)", 
+          marginTop: "2px",
+          fontWeight: "500"
+        }}>
+          v1.2.1
+        </div>
         {user && (
-          <button className="tabsnav__btn" onClick={handleLogout}>
+          <button className="tabsnav__btn" onClick={handleLogout} style={{ marginTop: "8px" }}>
             Logout
           </button>
         )}

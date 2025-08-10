@@ -114,7 +114,6 @@ function changeUserPassword(userId, newPassword) {
   });
 }
 
-module.exports.changeUserPassword = changeUserPassword;
 // --- Session Timeout Management ---
 function getSessionTimeout() {
   return new Promise((resolve, reject) => {
@@ -138,9 +137,6 @@ function setSessionTimeout(hours) {
     });
   });
 }
-
-module.exports.getSessionTimeout = getSessionTimeout;
-module.exports.setSessionTimeout = setSessionTimeout;
 // --- Update stock from Cliniko API ---
 const https = require('https');
 const { URL } = require('url');
@@ -201,6 +197,17 @@ function syncProductsFromCliniko() {
               }
               const productsToProcess = Array.from(uniqueById.values());
 
+              // Collect unique supplier names for auto-population
+              const uniqueSuppliers = new Set();
+              productsToProcess.forEach(product => {
+                const supplier_name = product.product_supplier_name;
+                if (supplier_name && supplier_name.trim() !== '') {
+                  uniqueSuppliers.add(supplier_name.trim());
+                }
+              });
+              
+              console.log(`Found ${uniqueSuppliers.size} unique suppliers from Cliniko products`);
+
               // Insert/Update products in local DB
               let processed = 0;
               let total = productsToProcess.length;
@@ -215,7 +222,8 @@ function syncProductsFromCliniko() {
                 const cliniko_id = String(product.id);
                 const name = product.name || 'Unknown Product';
                 const stock = product.stock_level || 0;
-                const barcode = product.barcode || '';
+                // Check for serial_number first, then barcode, then empty string
+                const barcode = product.serial_number || product.barcode || '';
                 // Use the correct Cliniko field for supplier name
                 const supplier_name = product.product_supplier_name || '';
                 
@@ -241,12 +249,30 @@ function syncProductsFromCliniko() {
                     processed++;
                     if (processed === total) {
                       console.log(`Product sync completed: ${inserted} inserted, ${updated} updated`);
-                      resolve({ 
-                        message: 'Products synced from Cliniko', 
-                        products_synced: total,
-                        inserted: inserted,
-                        updated: updated
-                      });
+                      
+                      // Auto-populate suppliers table with unique supplier names
+                      autoPopulateSuppliersFromCliniko(uniqueSuppliers)
+                        .then((supplierResult) => {
+                          console.log(`Supplier auto-population completed: ${supplierResult.inserted} new suppliers added`);
+                          resolve({ 
+                            message: 'Products synced from Cliniko', 
+                            products_synced: total,
+                            inserted: inserted,
+                            updated: updated,
+                            suppliers_added: supplierResult.inserted
+                          });
+                        })
+                        .catch((supplierError) => {
+                          console.error('Error auto-populating suppliers:', supplierError);
+                          // Still resolve with product sync success, just log supplier error
+                          resolve({ 
+                            message: 'Products synced from Cliniko (supplier auto-population failed)', 
+                            products_synced: total,
+                            inserted: inserted,
+                            updated: updated,
+                            supplier_error: supplierError.message
+                          });
+                        });
                     }
                   }
                 );
@@ -309,24 +335,42 @@ function updateStockFromCliniko() {
             if (next) {
               fetchPage(next);
             } else {
-              // Map to cliniko_list schema
+              // Map to cliniko_list schema and include barcode info
               const cliniko_list = allProducts.map(item => ({
                 'Id': String(item.id),
                 'Stock': item.stock_level,
                 'Reorder Level': 0,
                 'Product Name': item.name,
-                'Supplier Name': item.product_supplier_name
+                'Supplier Name': item.product_supplier_name,
+                'Barcode': item.serial_number || item.barcode || ''
               }));
-              // Update local DB stock for each product
+              // Update local DB stock, barcode, and supplier names for each product
               let updated = 0;
               let total = cliniko_list.length;
+              const uniqueSuppliers = new Set();
+              
               if (total === 0) return resolve({ message: 'No products to update' });
+              
               cliniko_list.forEach(prod => {
                 const cliniko_id = prod['Id'];
                 const stock = prod['Stock'] || 0;
-                db.run('UPDATE products SET stock=? WHERE cliniko_id=?', [stock, cliniko_id], (err2) => {
+                const barcode = prod['Barcode'] || '';
+                const supplier_name = prod['Supplier Name'] || '';
+                
+                // Track unique suppliers
+                if (supplier_name && supplier_name.trim() !== '') {
+                  uniqueSuppliers.add(supplier_name.trim());
+                }
+                
+                db.run('UPDATE products SET stock=?, barcode=?, supplier_name=? WHERE cliniko_id=?', [stock, barcode, supplier_name, cliniko_id], (err2) => {
                   updated++;
-                  if (updated === total) resolve({ message: 'Stock updated from Cliniko', total });
+                  if (updated === total) {
+                    resolve({ 
+                      message: 'Stock, barcode, and supplier data updated from Cliniko', 
+                      total,
+                      suppliers_updated: uniqueSuppliers.size
+                    });
+                  }
                 });
               });
             }
@@ -1060,9 +1104,6 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
   });
 }
 
-module.exports.getProductSales = getProductSales;
-module.exports.getSalesInsights = getSalesInsights;
-module.exports.getSalesInsightsWithCustomRanges = getSalesInsightsWithCustomRanges;
 // --- Product Options ---
 function getProductOptions(term) {
   return new Promise((resolve, reject) => {
@@ -1090,8 +1131,6 @@ function downloadFile(filename) {
   });
 }
 
-module.exports.getProductOptions = getProductOptions;
-module.exports.downloadFile = downloadFile;
 // --- Authentication ---
 // const bcrypt = require('bcryptjs'); // removed duplicate, only require once at the top
 const jwt = require('jsonwebtoken');
@@ -1166,13 +1205,7 @@ function getCurrentUser(token) {
   });
 }
 
-module.exports.login = login;
-module.exports.getCurrentUser = getCurrentUser;
-module.exports.checkDefaultPasswordWarning = checkDefaultPasswordWarning;
-module.exports.clearDefaultPasswordWarning = clearDefaultPasswordWarning;
-module.exports.isFirstTimeSetup = isFirstTimeSetup;
-module.exports.createFirstAdminUser = createFirstAdminUser;
-// --- Purchase Requests ---
+// --- Purchase Orders ---
 // Create PR
 function createPurchaseRequest(data) {
   return new Promise((resolve, reject) => {
@@ -1303,15 +1336,60 @@ function deletePurchaseRequest(pr_id) {
   return new Promise((resolve, reject) => {
     db.run('DELETE FROM purchase_request_items WHERE pr_id=?', [pr_id], () => {
       db.run('DELETE FROM purchase_requests WHERE pr_id=?', [pr_id], () => {
-        resolve({ message: 'Purchase request deleted' });
+        resolve({ message: 'Purchase order deleted' });
       });
     });
   });
 }
 
-module.exports.createPurchaseRequest = createPurchaseRequest;
-module.exports.getPurchaseRequests = getPurchaseRequests;
-module.exports.deletePurchaseRequest = deletePurchaseRequest;
+// Get single PR by ID
+function getPurchaseRequestById(pr_id) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM purchase_requests WHERE pr_id=?', [pr_id], (err, pr) => {
+      if (err) {
+        console.error('Error getting purchase request:', err);
+        reject(err);
+        return;
+      }
+      if (!pr) {
+        resolve(null);
+        return;
+      }
+      
+      // Get items for this PR
+      db.all('SELECT * FROM purchase_request_items WHERE pr_id=?', [pr_id], (err, items) => {
+        if (err) {
+          console.error('Error getting purchase request items:', err);
+          reject(err);
+          return;
+        }
+        
+        pr.items = items || [];
+        resolve(pr);
+      });
+    });
+  });
+}
+
+// Set purchase order as received
+function setPurchaseRequestReceived(pr_id, updates) {
+  return new Promise((resolve, reject) => {
+    const { date_received, received } = updates;
+    db.run(
+      'UPDATE purchase_requests SET date_received=?, received=? WHERE pr_id=?',
+      [date_received, received, pr_id],
+      function(err) {
+        if (err) {
+          console.error('Error updating purchase request received status:', err);
+          reject(err);
+          return;
+        }
+        resolve({ message: 'Purchase order marked as received', changes: this.changes });
+      }
+    );
+  });
+}
+
 // Update reorder levels (bulk)
 function updateReorderLevels(updates) {
   return new Promise((resolve, reject) => {
@@ -1364,8 +1442,29 @@ function updateProductReorderLevel(product_id, new_level) {
   });
 }
 
-module.exports.updateReorderLevels = updateReorderLevels;
-module.exports.updateProductReorderLevel = updateProductReorderLevel;
+// Update barcode for a product
+function updateProductBarcode(product_id, new_barcode) {
+  return new Promise((resolve, reject) => {
+    if (new_barcode === undefined || new_barcode === null) {
+      return reject(new Error('Invalid barcode'));
+    }
+    // Convert to string and trim
+    new_barcode = String(new_barcode).trim();
+    
+    db.get('SELECT barcode FROM products WHERE cliniko_id = ?', [product_id], (err, row) => {
+      if (err) return reject(err);
+      if (!row) return reject(new Error('Product not found'));
+      const old_barcode = row.barcode || '';
+      if (old_barcode === new_barcode) return resolve({ message: 'No change to barcode' });
+      db.run('UPDATE products SET barcode = ? WHERE cliniko_id = ?', [new_barcode, product_id], () => {
+        db.run('INSERT INTO product_change_log (product_id, field_changed, before_value, after_value, timestamp) VALUES (?, ?, ?, ?, ?)',
+          [product_id, 'barcode', old_barcode, new_barcode, new Date().toISOString()],
+          () => resolve({ message: 'Barcode updated' })
+        );
+      });
+    });
+  });
+}
 
 // Update reorder levels from uploaded file (Excel/CSV)
 function updateReorderLevelsFromFile(fileData) {
@@ -1488,8 +1587,6 @@ function updateReorderLevelsFromFile(fileData) {
   });
 }
 
-module.exports.updateReorderLevelsFromFile = updateReorderLevelsFromFile;
-
 // Generate CSV template for reorder levels
 function generateReorderLevelsTemplate() {
   return new Promise((resolve, reject) => {
@@ -1523,8 +1620,6 @@ function generateReorderLevelsTemplate() {
     }
   });
 }
-
-module.exports.generateReorderLevelsTemplate = generateReorderLevelsTemplate;
 
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
@@ -1688,6 +1783,58 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         FOREIGN KEY (pr_id) REFERENCES purchase_requests(pr_id)
       )`);
       
+      // Create suppliers table for managing vendor contact information
+      db.run(`CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        email TEXT,
+        contact_name TEXT,
+        special_instructions TEXT,
+        source TEXT DEFAULT 'Manual',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+      
+      // Add source column if it doesn't exist (for existing databases)
+      db.run(`ALTER TABLE suppliers ADD COLUMN source TEXT DEFAULT 'Manual'`, (err) => {
+        // Ignore error if column already exists
+        if (err && !err.message.includes('duplicate column name')) {
+          console.error('Error adding source column to suppliers table:', err);
+        } else {
+          // Migrate existing suppliers that were auto-populated from Cliniko
+          db.run(`UPDATE suppliers 
+                   SET source = 'Cliniko', 
+                       comments = '', 
+                       updated_at = datetime('now') 
+                   WHERE comments = 'Auto-populated from Cliniko product sync'`, 
+            function(err) {
+              if (err) {
+                console.error('Error migrating existing suppliers:', err);
+              } else if (this.changes > 0) {
+                console.log(`✅ Migrated ${this.changes} existing auto-populated suppliers`);
+              }
+            }
+          );
+          
+          // Add special_instructions column and migrate comments data
+          db.run(`ALTER TABLE suppliers ADD COLUMN special_instructions TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column name')) {
+              console.error('Error adding special_instructions column:', err);
+            } else {
+              // Migrate existing comments to special_instructions
+              db.run(`UPDATE suppliers SET special_instructions = comments WHERE comments IS NOT NULL AND comments != ''`, 
+                function(err) {
+                  if (err) {
+                    console.error('Error migrating comments to special_instructions:', err);
+                  } else if (this.changes > 0) {
+                    console.log(`✅ Migrated ${this.changes} supplier comments to special_instructions`);
+                  }
+                }
+              );
+            }
+          });
+        }
+      });
       console.log('✅ Database initialization completed');
     } catch (migrationError) {
       console.error('❌ Database migration failed:', migrationError);
@@ -2055,7 +2202,7 @@ function getAllUsers() {
 }
 
 
-// --- Update received quantities for a purchase request ---
+// --- Update received quantities for a purchase order ---
 function updatePurchaseRequestReceived(pr_id, lines, receivedBy = null) {
   return new Promise((resolve, reject) => {
     if (!pr_id || !Array.isArray(lines) || lines.length === 0) {
@@ -2109,9 +2256,6 @@ function updatePurchaseRequestReceived(pr_id, lines, receivedBy = null) {
     });
   });
 }
-
-module.exports.updatePurchaseRequestReceived = updatePurchaseRequestReceived;
-
 // --- Receive item by individual item ID ---
 function receiveItemById(itemId, quantityReceived, receivedBy = null) {
   return new Promise((resolve, reject) => {
@@ -2493,7 +2637,7 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
               product_id: parseInt(clinikoId),
               quantity: quantityToAdd,
               adjustment_type: adjustmentType,
-              comment: purNumber ? `Stock adjustment from PUR-${purNumber}` : 'Stock adjustment from purchase request system'
+              comment: purNumber ? `Stock adjustment from PUR-${purNumber}` : 'Stock adjustment from purchase order system'
             });
 
             const options = {
@@ -2564,6 +2708,252 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
   });
 }
 
+// --- Supplier Management Functions ---
+function getAllSuppliers() {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM suppliers ORDER BY name ASC', [], (err, rows) => {
+      if (err) {
+        console.error('Error getting suppliers:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      resolve(rows || []);
+    });
+  });
+}
+
+function addSupplier(name, email, contactName, comments, source = 'Manual') {
+  return new Promise((resolve, reject) => {
+    if (!name || name.trim() === '') {
+      return reject({ error: 'Supplier name is required' });
+    }
+    
+    const now = new Date().toISOString();
+    db.run(
+      'INSERT INTO suppliers (name, email, contact_name, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [name.trim(), email || '', contactName || '', comments || '', source, now, now],
+      function (err) {
+        if (err) {
+          if (err.message && err.message.includes('UNIQUE constraint failed')) {
+            return reject({ error: 'A supplier with this name already exists' });
+          }
+          console.error('Error adding supplier:', err);
+          return reject({ error: 'Database error', details: err.message || err });
+        }
+        resolve({ id: this.lastID, success: true });
+      }
+    );
+  });
+}
+
+function updateSupplier(id, name, email, contactName, comments) {
+  return new Promise((resolve, reject) => {
+    if (!id) {
+      return reject({ error: 'Supplier ID is required' });
+    }
+    if (!name || name.trim() === '') {
+      return reject({ error: 'Supplier name is required' });
+    }
+    
+    const now = new Date().toISOString();
+    db.run(
+      'UPDATE suppliers SET name = ?, email = ?, contact_name = ?, special_instructions = ?, updated_at = ? WHERE id = ?',
+      [name.trim(), email || '', contactName || '', comments || '', now, id],
+      function (err) {
+        if (err) {
+          if (err.message && err.message.includes('UNIQUE constraint failed')) {
+            return reject({ error: 'A supplier with this name already exists' });
+          }
+          console.error('Error updating supplier:', err);
+          return reject({ error: 'Database error', details: err.message || err });
+        }
+        if (this.changes === 0) {
+          return reject({ error: 'Supplier not found' });
+        }
+        resolve({ success: true });
+      }
+    );
+  });
+}
+
+function deleteSupplier(id) {
+  return new Promise((resolve, reject) => {
+    if (!id) {
+      return reject({ error: 'Supplier ID is required' });
+    }
+    
+    db.run('DELETE FROM suppliers WHERE id = ?', [id], function (err) {
+      if (err) {
+        console.error('Error deleting supplier:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      if (this.changes === 0) {
+        return reject({ error: 'Supplier not found' });
+      }
+      resolve({ success: true });
+    });
+  });
+}
+
+function getSupplierByName(name) {
+  return new Promise((resolve, reject) => {
+    if (!name) {
+      return reject({ error: 'Supplier name is required' });
+    }
+    
+    db.get('SELECT * FROM suppliers WHERE name = ?', [name.trim()], (err, row) => {
+      if (err) {
+        console.error('Error getting supplier by name:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      resolve(row || null);
+    });
+  });
+}
+
+function autoPopulateSuppliersFromCliniko(uniqueSuppliers) {
+  return new Promise((resolve, reject) => {
+    if (!uniqueSuppliers || uniqueSuppliers.size === 0) {
+      return resolve({ inserted: 0, message: 'No suppliers to process' });
+    }
+
+    let processed = 0;
+    let inserted = 0;
+    const total = uniqueSuppliers.size;
+    const now = new Date().toISOString();
+
+    console.log(`Auto-populating ${total} unique suppliers from Cliniko...`);
+
+    uniqueSuppliers.forEach(supplierName => {
+      // Check if supplier already exists before inserting
+      db.get('SELECT id FROM suppliers WHERE name = ?', [supplierName], (err, existingRow) => {
+        if (err) {
+          console.error('Error checking existing supplier:', err);
+          processed++;
+          if (processed === total) {
+            resolve({ inserted, message: `Suppliers auto-populated: ${inserted} new suppliers added` });
+          }
+          return;
+        }
+
+        if (existingRow) {
+          // Supplier already exists, skip
+          console.log(`Supplier '${supplierName}' already exists, skipping`);
+          processed++;
+          if (processed === total) {
+            resolve({ inserted, message: `Suppliers auto-populated: ${inserted} new suppliers added` });
+          }
+        } else {
+          // Insert new supplier with just the name (email and contact info can be added later via admin)
+          db.run(
+            'INSERT INTO suppliers (name, email, contact_name, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [supplierName, '', '', '', 'Cliniko', now, now],
+            function (err) {
+              if (err && !err.message.includes('UNIQUE constraint failed')) {
+                console.error('Error auto-inserting supplier:', err);
+              } else if (!err) {
+                inserted++;
+                console.log(`Auto-added supplier: '${supplierName}'`);
+              }
+              // If UNIQUE constraint failed, it means another process added it concurrently, which is fine
+              
+              processed++;
+              if (processed === total) {
+                resolve({ inserted, message: `Suppliers auto-populated: ${inserted} new suppliers added` });
+              }
+            }
+          );
+        }
+      });
+    });
+  });
+}
+
+// --- Email Template Functions ---
+function saveEmailTemplate(templateData) {
+  return new Promise((resolve, reject) => {
+    const { subject, body, signature } = templateData;
+    
+    // Create email_templates table if it doesn't exist
+    db.run(`CREATE TABLE IF NOT EXISTS email_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject TEXT,
+      body TEXT,
+      signature TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, (err) => {
+      if (err) {
+        console.error('Failed to create email_templates table:', err);
+        return reject({ error: 'Failed to create email templates table', details: err.message });
+      }
+
+      // Check if template exists (we'll only keep one template for now)
+      db.get('SELECT id FROM email_templates LIMIT 1', [], (err, row) => {
+        if (err) {
+          console.error('Error checking existing template:', err);
+          return reject({ error: 'Failed to check existing template', details: err.message });
+        }
+
+        if (row) {
+          // Update existing template
+          db.run(
+            'UPDATE email_templates SET subject = ?, body = ?, signature = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [subject, body, signature, row.id],
+            function (err) {
+              if (err) {
+                console.error('Error updating email template:', err);
+                return reject({ error: 'Failed to update email template', details: err.message });
+              }
+              resolve({ success: true, message: 'Email template updated successfully' });
+            }
+          );
+        } else {
+          // Insert new template
+          db.run(
+            'INSERT INTO email_templates (subject, body, signature) VALUES (?, ?, ?)',
+            [subject, body, signature],
+            function (err) {
+              if (err) {
+                console.error('Error inserting email template:', err);
+                return reject({ error: 'Failed to save email template', details: err.message });
+              }
+              resolve({ success: true, message: 'Email template saved successfully' });
+            }
+          );
+        }
+      });
+    });
+  });
+}
+
+function getEmailTemplate() {
+  return new Promise((resolve, reject) => {
+    // Create table if it doesn't exist
+    db.run(`CREATE TABLE IF NOT EXISTS email_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject TEXT,
+      body TEXT,
+      signature TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, (err) => {
+      if (err) {
+        console.error('Failed to create email_templates table:', err);
+        return reject({ error: 'Failed to create email templates table', details: err.message });
+      }
+
+      // Get the latest template
+      db.get('SELECT * FROM email_templates ORDER BY updated_at DESC LIMIT 1', [], (err, row) => {
+        if (err) {
+          console.error('Error fetching email template:', err);
+          return reject({ error: 'Failed to fetch email template', details: err.message });
+        }
+        resolve(row || null);
+      });
+    });
+  });
+}
+
 // --- Smart Prompts Setting Functions ---
 function getSmartPromptsSetting() {
   return new Promise((resolve, reject) => {
@@ -2619,6 +3009,8 @@ module.exports = {
   login,
   getCurrentUser,
   getPurchaseRequests,
+  getPurchaseRequestById,
+  setPurchaseRequestReceived,
   createPurchaseRequest,
   deletePurchaseRequest,
   deleteUser,
@@ -2659,6 +3051,16 @@ module.exports = {
   getClinikoStockUpdateSetting,
   setClinikoStockUpdateSetting,
   updateClinikoStock,
+  // Supplier management functions
+  getAllSuppliers,
+  addSupplier,
+  updateSupplier,
+  deleteSupplier,
+  getSupplierByName,
+  autoPopulateSuppliersFromCliniko,
+  // Email template functions
+  saveEmailTemplate,
+  getEmailTemplate,
   // Smart Prompts setting functions
   getSmartPromptsSetting,
   setSmartPromptsSetting,

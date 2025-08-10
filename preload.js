@@ -12,8 +12,11 @@ contextBridge.exposeInMainWorld('api', {
   updateReorderLevelsFromFile: (fileData) => ipcRenderer.invoke('updateReorderLevelsFromFile', fileData),
   generateReorderLevelsTemplate: () => ipcRenderer.invoke('generateReorderLevelsTemplate'),
   updateProductReorderLevel: (product_id, new_level) => ipcRenderer.invoke('updateProductReorderLevel', product_id, new_level),
+  updateProductBarcode: (product_id, new_barcode) => ipcRenderer.invoke('updateProductBarcode', product_id, new_barcode),
   createPurchaseRequest: (data) => ipcRenderer.invoke('createPurchaseRequest', data),
   getPurchaseRequests: (active_only, group_by) => ipcRenderer.invoke('getPurchaseRequests', active_only, group_by),
+  getPurchaseRequestById: (pr_id) => ipcRenderer.invoke('getPurchaseRequestById', pr_id),
+  setPurchaseRequestReceived: (pr_id, updates) => ipcRenderer.invoke('setPurchaseRequestReceived', pr_id, updates),
   deletePurchaseRequest: (pr_id) => ipcRenderer.invoke('deletePurchaseRequest', pr_id),
   deleteUser: (userId) => ipcRenderer.invoke('deleteUser', userId),
   login: (username, password) => ipcRenderer.invoke('login', username, password),
@@ -52,6 +55,8 @@ contextBridge.exposeInMainWorld('api', {
   pickFolder: () => ipcRenderer.invoke('pickFolder'),
   // Expose createSupplierOrderFilesForVendors to frontend
   createSupplierOrderFilesForVendors: (items, outputFolder) => ipcRenderer.invoke('createSupplierOrderFilesForVendors', items, outputFolder),
+  // Send supplier emails using system default email client
+  sendSupplierEmails: (emailData) => ipcRenderer.invoke('sendSupplierEmails', emailData),
   // Get active PURs for a barcode
   getActivePURsForBarcode: (barcode) => ipcRenderer.invoke('getActivePURsForBarcode', barcode),
   
@@ -73,6 +78,17 @@ contextBridge.exposeInMainWorld('api', {
   // Smart Prompts setting APIs
   getSmartPromptsSetting: () => ipcRenderer.invoke('getSmartPromptsSetting'),
   setSmartPromptsSetting: (enabled) => ipcRenderer.invoke('setSmartPromptsSetting', enabled),
+  
+  // Supplier management APIs
+  getAllSuppliers: () => ipcRenderer.invoke('getAllSuppliers'),
+  addSupplier: (name, email, contactName, comments) => ipcRenderer.invoke('addSupplier', name, email, contactName, comments),
+  updateSupplier: (id, name, email, contactName, comments) => ipcRenderer.invoke('updateSupplier', id, name, email, contactName, comments),
+  deleteSupplier: (id) => ipcRenderer.invoke('deleteSupplier', id),
+  getSupplierByName: (name) => ipcRenderer.invoke('getSupplierByName', name),
+  
+  // Email template management APIs
+  saveEmailTemplate: (templateData) => ipcRenderer.invoke('saveEmailTemplate', templateData),
+  getEmailTemplate: () => ipcRenderer.invoke('getEmailTemplate'),
   
   // Auto-updater APIs
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

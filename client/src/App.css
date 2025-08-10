@@ -5,7 +5,7 @@ body {
 }
 
 .center-card {
-  max-width: 980px;               /* wider card */
+  max-width: 1200px;              /* increased width for better table layout */
   margin: 60px auto 0 auto;
   padding: 56px 60px 44px 60px;   /* more side padding */
   background: #fff;

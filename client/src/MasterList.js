@@ -13,6 +13,7 @@ function MasterStockList() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [fileInput, setFileInput] = useState(null);
   const [onOrderQuantities, setOnOrderQuantities] = useState({});
+  const [editingBarcodes, setEditingBarcodes] = useState({});
 
   const fileInputRef = useRef();
 
@@ -107,6 +108,13 @@ function MasterStockList() {
       });
       setEditingLevels(levels);
       
+      // Initialize editable barcodes map
+      const barcodes = {};
+      productsArray.forEach(p => {
+        barcodes[p.cliniko_id] = p.barcode || '';
+      });
+      setEditingBarcodes(barcodes);
+      
       // Calculate on-order quantities for each product
       const onOrder = {};
       if (Array.isArray(pursRes)) {
@@ -192,6 +200,25 @@ function MasterStockList() {
     } catch (err) {
       console.error('Failed to update reorder level', err);
       alert('Failed to update reorder level');
+    }
+  };
+
+  const handleBarcodeChange = (cliniko_id, value) => {
+    setEditingBarcodes(prev => ({ ...prev, [cliniko_id]: value }));
+  };
+
+  const handleBarcodeBlur = async (cliniko_id) => {
+    const newBarcode = editingBarcodes[cliniko_id];
+    try {
+      if (!window.api || !window.api.updateProductBarcode) throw new Error('updateProductBarcode not available');
+      const res = await window.api.updateProductBarcode(cliniko_id, newBarcode || null);
+      if (res && res.error) throw new Error(res.error);
+      // reflect in local products array
+      setProducts(prev => prev.map(p => p.cliniko_id === cliniko_id ? { ...p, barcode: newBarcode || null } : p));
+      setEditingBarcodes(prev => ({ ...prev, [cliniko_id]: newBarcode || null }));
+    } catch (err) {
+      console.error('Failed to update barcode', err);
+      alert('Failed to update barcode');
     }
   };
 
@@ -469,12 +496,20 @@ function MasterStockList() {
               backgroundColor: "#f0f0f0",
               zIndex: 11
             }}>No. to Order</th>
+            <th style={{ 
+              padding: 8, 
+              border: "1px solid #ccc",
+              position: "sticky",
+              top: 0,
+              backgroundColor: "#f0f0f0",
+              zIndex: 11
+            }}>Barcode</th>
           </tr>
         </thead>
         <tbody>
           {filteredProducts.length === 0 && (
             <tr>
-              <td colSpan={7} style={{ padding: 20, textAlign: "center", color: "#999" }}>
+              <td colSpan={8} style={{ padding: 20, textAlign: "center", color: "#999" }}>
                 No products found.
               </td>
             </tr>
@@ -513,6 +548,16 @@ function MasterStockList() {
                   />
                 </td>
                 <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center" }}>{noToOrder}</td>
+                <td style={{ padding: 8, border: "1px solid #ccc" }}>
+                  <input
+                    type="text"
+                    value={editingBarcodes[p.cliniko_id] ?? ''}
+                    onChange={e => handleBarcodeChange(p.cliniko_id, e.target.value)}
+                    onBlur={() => handleBarcodeBlur(p.cliniko_id)}
+                    placeholder="Scan or type barcode"
+                    style={{ width: 160, fontSize: 14 }}
+                  />
+                </td>
               </tr>
             );
           })}

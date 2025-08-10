@@ -122,8 +122,8 @@ function ArchivedPurchaseRequests() {
   if (loading) return <div>Loading...</div>;
 
   return (
-    <div style={{ maxWidth: "100%", margin: "40px auto", background: "#fff", padding: 30, borderRadius: 12 }}>
-      <h2 style={{ textAlign: "center", color: "#999", fontWeight: 700 }}>Archived Purchase Requests</h2>
+    <div className="center-card">
+      <h2 style={{ textAlign: "center", color: "#999", fontWeight: 700 }}>Archived Purchase Orders</h2>
       {/* Tab Navigation */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}>
         <button
@@ -143,7 +143,7 @@ function ArchivedPurchaseRequests() {
           disabled={tab === "pr"}
           onClick={() => setTab("pr")}
         >
-          By Purchase Request
+          By Purchase Order
         </button>
         <button
           style={{
@@ -193,7 +193,7 @@ function ArchivedPurchaseRequests() {
                 setPrSuggestions([]);
               }
             }}
-            placeholder="Search by PR ID or Date..."
+            placeholder="Search by PO ID or Date..."
             style={{ padding: "8px 16px", width: "320px", fontSize: "1em", borderRadius: 6, border: "1px solid #ccc" }}
             autoFocus
             autoComplete="off"
@@ -262,12 +262,48 @@ function ArchivedPurchaseRequests() {
       {tab === "pr" ? (
         <>
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-            <thead>
-              <tr>
-                <th style={{ border: "1px solid #ccc" }}>PR ID</th>
-                <th style={{ border: "1px solid #ccc" }}>Date Created</th>
-                <th style={{ border: "1px solid #ccc" }}>Date Received</th>
-                <th style={{ border: "1px solid #ccc" }}>Items</th>
+            <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
+              <tr style={{ backgroundColor: "#f3f7fb" }}>
+                <th style={{ 
+                  padding: "12px 8px", 
+                  border: "1px solid #dee2e6",
+                  position: "sticky",
+                  top: 0,
+                  backgroundColor: "#f3f7fb",
+                  zIndex: 11,
+                  fontWeight: 600,
+                  color: "#246aa8"
+                }}>PO ID</th>
+                <th style={{ 
+                  padding: "12px 8px", 
+                  border: "1px solid #dee2e6",
+                  position: "sticky",
+                  top: 0,
+                  backgroundColor: "#f3f7fb",
+                  zIndex: 11,
+                  fontWeight: 600,
+                  color: "#246aa8"
+                }}>Date Created</th>
+                <th style={{ 
+                  padding: "12px 8px", 
+                  border: "1px solid #dee2e6",
+                  position: "sticky",
+                  top: 0,
+                  backgroundColor: "#f3f7fb",
+                  zIndex: 11,
+                  fontWeight: 600,
+                  color: "#246aa8"
+                }}>Date Received</th>
+                <th style={{ 
+                  padding: "12px 8px", 
+                  border: "1px solid #dee2e6",
+                  position: "sticky",
+                  top: 0,
+                  backgroundColor: "#f3f7fb",
+                  zIndex: 11,
+                  fontWeight: 600,
+                  color: "#246aa8"
+                }}>Items</th>
               </tr>
             </thead>
             <tbody>
@@ -298,12 +334,50 @@ function ArchivedPurchaseRequests() {
                         <tr>
                           <td colSpan={4} style={{ background: "#f6f9fb", padding: 0 }}>
                             <table style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
-                              <thead>
-                                <tr>
-                                  <th style={{ border: "1px solid #ccc" }}>Product Name</th>
-                                  <th style={{ border: "1px solid #ccc" }}>Supplier Name</th>
-                                  <th style={{ border: "1px solid #ccc" }}>Ordered</th>
-                                  <th style={{ border: "1px solid #ccc" }}>Total Received</th>
+                              <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
+                                <tr style={{ backgroundColor: "#f3f7fb" }}>
+                                  <th style={{ 
+                                    padding: "12px 8px", 
+                                    border: "1px solid #dee2e6",
+                                    position: "sticky",
+                                    top: 0,
+                                    backgroundColor: "#f3f7fb",
+                                    zIndex: 11,
+                                    fontWeight: 600,
+                                    color: "#246aa8"
+                                  }}>Product Name</th>
+                                  <th style={{ 
+                                    padding: "12px 8px", 
+                                    border: "1px solid #dee2e6",
+                                    position: "sticky",
+                                    top: 0,
+                                    backgroundColor: "#f3f7fb",
+                                    zIndex: 11,
+                                    fontWeight: 600,
+                                    color: "#246aa8"
+                                  }}>Supplier Name</th>
+                                  <th style={{ 
+                                    padding: "12px 8px", 
+                                    border: "1px solid #dee2e6", 
+                                    textAlign: "center",
+                                    position: "sticky",
+                                    top: 0,
+                                    backgroundColor: "#f3f7fb",
+                                    zIndex: 11,
+                                    fontWeight: 600,
+                                    color: "#246aa8"
+                                  }}>Ordered</th>
+                                  <th style={{ 
+                                    padding: "12px 8px", 
+                                    border: "1px solid #dee2e6", 
+                                    textAlign: "center",
+                                    position: "sticky",
+                                    top: 0,
+                                    backgroundColor: "#f3f7fb",
+                                    zIndex: 11,
+                                    fontWeight: 600,
+                                    color: "#246aa8"
+                                  }}>Total Received</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -323,7 +397,7 @@ function ArchivedPurchaseRequests() {
                     </React.Fragment>
                   ))
               ) : (
-                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#bbb', padding: 12 }}>No archived purchase requests found.</td></tr>
+                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#bbb', padding: 12 }}>No archived purchase orders found.</td></tr>
               )}
             </tbody>
           </table>
@@ -354,13 +428,62 @@ function ArchivedPurchaseRequests() {
                 {expandedVendor.includes(vendor) && (
                   <div style={{ padding: 12 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr>
-                          <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Product Name</th>
-                          <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Ordered</th>
-                          <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Total Received</th>
-                          <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Purchase Request ID</th>
-                          <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Date Created</th>
+                      <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
+                        <tr style={{ backgroundColor: "#f3f7fb" }}>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Product Name</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6", 
+                            textAlign: "center",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Ordered</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6", 
+                            textAlign: "center",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Total Received</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6", 
+                            textAlign: "center",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Purchase Order ID</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6", 
+                            textAlign: "center",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Date Created</th>
                         </tr>
                       </thead>
                       <tbody>

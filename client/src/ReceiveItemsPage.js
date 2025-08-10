@@ -137,7 +137,7 @@ const ReceiveItemsPage = () => {
       }
       const result = await window.api.getActivePURsForBarcode(barcode);
       if (result.error) {
-        setError(result.error || "Failed to fetch purchase requests");
+        setError(result.error || "Failed to fetch purchase orders");
         setMatchingPURs([]);
         setItemInfo(null);
         return;
@@ -145,7 +145,7 @@ const ReceiveItemsPage = () => {
       setMatchingPURs(result.purs || []);
       setItemInfo(result.item || null);
     } catch (e) {
-      setError(e.message || "Failed to fetch purchase requests");
+      setError(e.message || "Failed to fetch purchase orders");
     }
   };
 

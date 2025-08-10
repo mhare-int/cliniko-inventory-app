@@ -260,10 +260,10 @@ function MainApp() {
         setAutoSyncDetails(`Sales sync error: ${salesResult.error}`);
       } else if (salesResult.skipped) {
         setAutoSyncNotification('completed');
-        setAutoSyncDetails(`✅ Background sync completed!\nStock: ${stockResult.total || 0} products updated. Sales data is up to date.`);
+        setAutoSyncDetails(`✅ Background sync completed!\nProducts: ${stockResult.total || 0} updated. Suppliers: ${stockResult.suppliers_updated || 0} updated. Sales data is up to date.`);
       } else {
         setAutoSyncNotification('completed');
-        setAutoSyncDetails(`✅ Background sync completed!\nStock: ${stockResult.total || 0} products updated. Sales: ${salesResult.invoicesProcessed || 0} invoices processed.`);
+        setAutoSyncDetails(`✅ Background sync completed!\nProducts: ${stockResult.total || 0} updated. Suppliers: ${stockResult.suppliers_updated || 0} updated. Sales: ${salesResult.invoicesProcessed || 0} invoices processed.`);
       }
       
       // Auto-hide after longer delay since sync completed
@@ -309,10 +309,10 @@ function MainApp() {
       } else if (salesResult.skipped) {
         // Both operations completed successfully
         setAutoSyncNotification('completed');
-        setAutoSyncDetails(`✅ Sync completed!\nUpdated ${stockResult.total || 0} product stock levels. Sales data is up to date - no new invoices to sync.`);
+        setAutoSyncDetails(`✅ Sync completed!\nProducts: ${stockResult.total || 0} updated. Suppliers: ${stockResult.suppliers_updated || 0} updated. Sales data is up to date - no new invoices to sync.`);
       } else {
         setAutoSyncNotification('completed');
-        setAutoSyncDetails(`✅ Sync completed!\nUpdated ${stockResult.total || 0} product stock levels and processed ${salesResult.invoicesProcessed || 0} invoices with ${salesResult.salesRecordsInserted || 0} sales records.`);
+        setAutoSyncDetails(`✅ Sync completed!\nProducts: ${stockResult.total || 0} updated. Suppliers: ${stockResult.suppliers_updated || 0} updated and processed ${salesResult.invoicesProcessed || 0} invoices with ${salesResult.salesRecordsInserted || 0} sales records.`);
       }
     } catch (error) {
       console.error('Auto-sync error:', error);
@@ -377,7 +377,7 @@ function MainApp() {
       {autoSyncNotification && (
         <div style={{
           position: 'fixed',
-          top: '80px', // Below the navigation
+          top: '130px', // Below the navigation with extra clearance
           right: '20px',
           zIndex: 9999,
           background: autoSyncNotification === 'error' ? '#ffebee' : autoSyncNotification === 'completed' ? '#e8f5e8' : '#e3f2fd',
@@ -409,7 +409,7 @@ function MainApp() {
                 fontSize: '0.95em',
                 lineHeight: '1.3'
               }}>
-                {autoSyncNotification === 'syncing' ? 'Syncing Sales Data...' : 
+                {autoSyncNotification === 'syncing' ? 'Syncing Data...' : 
                  autoSyncNotification === 'completed' ? 'Sync Complete!' : 'Sync Error'}
               </div>
               <div style={{ 
@@ -546,6 +546,14 @@ function MainApp() {
         />
         <Route
           path="/admin/behavior-analytics"
+          element={
+            <RequireAuth isAuthed={isAuthed} loadingUser={loadingUser}>
+              <AdminLayout user={user} />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/admin/email-supplier"
           element={
             <RequireAuth isAuthed={isAuthed} loadingUser={loadingUser}>
               <AdminLayout user={user} />

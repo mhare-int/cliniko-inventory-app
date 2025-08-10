@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AdminUsersPage from './AdminUsersPage';
 import UserBehaviorAnalytics from './UserBehaviorAnalytics';
+import EmailSupplierManagement from './admin/EmailSupplierManagement';
 const AdminLayout = ({ user }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -9,6 +10,7 @@ const AdminLayout = ({ user }) => {
   // Determine active tab from URL
   const getActiveTabFromPath = (path) => {
     if (path.includes('/admin/behavior-analytics')) return 'analytics';
+    if (path.includes('/admin/email-supplier')) return 'emailSupplier';
     return 'users'; // default to users tab
   };
 
@@ -21,27 +23,32 @@ const AdminLayout = ({ user }) => {
 
   // --- All Admin State (moved from AdminUsersPage) ---
 
-  const tabs = [
-    { id: 'users', label: 'Admin', component: AdminUsersPage, path: '/admin/users' },
-    { id: 'analytics', label: 'User Analytics', component: UserBehaviorAnalytics, path: '/admin/behavior-analytics' }
-  ];
+    const tabs = [
+      { key: 'users', label: 'Admin Panel', path: '/admin' },
+      { key: 'analytics', label: 'User Analytics', path: '/admin/behavior-analytics' },
+      { key: 'emailSupplier', label: 'Email and Supplier Management', path: '/admin/email-supplier' }
+    ];
 
-  const handleTabChange = (tabId) => {
-    const tab = tabs.find(t => t.id === tabId);
+  const handleTabChange = (tabKey) => {
+    const tab = tabs.find(t => t.key === tabKey);
     if (tab) {
       navigate(tab.path);
     }
   };
 
   const renderTabContent = () => {
-    const activeTabData = tabs.find(tab => tab.id === activeTab);
-    if (!activeTabData) return null;
-    const Component = activeTabData.component;
-    return <Component user={user} />;
+    if (activeTab === 'users') {
+      return <AdminUsersPage user={user} />;
+    } else if (activeTab === 'analytics') {
+      return <UserBehaviorAnalytics />;
+    } else if (activeTab === 'emailSupplier') {
+      return <EmailSupplierManagement />;
+    }
+    return null;
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
+    <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
       {/* Admin Header */}
       <div style={{ marginBottom: '30px' }}>
         <h1 style={{ 
@@ -69,31 +76,31 @@ const AdminLayout = ({ user }) => {
         }}>
           {tabs.map(tab => (
             <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
+              key={tab.key}
+              onClick={() => handleTabChange(tab.key)}
               style={{
                 padding: '15px 25px',
                 border: 'none',
-                backgroundColor: activeTab === tab.id ? '#1565c0' : 'transparent',
-                color: activeTab === tab.id ? 'white' : '#666',
+                backgroundColor: activeTab === tab.key ? '#1565c0' : 'transparent',
+                color: activeTab === tab.key ? 'white' : '#666',
                 fontSize: '16px',
-                fontWeight: activeTab === tab.id ? 'bold' : 'normal',
+                fontWeight: activeTab === tab.key ? 'bold' : 'normal',
                 cursor: 'pointer',
                 borderRadius: '8px 8px 0 0',
                 marginBottom: '-2px',
-                borderBottom: activeTab === tab.id ? '2px solid #1565c0' : '2px solid transparent',
+                borderBottom: activeTab === tab.key ? '2px solid #1565c0' : '2px solid transparent',
                 transition: 'all 0.3s ease',
                 position: 'relative',
-                zIndex: activeTab === tab.id ? 10 : 1
+                zIndex: activeTab === tab.key ? 10 : 1
               }}
               onMouseEnter={(e) => {
-                if (activeTab !== tab.id) {
+                if (activeTab !== tab.key) {
                   e.target.style.backgroundColor = '#f5f5f5';
                   e.target.style.color = '#333';
                 }
               }}
               onMouseLeave={(e) => {
-                if (activeTab !== tab.id) {
+                if (activeTab !== tab.key) {
                   e.target.style.backgroundColor = 'transparent';
                   e.target.style.color = '#666';
                 }

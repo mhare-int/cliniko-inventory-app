@@ -57,26 +57,7 @@ function AdminUsersPage() {
   };
 
   return (
-    <div style={{
-      maxWidth: "800px",
-      margin: "40px auto",
-      background: "#fff",
-      padding: 30,
-      borderRadius: 18,
-      boxShadow: "0 2px 10px 0 rgba(0,0,0,0.08)"
-    }}>
-      <h2 style={{
-        textAlign: "center",
-        color: "#1867c0",
-        fontWeight: 700,
-        marginBottom: 22,
-        fontSize: 34,
-        letterSpacing: ".5px"
-      }}>
-        Admin Panel
-      </h2>
-      <AdminPageTabs {...tabProps} />
-    </div>
+    <AdminPageTabs {...tabProps} />
   );
 }
 

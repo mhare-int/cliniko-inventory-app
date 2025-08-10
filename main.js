@@ -503,6 +503,14 @@ ipcMain.handle('getPurchaseRequests', async (event, active_only, group_by) => {
   return await db.getPurchaseRequests(active_only, group_by);
 });
 
+ipcMain.handle('getPurchaseRequestById', async (event, pr_id) => {
+  return await db.getPurchaseRequestById(pr_id);
+});
+
+ipcMain.handle('setPurchaseRequestReceived', async (event, pr_id, updates) => {
+  return await db.setPurchaseRequestReceived(pr_id, updates);
+});
+
 ipcMain.handle('deletePurchaseRequest', async (event, pr_id) => {
   return await db.deletePurchaseRequest(pr_id);
 });
@@ -531,6 +539,10 @@ ipcMain.handle('generateReorderLevelsTemplate', async () => {
 
 ipcMain.handle('updateProductReorderLevel', async (event, product_id, new_level) => {
   return await db.updateProductReorderLevel(product_id, new_level);
+});
+
+ipcMain.handle('updateProductBarcode', async (event, product_id, new_barcode) => {
+  return await db.updateProductBarcode(product_id, new_barcode);
 });
 
 // --- API Key Management ---
@@ -685,6 +697,231 @@ ipcMain.handle('setSmartPromptsSetting', async (event, enabled) => {
   } catch (err) {
     logErrorToFile('setSmartPromptsSetting error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: 'Failed to set Smart Prompts setting' };
+  }
+});
+
+// Email functionality - opens system default email client
+ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
+  try {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+    
+    let sentCount = 0;
+    const errors = [];
+
+    for (const email of emailData) {
+      try {
+        const { vendorName, email: toEmail, subject, message, fallbackMessage, attachmentFile } = email;
+        
+        if (!toEmail || !toEmail.trim()) {
+          errors.push(`No email address provided for ${vendorName}`);
+          continue;
+        }
+
+        // Handle attachment file (may be null if no attachments)
+        let attachmentPath = null;
+        if (attachmentFile) {
+          // Get full path to attachment file
+          attachmentPath = path.resolve(attachmentFile);
+          
+          // Check if file exists
+          if (!fs.existsSync(attachmentPath)) {
+            errors.push(`Attachment file not found: ${attachmentFile}`);
+            continue;
+          }
+        }
+
+        // Try HTML first, fallback to plain text on failure
+        let emailContent = message; // Start with HTML version
+        let success = false;
+        let lastError = null;
+
+        // Escape special characters for command line
+        const escapedEmail = toEmail.replace(/"/g, '""');
+        const escapedSubject = subject.replace(/"/g, '""');
+        const escapedAttachment = attachmentPath ? attachmentPath.replace(/"/g, '""') : null;
+
+        let command;
+        
+        if (process.platform === 'win32') {
+          // Windows - PowerShell with HTML support (Outlook handles HTML well)
+          const escapedMessage = emailContent.replace(/"/g, '""').replace(/\n/g, '\\n');
+          
+          const attachmentScript = attachmentPath ? `$mail.Attachments.Add('${escapedAttachment}')` : '';
+          
+          command = `powershell -Command "
+            try {
+              $outlook = New-Object -ComObject Outlook.Application
+              $mail = $outlook.CreateItem(0)
+              $mail.To = '${escapedEmail}'
+              $mail.Subject = '${escapedSubject}'
+              $mail.HTMLBody = '${escapedMessage.replace(/\n/g, '<br>')}'
+              ${attachmentScript}
+              $mail.Display()
+              Write-Host 'Success'
+            } catch {
+              Write-Host 'Error: Could not create Outlook email. Trying mailto fallback...'
+              # Fallback to simple mailto (without attachment)
+              $subject = '${escapedSubject}'
+              $body = '${escapedMessage}'
+              $mailto = 'mailto:${escapedEmail}?subject=' + [System.Web.HttpUtility]::UrlEncode($subject) + '&body=' + [System.Web.HttpUtility]::UrlEncode($body)
+              Start-Process $mailto
+              Write-Host 'Fallback Success'
+            }
+          "`;
+        } else if (process.platform === 'darwin') {
+          // macOS - Try HTML first, fallback to plain text
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const currentMessage = attempt === 0 ? emailContent : (fallbackMessage || emailContent);
+              
+              // Escape for AppleScript
+              const appleScriptSubject = subject.replace(/"/g, '\\"').replace(/'/g, "\\'");
+              const appleScriptMessage = currentMessage.replace(/"/g, '\\"').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+              const appleScriptEmail = toEmail.replace(/"/g, '\\"').replace(/'/g, "\\'");
+              
+              const attachmentScript = attachmentPath ? 
+                `make new attachment with properties {file name:POSIX file \\"${escapedAttachment}\\"}` : '';
+              
+              command = `osascript -e "
+                tell application \\"Mail\\"
+                  activate
+                  set newMessage to make new outgoing message with properties {subject:\\"${appleScriptSubject}\\", content:\\"${appleScriptMessage}\\"}
+                  tell newMessage
+                    make new to recipient with properties {address:\\"${appleScriptEmail}\\"}
+                    ${attachmentScript}
+                  end tell
+                  set visible of newMessage to true
+                end tell
+              "`;
+              
+              console.log(`Opening email client for ${vendorName} (${toEmail}) - Attempt ${attempt + 1}: ${attempt === 0 ? 'HTML' : 'Plain Text'}`);
+              await execPromise(command);
+              success = true;
+              break; // Success, exit the retry loop
+              
+            } catch (err) {
+              lastError = err;
+              console.log(`Attempt ${attempt + 1} failed for ${vendorName}:`, err.message);
+              if (attempt === 0) {
+                console.log(`Retrying with plain text fallback for ${vendorName}`);
+              }
+            }
+          }
+          
+          if (!success) {
+            throw lastError;
+          }
+        } else {
+          // Linux - Try different email clients
+          const mailto = `mailto:${encodeURIComponent(toEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailContent)}`;
+          command = `xdg-open "${mailto}"`;
+          
+          console.log(`Opening email client for ${vendorName} (${toEmail})`);
+          await execPromise(command);
+          success = true;
+        }
+
+        if (success) {
+          sentCount++;
+          // Small delay between emails to prevent overwhelming the system
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+      } catch (err) {
+        console.error(`Failed to open email for ${email.vendorName}:`, err);
+        errors.push(`Failed to open email for ${email.vendorName}: ${err.message}`);
+      }
+    }
+
+    if (sentCount > 0) {
+      return { 
+        success: true, 
+        sentCount, 
+        message: `Opened ${sentCount} email(s) in your default email client`,
+        errors: errors.length > 0 ? errors : undefined
+      };
+    } else {
+      return { 
+        success: false, 
+        error: 'Failed to open any emails', 
+        details: errors 
+      };
+    }
+    
+  } catch (err) {
+    logErrorToFile('sendSupplierEmails error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { 
+      success: false, 
+      error: 'Failed to open email client', 
+      details: err.message 
+    };
+  }
+});
+
+// Supplier management API endpoints
+ipcMain.handle('getAllSuppliers', async () => {
+  try {
+    return await db.getAllSuppliers();
+  } catch (err) {
+    logErrorToFile('getAllSuppliers error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get suppliers' };
+  }
+});
+
+ipcMain.handle('addSupplier', async (event, name, email, contactName, comments) => {
+  try {
+    return await db.addSupplier(name, email, contactName, comments);
+  } catch (err) {
+    logErrorToFile('addSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err.error || 'Failed to add supplier' };
+  }
+});
+
+ipcMain.handle('updateSupplier', async (event, id, name, email, contactName, comments) => {
+  try {
+    return await db.updateSupplier(id, name, email, contactName, comments);
+  } catch (err) {
+    logErrorToFile('updateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err.error || 'Failed to update supplier' };
+  }
+});
+
+ipcMain.handle('deleteSupplier', async (event, id) => {
+  try {
+    return await db.deleteSupplier(id);
+  } catch (err) {
+    logErrorToFile('deleteSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err.error || 'Failed to delete supplier' };
+  }
+});
+
+ipcMain.handle('getSupplierByName', async (event, name) => {
+  try {
+    return await db.getSupplierByName(name);
+  } catch (err) {
+    logErrorToFile('getSupplierByName error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get supplier' };
+  }
+});
+
+// Email Template Management
+ipcMain.handle('saveEmailTemplate', async (event, templateData) => {
+  try {
+    return await db.saveEmailTemplate(templateData);
+  } catch (err) {
+    logErrorToFile('saveEmailTemplate error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err.error || 'Failed to save email template' };
+  }
+});
+
+ipcMain.handle('getEmailTemplate', async () => {
+  try {
+    return await db.getEmailTemplate();
+  } catch (err) {
+    logErrorToFile('getEmailTemplate error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get email template' };
   }
 });
 

@@ -16,30 +16,63 @@ const tabList = [
 function AdminPageTabs(props) {
   const [tab, setTab] = useState("users");
   return (
-    <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-        {tabList.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            style={{
-              background: tab === t.key ? "#1867c0" : "#f6f9fb",
-              color: tab === t.key ? "#fff" : "#1867c0",
-              border: "none",
-              borderRadius: 6,
-              padding: "10px 22px",
-              fontWeight: 700,
-              fontSize: 17,
-              cursor: "pointer",
-              boxShadow: tab === t.key ? "0 2px 8px 0 rgba(24,103,192,0.09)" : "none",
-              transition: "background 0.2s"
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div style={{ padding: '0' }}>
+      {/* Tab Navigation */}
+      <div style={{ 
+        borderBottom: '2px solid #e0e0e0',
+        marginBottom: '0',
+        background: '#f9f9f9'
+      }}>
+        <div style={{ 
+          display: 'flex',
+          gap: '0',
+          position: 'relative',
+          padding: '0 20px'
+        }}>
+          {tabList.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              style={{
+                padding: '12px 20px',
+                border: 'none',
+                backgroundColor: tab === t.key ? '#1867c0' : 'transparent',
+                color: tab === t.key ? 'white' : '#666',
+                fontSize: '14px',
+                fontWeight: tab === t.key ? 'bold' : 'normal',
+                cursor: 'pointer',
+                borderRadius: '6px 6px 0 0',
+                marginBottom: '-2px',
+                borderBottom: tab === t.key ? '2px solid #1867c0' : '2px solid transparent',
+                transition: 'all 0.3s ease',
+                position: 'relative',
+                zIndex: tab === t.key ? 10 : 1
+              }}
+              onMouseEnter={(e) => {
+                if (tab !== t.key) {
+                  e.target.style.backgroundColor = '#f0f0f0';
+                  e.target.style.color = '#333';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (tab !== t.key) {
+                  e.target.style.backgroundColor = 'transparent';
+                  e.target.style.color = '#666';
+                }
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div>
+
+      {/* Tab Content */}
+      <div style={{ 
+        backgroundColor: 'white',
+        minHeight: '500px',
+        padding: '20px'
+      }}>
         {tab === "users" && <UserManagement {...props} />}
         {tab === "api" && <ApiKeyManagement {...props} />}
         {tab === "timeout" && <SessionTimeout {...props} />}

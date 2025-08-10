@@ -78,29 +78,26 @@ function CreatePurchaseRequests() {
   };
 
   React.useEffect(() => {
-    if (items.length > 0) {
-      if (!window.api || !window.api.getPurchaseRequests) {
-        setOnOrderMap({});
-        return;
-      }
-      window.api.getPurchaseRequests(true, undefined)
-        .then((res) => {
-          setActivePRs(res);
-          const map = {};
-          res.forEach((pr) => {
-            pr.items.forEach((item) => {
-              const prodName = item["Product Name"] || item.name;
-              const qty = item["No. to Order"] || item.no_to_order || 0;
-              map[prodName] = (map[prodName] || 0) + qty;
-            });
-          });
-          setOnOrderMap(map);
-        })
-        .catch(() => setOnOrderMap({}));
-    } else {
+    // Load purchase orders on mount to populate onOrderMap
+    if (!window.api || !window.api.getPurchaseRequests) {
       setOnOrderMap({});
+      return;
     }
-  }, [items]);
+    window.api.getPurchaseRequests(true, undefined)
+      .then((res) => {
+        setActivePRs(res);
+        const map = {};
+        res.forEach((pr) => {
+          pr.items.forEach((item) => {
+            const prodName = item["Product Name"] || item.name;
+            const qty = item["No. to Order"] || item.no_to_order || 0;
+            map[prodName] = (map[prodName] || 0) + qty;
+          });
+        });
+        setOnOrderMap(map);
+      })
+      .catch(() => setOnOrderMap({}));
+  }, []); // Only run once on mount
 
   React.useEffect(() => {
     // Fetch products from backend on mount
@@ -152,10 +149,10 @@ function CreatePurchaseRequests() {
 
   // No handleSubmit needed for PR creation only
 
-  // Create Purchase Request for selected items
+  // Create Purchase Order for selected items
   const handleCreatePR = async () => {
     if (selectedRows.length === 0) {
-      alert("Please select at least one item to create a purchase request.");
+      alert("Please select at least one item to create a purchase order.");
       return;
     }
     setLoading(true);
@@ -180,7 +177,7 @@ function CreatePurchaseRequests() {
       });
       const prItems = Object.values(combinedMap);
       await window.api.createPurchaseRequest({ items: prItems });
-      alert("Purchase Request created successfully!");
+      alert("Purchase Order created successfully!");
       // Optionally refresh PR map after creation
       if (window.api.getPurchaseRequests) {
         const res = await window.api.getPurchaseRequests(true, undefined);
@@ -196,7 +193,7 @@ function CreatePurchaseRequests() {
       }
       navigate("/generate-supplier-files");
     } catch (err) {
-      setError("Failed to create purchase request.");
+      setError("Failed to create purchase order.");
     }
     setLoading(false);
   };
@@ -265,15 +262,23 @@ function CreatePurchaseRequests() {
     setLoading(true);
     setItems([]);
     setSelectedRows([]);
-    // Filter products based on includeNegative and calculate No. to Order
+    // Filter products based on includeNegative and calculate No. to Order using total stock (current + on order)
     const filtered = products.filter(p => {
       if (!includeNegative && p.stock < 0) return false;
-      return (p.reorder_level - p.stock > 0);
+      const onOrderQty = onOrderMap[p.name] || 0;
+      const totalStock = (parseInt(p.stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0);
+      return (p.reorder_level - totalStock > 0);
     });
-    const processedItems = filtered.map(i => ({
-      ...i,
-      ["No. to Order"]: Number(i.reorder_level - i.stock)
-    }));
+    const processedItems = filtered.map(i => {
+      const onOrderQty = onOrderMap[i.name] || 0;
+      const totalStock = (parseInt(i.stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0);
+      return {
+        ...i,
+        ["On Order"]: onOrderQty,
+        ["Total Stock"]: totalStock,
+        ["No. to Order"]: Math.max(0, Number(i.reorder_level - totalStock))
+      };
+    });
     setItems(processedItems);
     setSelectedRows(processedItems.map((_, idx) => idx));
     setLoading(false);
@@ -306,7 +311,7 @@ function CreatePurchaseRequests() {
         />
         <div style={{ marginBottom: 38 }}>
           <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
-            Create Purchase Requests
+            Create Purchase Orders
           </h2>
           {location.state?.fromMasterList ? (
             <p
@@ -320,38 +325,41 @@ function CreatePurchaseRequests() {
             >
               ✅ <strong>{items.length} items selected</strong> from Master Stock List and ready to order!
             </p>
-          ) : (
-            <p
-              style={{
-                fontSize: "1.13em",
-                margin: 0,
-                color: "#232323",
-                lineHeight: 1.5,
-                textAlign: "center",
-              }}
-            >
-              Click Run Stock Comparison to determine what is below the reorder points.
-            </p>
-          )}
+          ) : null}
         </div>
+
+        {/* How to Use Instructions */}
+        {!location.state?.fromMasterList && (
+          <div style={{
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "8px",
+            padding: "16px",
+            margin: "20px 0",
+            fontSize: "14px",
+            lineHeight: "1.5"
+          }}>
+            <h4 style={{ 
+              margin: "0 0 12px 0", 
+              color: "#374151", 
+              fontSize: "16px",
+              fontWeight: "600"
+            }}>
+              💡 How to Use:
+            </h4>
+            <div style={{ color: "#4b5563" }}>
+              <p style={{ margin: "0 0 8px 0" }}>
+                <strong>📦 Start New Purchase Order:</strong> Create any ad-hoc orders by manually selecting products
+              </p>
+              <p style={{ margin: "0" }}>
+                <strong>📊 Run Stock Comparison:</strong> Automatically finds all items below reorder level (you can still add extra products after)
+              </p>
+            </div>
+          </div>
+        )}
+
         {!location.state?.fromMasterList && (
           <>
-            <button
-              style={{
-                background: "#006bb6",
-                color: "#fff",
-                fontWeight: 600,
-                padding: "10px 28px",
-                border: "none",
-                borderRadius: "5px",
-                cursor: "pointer",
-                fontSize: "1rem",
-                marginBottom: 24
-              }}
-              onClick={() => navigate("/master-list")}
-            >
-              Go to Master Stock List
-            </button>
             <form>
               <label
                 style={{
@@ -404,7 +412,7 @@ function CreatePurchaseRequests() {
                     e.target.style.background = "#28a745";
                   }}
                 >
-                  Start New Purchase Request
+                  Start New Purchase Order
                 </button>
                 <button
                   type="button"
@@ -559,8 +567,8 @@ function CreatePurchaseRequests() {
                     const stock = item["Stock"] ?? item.stock ?? 0;
                     const reorderLevel = item["Reorder Level"] ?? item.reorder_level ?? 0;
                     const noToOrder = item["No. to Order"] ?? item.no_to_order ?? 0;
-                    const onOrderQty = onOrderMap[prodName] || 0;
-                    const totalStock = (parseInt(stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0);
+                    const onOrderQty = item["On Order"] ?? (onOrderMap[prodName] || 0);
+                    const totalStock = item["Total Stock"] ?? ((parseInt(stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0));
                     return (
                       <tr key={idx} style={{ 
                         backgroundColor: idx % 2 === 0 ? "#fff" : "#f9fafb"
@@ -851,7 +859,7 @@ function CreatePurchaseRequests() {
               </div>
             )}
 
-            {/* Floating Create Purchase Request Button */}
+            {/* Floating Create Purchase Order Button */}
             <div
               style={{
                 position: "fixed",
@@ -895,7 +903,7 @@ function CreatePurchaseRequests() {
                   }
                 }}
               >
-                Create Purchase Request
+                Create Purchase Order
               </button>
             </div>
           </>
