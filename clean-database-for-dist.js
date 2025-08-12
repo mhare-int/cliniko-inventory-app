@@ -8,19 +8,28 @@
  * 
  * WARNING: This will permanently delete all user data!
  * 
- * Usage: node clean-database-for-dist.js [database-path]
+ * Usage: node clean-database-for-dist.js [database-path] [--keep-api-key]
  */
 
 const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
-// Get database path from command line or use default
-const dbPath = process.argv[2] || path.join(__dirname, 'backend', 'appdata.db');
+// Check for flags
+const keepApiKey = process.argv.includes('--keep-api-key');
+
+// Get database path from command line or use default (filter out flags and script names)
+const args = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
+const dbPath = args[0] || path.join(__dirname, 'backend', 'appdata.db');
 
 console.log('🧹 Database Cleaning for Distribution');
 console.log('====================================');
 console.log(`📂 Database Path: ${dbPath}`);
+if (keepApiKey) {
+  console.log('🔑 Keep API Key: YES (for testing setup flow)');
+} else {
+  console.log('🔑 Keep API Key: NO (production distribution)');
+}
 
 // Check if database file exists
 if (!fs.existsSync(dbPath)) {
@@ -60,7 +69,13 @@ const TABLES_TO_CLEAR = [
 
 // Settings keys to remove (keep only essential system settings)
 // NOTE: Do NOT remove GITHUB_TOKEN so the auto-updater keeps working post-clean.
-const SETTINGS_TO_REMOVE = [
+const SETTINGS_TO_REMOVE = keepApiKey ? [
+  // Keep API key when testing setup flow
+  // 'CLINIKO_API_KEY',  // intentionally preserved for testing
+  'last_sync_timestamp',
+  'user_session_id',
+  'last_backup_date'
+] : [
   'CLINIKO_API_KEY',
   // 'GITHUB_TOKEN',  // intentionally preserved
   'last_sync_timestamp',
@@ -69,7 +84,13 @@ const SETTINGS_TO_REMOVE = [
 ];
 
 // Settings to keep (essential system settings)
-const SETTINGS_TO_KEEP = [
+const SETTINGS_TO_KEEP = keepApiKey ? [
+  'database_version',
+  'SESSION_TIMEOUT_HOURS',
+  'smart_prompts_enabled',
+  'GITHUB_TOKEN', // explicitly keep
+  'CLINIKO_API_KEY' // keep for testing setup flow
+] : [
   'database_version',
   'SESSION_TIMEOUT_HOURS',
   'smart_prompts_enabled',
@@ -160,7 +181,7 @@ function cleanSettings() {
     
     const settingsToRemove = settings.filter(s => 
       SETTINGS_TO_REMOVE.includes(s.key) || 
-      s.key.toLowerCase().includes('api_key') ||
+      (!keepApiKey && s.key.toLowerCase().includes('api_key')) ||
       s.key.toLowerCase().includes('password')
     );
     

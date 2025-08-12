@@ -504,7 +504,7 @@ function PurchaseRequests() {
               type="text"
               value={prSearch}
               onChange={handlePrSearch}
-              placeholder="Search by PR ID or Date..."
+              placeholder="Search by PO ID or Date..."
               style={{ 
                 padding: "8px 12px", 
                 borderRadius: 4, 

@@ -37,10 +37,16 @@ function MainApp() {
   // First time setup state
   const [isFirstTime, setIsFirstTime] = useState(null); // null = checking, true = first time, false = already setup
   const [checkingFirstTime, setCheckingFirstTime] = useState(true);
+  const [isInSetupProcess, setIsInSetupProcess] = useState(false); // Track if we're currently going through setup
+  const [disableAutoSyncThisSession, setDisableAutoSyncThisSession] = useState(false); // Disable auto-sync for entire first-time setup session
 
   // Auto-sync notification state
   const [autoSyncNotification, setAutoSyncNotification] = useState(null); // null, 'syncing', 'completed', 'error'
   const [autoSyncDetails, setAutoSyncDetails] = useState('');
+
+  // Setup completion notification state
+  const [setupCompletionNotification, setSetupCompletionNotification] = useState(false);
+  const [justCompletedSetup, setJustCompletedSetup] = useState(false);
 
   // API Key state
   const [apiKeySet, setApiKeySet] = useState(null); // null = checking, true = set, false = not set
@@ -61,6 +67,10 @@ function MainApp() {
       
       const result = await window.api.isFirstTimeSetup();
       setIsFirstTime(result.isFirstTime);
+      if (result.isFirstTime) {
+        setIsInSetupProcess(true); // Mark that we're starting the setup process
+        setDisableAutoSyncThisSession(true); // Disable auto-sync for this entire session
+      }
     } catch (error) {
       console.error('Error checking first time setup:', error);
       setIsFirstTime(false);
@@ -74,11 +84,74 @@ function MainApp() {
     checkFirstTimeSetup();
   }, []);
 
-  // Handle first time setup completion
-  const handleSetupComplete = () => {
+  // Handle background sync completion notification
+  const handleBackgroundSyncComplete = (result) => {
+    const salesCount = result?.invoicesProcessed || result?.salesRecordsInserted || result?.invoices_processed || result?.synced || 0;
+    if (result && !result.error) {
+      setAutoSyncNotification('completed');
+      setAutoSyncDetails(`Background sync completed! ${salesCount} sales records processed.`);
+      
+      // Auto-hide notification after 5 seconds
+      setTimeout(() => {
+        setAutoSyncNotification(null);
+        setAutoSyncDetails('');
+      }, 5000);
+    } else {
+      setAutoSyncNotification('error');
+      setAutoSyncDetails(`Background sync failed: ${result?.error || 'Unknown error'}`);
+      
+      // Auto-hide error after 8 seconds
+      setTimeout(() => {
+        setAutoSyncNotification(null);
+        setAutoSyncDetails('');
+      }, 8000);
+    }
+  };
+  const handleSetupComplete = async () => {
     setIsFirstTime(false);
+    setIsInSetupProcess(false); // Clear the setup process flag
+    setJustCompletedSetup(true); // Mark that we just completed setup
+    
+    // Clear any auto-sync notifications to give setup completion notification priority
+    setAutoSyncNotification(null);
+    setAutoSyncDetails('');
+    
+    // First, ensure user is authenticated
     setIsAuthed(true);
-    fetchCurrentUser();
+    console.log('🎯 Set isAuthed to true');
+    
+    // Fetch current user and wait for it to complete
+    try {
+      await fetchCurrentUser();
+      console.log('🎯 fetchCurrentUser completed');
+      
+      // Only after user is fetched, check API key
+      // Since we just completed setup, the API key should be set, so this should pass
+      setTimeout(() => {
+        checkApiKey(true); // Force check even if isAuthed state hasn't updated
+      }, 500);
+      
+    } catch (error) {
+      console.error('Error fetching user after setup:', error);
+      // Even if user fetch fails, try API key check
+      setTimeout(() => {
+        checkApiKey(true); // Force check
+      }, 1000);
+    }
+    
+    // Show setup completion notification
+    setSetupCompletionNotification(true);
+    
+    // Auto-hide notification after 8 seconds
+    setTimeout(() => {
+      setSetupCompletionNotification(false);
+    }, 8000);
+    
+    // Reset the "just completed setup" flag after a reasonable time so auto-sync works on next app launch
+    // Extended to 5 minutes to ensure background setup sync has time to complete
+    setTimeout(() => {
+      setJustCompletedSetup(false);
+    }, 300000); // Reset after 5 minutes
   };
 
   // Fetch the current user on load
@@ -131,8 +204,14 @@ function MainApp() {
   }, [sessionTimeoutHours]);
 
   // Check API key when user is authenticated
-  const checkApiKey = async () => {
-    if (!isAuthed || !window.api || !window.api.getApiKey) {
+  const checkApiKey = async (forceCheck = false) => {
+    // Allow forced check after setup completion, even if isAuthed state hasn't updated yet
+    if (!forceCheck && (!isAuthed || !window.api || !window.api.getApiKey)) {
+      setApiKeySet(null);
+      return;
+    }
+    
+    if (!window.api || !window.api.getApiKey) {
       setApiKeySet(null);
       return;
     }
@@ -147,17 +226,17 @@ function MainApp() {
         setShowApiKeyModal(true);
       }
     } catch (error) {
-      console.error('Error checking API key:', error);
+      console.error('❌ Frontend: Error checking API key:', error);
       setApiKeySet(false);
       setShowApiKeyModal(true);
     }
   };
 
   useEffect(() => {
-    if (isAuthed) {
+    if (isAuthed && !justCompletedSetup && !isFirstTime && !isInSetupProcess) {
       checkApiKey();
     }
-  }, [isAuthed]);
+  }, [isAuthed, justCompletedSetup, isFirstTime, isInSetupProcess]);
 
   // Handle API key modal actions
   const handleGoToAdmin = () => {
@@ -205,7 +284,10 @@ function MainApp() {
 
   // Auto-sync sales data when app starts (after authentication) - IMPROVED STARTUP
   useEffect(() => {
-    if (isAuthed && window.api && window.api.updateSalesDataFromCliniko) {
+    // Don't auto-sync during first-time setup to avoid conflicts with manual setup sync
+    // Also don't auto-sync immediately after setup completion since user just completed full sync
+    // Also don't auto-sync at all if this is a first-time setup session
+    if (isAuthed && !isFirstTime && !justCompletedSetup && !disableAutoSyncThisSession && window.api && window.api.updateSalesDataFromCliniko) {
       // Much longer delay to let UI fully stabilize, plus user feedback
       setAutoSyncNotification('syncing');
       setAutoSyncDetails('App loaded successfully. Background sync will start in 10 seconds...');
@@ -224,7 +306,7 @@ function MainApp() {
         clearTimeout(countdownTimer);
       };
     }
-  }, [isAuthed]);
+  }, [isAuthed, isFirstTime, justCompletedSetup, disableAutoSyncThisSession]);
 
   const performGracefulAutoSync = async () => {
     try {
@@ -366,7 +448,7 @@ function MainApp() {
 
   // Show first time setup if this is the first run
   if (isFirstTime) {
-    return <FirstTimeSetup onSetupComplete={handleSetupComplete} />;
+    return <FirstTimeSetup onSetupComplete={handleSetupComplete} onBackgroundSyncComplete={handleBackgroundSyncComplete} />;
   }
 
   return (
@@ -458,6 +540,88 @@ function MainApp() {
                 ×
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Setup completion notification popup */}
+      {setupCompletionNotification && (
+        <div style={{
+          position: 'fixed',
+          top: autoSyncNotification ? '280px' : '130px', // Position below auto-sync notification if both are showing
+          right: '20px',
+          zIndex: 9999,
+          background: '#e8f5e8',
+          color: '#2e7d32',
+          padding: '16px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          border: '2px solid #4caf50',
+          maxWidth: '380px',
+          minWidth: '320px',
+          fontSize: '0.9em',
+          fontWeight: '500',
+          animation: 'slideInFromRight 0.3s ease-out',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+            <div style={{ 
+              fontSize: '20px', 
+              lineHeight: '1',
+              marginTop: '2px',
+              flexShrink: 0
+            }}>
+              🎉
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ 
+                fontWeight: '600', 
+                marginBottom: '6px',
+                fontSize: '0.95em',
+                lineHeight: '1.3'
+              }}>
+                Setup Complete!
+              </div>
+              <div style={{ 
+                fontSize: '0.85em', 
+                opacity: 0.85,
+                lineHeight: '1.4',
+                whiteSpace: 'pre-line'
+              }}>
+                Welcome to your Cliniko Inventory App! Your initial sync has completed successfully and you're ready to start managing your inventory.
+              </div>
+            </div>
+            <button
+              onClick={() => setSetupCompletionNotification(false)}
+              style={{
+                background: 'rgba(0,0,0,0.1)',
+                border: 'none',
+                color: 'inherit',
+                fontSize: '16px',
+                cursor: 'pointer',
+                padding: '4px 6px',
+                borderRadius: '6px',
+                opacity: 0.7,
+                transition: 'all 0.2s ease',
+                flexShrink: 0,
+                lineHeight: '1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '24px',
+                height: '24px'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.opacity = '1';
+                e.target.style.background = 'rgba(0,0,0,0.15)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.opacity = '0.7';
+                e.target.style.background = 'rgba(0,0,0,0.1)';
+              }}
+            >
+              ×
+            </button>
           </div>
         </div>
       )}

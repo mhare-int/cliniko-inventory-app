@@ -55,7 +55,7 @@ function Login({ onLogin }) {
       {/* Good Life Logo */}
       <img
         src={"goodlife.png"}
-        alt="Good Life Pharmacy"
+        alt="Good Life Clinic"
         style={{
           width: 180,
           maxWidth: "70%",

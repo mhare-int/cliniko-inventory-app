@@ -3,7 +3,7 @@ REVAMPED CLINIKO APP - DESCRIPTION
 
 OVERVIEW
 --------
-This is a comprehensive healthcare inventory management application that integrates with the Cliniko practice management system. The app helps healthcare practices manage their stock procurement, track purchase requests, and analyze sales data.
+This is a comprehensive healthcare inventory management application that integrates with the Cliniko practice management system. The app helps healthcare practices manage their stock procurement, track purchase orders, and analyze sales data.
 
 MAIN FEATURES
 -------------
@@ -12,10 +12,10 @@ MAIN FEATURES
    - Main dashboard for managing stock procurement activities
    - Centralized view of inventory operations
 
-2. PURCHASE REQUEST MANAGEMENT
-   - Active Purchase Requests: Track ongoing procurement requests
-   - Archived Purchase Requests: Historical view of completed requests
-   - Create new purchase requests for medical supplies and equipment
+2. PURCHASE ORDER MANAGEMENT
+   - Active Purchase Orders: Track ongoing procurement orders
+   - Archived Purchase Orders: Historical view of completed orders
+   - Create new purchase orders for medical supplies and equipment
 
 3. MASTER STOCK LIST
    - Comprehensive database of all available stock items
@@ -69,7 +69,7 @@ BENEFITS
 --------
 - Streamlined inventory management
 - Reduced manual data entry
-- Better tracking of purchase requests
+- Better tracking of purchase orders
 - Improved supplier relationships
 - Real-time visibility into stock levels
 - Data-driven decision making through analytics

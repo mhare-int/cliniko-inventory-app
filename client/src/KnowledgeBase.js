@@ -21,7 +21,7 @@ const KnowledgeBase = () => {
           'View sales data and trends',
           'Manage user accounts and permissions'
         ],
-        workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase requests for needed items → Generate supplier files → Send to suppliers → Receive and log deliveries'
+        workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase orders for needed items → Generate supplier files → Send to suppliers → Receive and log deliveries'
       }
     },
     {
@@ -34,7 +34,7 @@ const KnowledgeBase = () => {
         features: [
           'Good Life company logo at the top',
           'Welcome message confirms you\'re in the right place',
-          'Blue "Create Purchase Requests" button - click to start ordering',
+          'Blue "Create Purchase Orders" button - click to start ordering',
           'Green "Generate Supplier Files" button - click after making requests',
           'Navigation tabs at the top take you to other sections'
         ],
@@ -68,12 +68,12 @@ const KnowledgeBase = () => {
           'Focus on setting good reorder points rather than manually selecting items',
           'Use bulk upload for initial setup of many reorder levels'
         ],
-        workflow: 'Open page → Use filters to find products → Set reorder points → Save changes → Use Create Purchase Requests for actual ordering'
+        workflow: 'Open page → Use filters to find products → Set reorder points → Save changes → Use Create Purchase Orders for actual ordering'
       }
     },
     {
       id: 'create-pr',
-      title: '📝 Create Purchase Requests',
+      title: '📝 Create Purchase Orders',
       icon: '✏️',
       content: {
         title: 'How to Order More Stock',
@@ -96,11 +96,11 @@ const KnowledgeBase = () => {
     },
     {
       id: 'purchase-requests',
-      title: '📋 Active Purchase Requests',
+      title: '📋 Active Purchase Orders',
       icon: '⏳',
       content: {
         title: 'Checking Your Current Orders',
-        description: 'This shows you all the purchase requests you\'ve made that haven\'t been completed yet.',
+        description: 'This shows you all the purchase orders you\'ve made that haven\'t been completed yet.',
         features: [
           'See all orders you\'ve submitted but not finished',
           'Check which supplier each order goes to',
@@ -123,7 +123,7 @@ const KnowledgeBase = () => {
       icon: '🗄️',
       content: {
         title: 'Historical Records',
-        description: 'Access completed purchase requests and historical ordering data.',
+        description: 'Access completed purchase orders and historical ordering data.',
         features: [
           'Complete order history',
           'Search by date, supplier, or product',
@@ -147,9 +147,9 @@ const KnowledgeBase = () => {
       icon: '📄',
       content: {
         title: 'How to Send Orders to Your Suppliers',
-        description: 'After creating purchase requests, use this page to turn them into Excel files you can email to suppliers.',
+        description: 'After creating purchase orders, use this page to turn them into Excel files you can email to suppliers.',
         features: [
-          'Creates Excel files from your purchase requests',
+          'Creates Excel files from your purchase orders',
           'Makes separate files for each supplier automatically',
           'Download links appear after files are generated',
           'Files are formatted professionally for suppliers',

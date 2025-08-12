@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-function FirstTimeSetup({ onSetupComplete }) {
+function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -10,6 +10,7 @@ function FirstTimeSetup({ onSetupComplete }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [productsCount, setProductsCount] = useState(0);
+  const [suppliersCount, setSuppliersCount] = useState(0);
   const [salesCount, setSalesCount] = useState(0);
   
   // Default to 2 years ago
@@ -19,6 +20,9 @@ function FirstTimeSetup({ onSetupComplete }) {
   const [previewCount, setPreviewCount] = useState(null);
   const [previewResult, setPreviewResult] = useState(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  
+  // Setup completion notification
+  const [setupCompletionNotification, setSetupCompletionNotification] = useState(null);
 
   // Step 1: Create Administrator Account
   const handleStep1Submit = async (e) => {
@@ -164,9 +168,11 @@ function FirstTimeSetup({ onSetupComplete }) {
       console.log('Product sync result:', productResult);
       
       if (productResult && !productResult.error) {
-        // Get product count
+        // Get product count and supplier count
         const productCount = productResult.products_synced || productResult.inserted || productResult.total || 0;
-        console.log(`Successfully synced ${productCount} products`);
+        // During first-time setup, suppliers are auto-added, so check suppliers_added first
+        const supplierCount = productResult.suppliers_added || productResult.suppliers_updated || 0;
+        console.log(`Successfully synced ${productCount} products and ${supplierCount} suppliers`);
         
         // Verify products were actually saved
         let actualProductCount = 0;
@@ -181,6 +187,7 @@ function FirstTimeSetup({ onSetupComplete }) {
         }
         
         setProductsCount(actualProductCount);
+        setSuppliersCount(supplierCount);
         
         if (actualProductCount === 0) {
           throw new Error('Product sync reported success but no products were found in database');
@@ -194,14 +201,34 @@ function FirstTimeSetup({ onSetupComplete }) {
           .then(salesResult => {
             console.log('Background sales sync completed:', salesResult);
             if (salesResult && !salesResult.error) {
-              const salesSyncCount = salesResult.invoices_processed || salesResult.synced || 0;
+              const salesSyncCount = salesResult.invoicesProcessed || salesResult.salesRecordsInserted || salesResult.invoices_processed || salesResult.synced || 0;
               console.log(`Background sync: Successfully synced ${salesSyncCount} sales records`);
+              
+              // Update sales count
+              setSalesCount(salesSyncCount);
+              
+              // Notify main app of successful background sync completion
+              if (onBackgroundSyncComplete) {
+                onBackgroundSyncComplete(salesResult);
+              }
             } else {
               console.warn('Background sales sync failed:', salesResult?.error);
+              setSalesCount('error');
+              
+              // Notify main app of failed background sync
+              if (onBackgroundSyncComplete) {
+                onBackgroundSyncComplete(salesResult);
+              }
             }
           })
           .catch(salesErr => {
             console.warn('Background sales sync failed:', salesErr);
+            setSalesCount('error');
+            
+            // Notify main app of failed background sync
+            if (onBackgroundSyncComplete) {
+              onBackgroundSyncComplete({ error: salesErr.message || salesErr });
+            }
           });
         
         // Set a placeholder for sales count since it's running in background
@@ -209,9 +236,19 @@ function FirstTimeSetup({ onSetupComplete }) {
         
         // Setup complete! Allow user to proceed immediately
         console.log('Initial setup completed! Sales data sync continuing in background...');
+        
+        // Show completion notification
+        setSetupCompletionNotification({
+          type: 'success',
+          title: '🎉 Setup Complete!',
+          message: `Product sync finished successfully!\n${actualProductCount} products imported.\n${supplierCount} suppliers updated.\nSales data sync is continuing in the background.`
+        });
+        
+        // Auto-hide notification and proceed to main app
         setTimeout(() => {
+          setSetupCompletionNotification(null);
           if (onSetupComplete) onSetupComplete();
-        }, 1500); // Brief delay to show the completion message
+        }, 4000); // Show notification for 4 seconds
         
       } else {
         throw new Error(productResult?.error || 'Product sync failed with unknown error');
@@ -525,6 +562,7 @@ function FirstTimeSetup({ onSetupComplete }) {
             </div>
             <div style={{ color: '#2f855a' }}>
               <div>📦 Products synced: <strong>{productsCount}</strong></div>
+              <div>🏢 Suppliers updated: <strong>{suppliersCount}</strong></div>
               <div>💰 Sales records: {salesCount === 'syncing...' ? (
                 <span><strong>syncing in background...</strong> ⏳</span>
               ) : (

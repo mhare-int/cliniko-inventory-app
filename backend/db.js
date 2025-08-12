@@ -466,11 +466,12 @@ function previewSalesDataCount(startDate = null, endDate = null, providedApiKey 
             
             console.log(`Preview found ${totalEntries} total invoices in date range`);
             
-            // Calculate estimated sync time based on rate limits
+            // Calculate estimated sync time based on realistic processing times
             const invoicesPerPage = 100; // From sync function
-            const delayBetweenPages = 2; // seconds
+            const timePerInvoice = 2; // Realistic processing time per invoice in seconds
+            
             const estimatedPages = Math.ceil(totalEntries / invoicesPerPage);
-            const estimatedTimeSeconds = estimatedPages * delayBetweenPages;
+            const estimatedTimeSeconds = totalEntries * timePerInvoice; // 2 seconds per invoice
             const estimatedTimeMinutes = Math.round(estimatedTimeSeconds / 60 * 10) / 10; // Round to 1 decimal
             
             // Format time estimate
@@ -485,7 +486,7 @@ function previewSalesDataCount(startDate = null, endDate = null, providedApiKey 
               timeEstimate = `${hours} hour${hours > 1 ? 's' : ''} ${minutes} minutes`;
             }
             
-            console.log(`Estimated sync time: ${timeEstimate} (${estimatedPages} pages with ${delayBetweenPages}s delays)`);
+            console.log(`Estimated sync time: ${timeEstimate} (${totalEntries} invoices at ~${timePerInvoice}s per invoice)`);
             
             resolve({
               success: true,
@@ -1848,9 +1849,11 @@ function getApiKey() {
   return new Promise((resolve, reject) => {
     db.get('SELECT value FROM settings WHERE key = ?', ['CLINIKO_API_KEY'], (err, row) => {
       if (err) {
+        console.error('Error checking API key:', err);
         return reject(err);
       }
-      resolve({ api_key: !!(row && row.value) }); // Do not return actual key for security
+      const hasKey = !!(row && row.value);
+      resolve({ api_key: hasKey }); // Do not return actual key for security
     });
   });
 }
