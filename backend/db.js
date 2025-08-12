@@ -229,14 +229,14 @@ function syncProductsFromCliniko() {
                 
                 // Use UPSERT to avoid duplicates and correctly update existing rows
                 db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level)
-                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0))
+                        VALUES (?, ?, ?, ?, ?, 0)
                         ON CONFLICT(cliniko_id) DO UPDATE SET
                           name=excluded.name,
                           barcode=excluded.barcode,
                           stock=excluded.stock,
                           supplier_name=excluded.supplier_name,
-                          reorder_level=COALESCE(products.reorder_level, excluded.reorder_level)`,
-                  [cliniko_id, name, barcode, stock, supplier_name, cliniko_id], 
+                          reorder_level=COALESCE(products.reorder_level, 0)`,
+                  [cliniko_id, name, barcode, stock, supplier_name], 
                   function(err) {
                     if (err) {
                       console.error('Error upserting product:', err, 'Product:', product);

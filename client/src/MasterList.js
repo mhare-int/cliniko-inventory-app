@@ -14,6 +14,12 @@ function MasterStockList() {
   const [fileInput, setFileInput] = useState(null);
   const [onOrderQuantities, setOnOrderQuantities] = useState({});
   const [editingBarcodes, setEditingBarcodes] = useState({});
+  const [hiddenProducts, setHiddenProducts] = useState(new Set());
+  const [showRestorePopup, setShowRestorePopup] = useState(false);
+  
+  // Initialize with proper sorting - use a more robust approach
+  const [sortField, setSortField] = useState('name');
+  const [sortDirection, setSortDirection] = useState('asc');
 
   const fileInputRef = useRef();
 
@@ -88,6 +94,22 @@ function MasterStockList() {
     fetchProducts();
   }, []);
 
+  // Force re-render when sort changes to ensure proper sorting
+  useEffect(() => {
+    // This effect ensures the component re-renders when sort state changes
+  }, [sortField, sortDirection]);
+
+  // Ensure proper initial sort when products are loaded
+  useEffect(() => {
+    if (products.length > 0) {
+      // Force a proper initial sort by triggering the sort function
+      setTimeout(() => {
+        setSortField('name');
+        setSortDirection('asc');
+      }, 100);
+    }
+  }, [products]);
+
   const fetchProducts = async () => {
     setLoading(true);
     try {
@@ -130,6 +152,10 @@ function MasterStockList() {
       }
       setOnOrderQuantities(onOrder);
       
+      // Ensure initial sort is properly applied
+      setSortField('name');
+      setSortDirection('asc');
+      
     } catch (error) {
       console.error("Failed to fetch products", error);
     }
@@ -157,6 +183,11 @@ function MasterStockList() {
   };
 
   const filteredProducts = products.filter(p => {
+    // First check if product is hidden
+    if (hiddenProducts.has(p.cliniko_id)) {
+      return false;
+    }
+    
     let matchesProduct = true;
     let matchesSupplier = true;
 
@@ -167,6 +198,22 @@ function MasterStockList() {
       matchesSupplier = p.supplier_name === supplierFilter.value;
     }
     return matchesProduct && matchesSupplier;
+  }).sort((a, b) => {
+    // Dynamic sorting based on sortField and sortDirection
+    let aValue = '';
+    let bValue = '';
+    
+    if (sortField === 'name') {
+      // Clean and normalize the names for better sorting
+      aValue = (a.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      bValue = (b.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    } else if (sortField === 'supplier_name') {
+      aValue = (a.supplier_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      bValue = (b.supplier_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+    
+    const comparison = aValue.localeCompare(bValue);
+    return sortDirection === 'asc' ? comparison : -comparison;
   });
 
   const handleSelectRow = (cliniko_id) => {
@@ -182,6 +229,17 @@ function MasterStockList() {
       setSelectedIds([]);
     } else {
       setSelectedIds(filteredProducts.map(p => p.cliniko_id));
+    }
+  };
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      // Toggle direction if same field
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New field, default to ascending
+      setSortField(field);
+      setSortDirection('asc');
     }
   };
 
@@ -220,6 +278,32 @@ function MasterStockList() {
       console.error('Failed to update barcode', err);
       alert('Failed to update barcode');
     }
+  };
+
+  const handleHideProduct = (cliniko_id) => {
+    setHiddenProducts(prev => new Set([...prev, cliniko_id]));
+    // Also remove from selected if it was selected
+    setSelectedIds(prev => prev.filter(id => id !== cliniko_id));
+  };
+
+  const handleRestoreProducts = (productIds) => {
+    setHiddenProducts(prev => {
+      const newSet = new Set(prev);
+      productIds.forEach(id => newSet.delete(id));
+      return newSet;
+    });
+    setShowRestorePopup(false);
+  };
+
+  const handleRemoveSelected = () => {
+    if (selectedIds.length > 0) {
+      setHiddenProducts(prev => new Set([...prev, ...selectedIds]));
+      setSelectedIds([]); // Clear selection after removing
+    }
+  };
+
+  const getHiddenProductsList = () => {
+    return products.filter(p => hiddenProducts.has(p.cliniko_id));
   };
 
   const handleCreatePurchaseRequest = () => {
@@ -352,7 +436,7 @@ function MasterStockList() {
       </div>
       
       {/* Instructions and upload message */}
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 4 }}>
         {uploadMessage && (
           <div style={{ 
             marginBottom: 10,
@@ -393,8 +477,120 @@ function MasterStockList() {
         accept=".xlsx,.xls,.csv"
       />
 
+      {/* Action Bar - Above search bars, with remove selected (left) and hidden products (right) */}
+      {(selectedIds.length > 0 || hiddenProducts.size > 0) && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", margin: 0, padding: 0, lineHeight: 1 }}>
+        {/* Remove Selected Button - Left side */}
+        <div style={{ flex: "0 0 auto" }}>
+          {selectedIds.length > 0 && (
+            <div style={{
+              display: "flex",
+              alignItems: "flex-end", // KEY: Perfect baseline alignment
+              gap: 8,
+              width: "fit-content"
+            }}>
+              <span style={{
+                fontSize: 11,
+                color: "#721c24",
+                background: "#f8d7da",
+                border: "1px solid #f5c6cb",
+                borderRadius: 4,
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+                height: 32, // Fixed height (number, not string)
+                display: "flex",
+                alignItems: "center",
+                paddingLeft: 10,
+                paddingRight: 10,
+                boxSizing: "border-box"
+              }}>
+                {selectedIds.length} product{selectedIds.length !== 1 ? 's' : ''} selected
+              </span>
+              <button
+                onClick={handleRemoveSelected}
+                style={{
+                  background: "#dc3545",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 4,
+                  fontSize: 9,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  padding: "0 6px", // Simplified padding
+                  height: 32, // Same height as span
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxSizing: "border-box"
+                }}
+              >
+                Remove Selected
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Hidden Products Indicator - Right side */}
+        <div style={{ flex: "0 0 auto" }}>
+          {hiddenProducts.size > 0 && (
+            <div style={{
+              display: "flex",
+              alignItems: "flex-end", // KEY: Perfect baseline alignment
+              gap: 8,
+              width: "fit-content"
+            }}>
+              <span style={{
+                fontSize: 11,
+                color: "#856404",
+                background: "#fff3cd",
+                border: "1px solid #ffeaa7",
+                borderRadius: 4,
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+                height: 32, // Fixed height (number, not string)
+                display: "flex",
+                alignItems: "center",
+                paddingLeft: 10,
+                paddingRight: 10,
+                boxSizing: "border-box"
+              }}>
+                📦 {hiddenProducts.size} product{hiddenProducts.size !== 1 ? 's' : ''} hidden
+              </span>
+              <button
+                onClick={() => setShowRestorePopup(true)}
+                style={{
+                  background: "#856404",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 4,
+                  fontSize: 9,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  padding: "0 6px", // Simplified padding
+                  height: 32, // Same height as span
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxSizing: "border-box"
+                }}
+              >
+                Manage Hidden Items
+              </button>
+            </div>
+          )}
+        </div>
+        </div>
+      )}
+
       {/* Two AsyncSelects side by side */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 20 }}>
+      <div style={{ 
+        display: "flex", 
+        gap: 16, 
+        marginTop: (selectedIds.length > 0 || hiddenProducts.size > 0) ? 4 : 8, 
+        marginBottom: 20 
+      }}>
         <AsyncSelect
           cacheOptions
           loadOptions={loadProductOptions}
@@ -450,16 +646,38 @@ function MasterStockList() {
               position: "sticky",
               top: 0,
               backgroundColor: "#f0f0f0",
-              zIndex: 11
-            }}>Product Name</th>
+              zIndex: 11,
+              cursor: "pointer",
+              userSelect: "none"
+            }}
+            onClick={() => handleSort('name')}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                Product Name
+                <span style={{ marginLeft: 4, fontSize: 12 }}>
+                  {sortField === 'name' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                </span>
+              </div>
+            </th>
             <th style={{ 
               padding: 8, 
               border: "1px solid #ccc",
               position: "sticky",
               top: 0,
               backgroundColor: "#f0f0f0",
-              zIndex: 11
-            }}>Supplier</th>
+              zIndex: 11,
+              cursor: "pointer",
+              userSelect: "none"
+            }}
+            onClick={() => handleSort('supplier_name')}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                Supplier
+                <span style={{ marginLeft: 4, fontSize: 12 }}>
+                  {sortField === 'supplier_name' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                </span>
+              </div>
+            </th>
             <th style={{ 
               padding: 8, 
               border: "1px solid #ccc", 
@@ -504,12 +722,22 @@ function MasterStockList() {
               backgroundColor: "#f0f0f0",
               zIndex: 11
             }}>Barcode</th>
+            <th style={{ 
+              padding: 8, 
+              border: "1px solid #ccc", 
+              textAlign: "center",
+              width: 40,
+              position: "sticky",
+              top: 0,
+              backgroundColor: "#f0f0f0",
+              zIndex: 11
+            }}>Actions</th>
           </tr>
         </thead>
         <tbody>
           {filteredProducts.length === 0 && (
             <tr>
-              <td colSpan={8} style={{ padding: 20, textAlign: "center", color: "#999" }}>
+              <td colSpan={9} style={{ padding: 20, textAlign: "center", color: "#999" }}>
                 No products found.
               </td>
             </tr>
@@ -557,6 +785,30 @@ function MasterStockList() {
                     placeholder="Scan or type barcode"
                     style={{ width: 160, fontSize: 14 }}
                   />
+                </td>
+                <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center" }}>
+                  <button
+                    onClick={() => handleHideProduct(p.cliniko_id)}
+                    style={{
+                      background: "#dc3545",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 4,
+                      width: 24,
+                      height: 24,
+                      cursor: "pointer",
+                      fontSize: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: "bold",
+                      lineHeight: 1,
+                      margin: "0 auto"
+                    }}
+                    title="Hide product from list"
+                  >
+                    ×
+                  </button>
                 </td>
               </tr>
             );
@@ -609,6 +861,187 @@ function MasterStockList() {
           <span style={{ fontSize: "18px" }}>📝</span>
           Create Purchase Request ({selectedIds.length})
         </button>
+      </div>
+      
+      {/* Restore Products Popup */}
+      {showRestorePopup && (
+        <RestoreProductsPopup
+          hiddenProducts={getHiddenProductsList()}
+          onRestore={handleRestoreProducts}
+          onClose={() => setShowRestorePopup(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// RestoreProductsPopup Component
+function RestoreProductsPopup({ hiddenProducts, onRestore, onClose }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  const handleSelectAll = () => {
+    if (selectedIds.length === hiddenProducts.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(hiddenProducts.map(p => p.cliniko_id));
+    }
+  };
+
+  const handleSelectProduct = (cliniko_id) => {
+    setSelectedIds(prev => 
+      prev.includes(cliniko_id) 
+        ? prev.filter(id => id !== cliniko_id)
+        : [...prev, cliniko_id]
+    );
+  };
+
+  const handleRestore = () => {
+    if (selectedIds.length > 0) {
+      onRestore(selectedIds);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(0, 0, 0, 0.5)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 2000
+    }}>
+      <div style={{
+        backgroundColor: "white",
+        borderRadius: 8,
+        padding: 24,
+        maxWidth: 600,
+        width: "90%",
+        maxHeight: "80vh",
+        overflow: "auto",
+        boxShadow: "0 10px 25px rgba(0, 0, 0, 0.2)"
+      }}>
+        <div style={{
+          display: "flex",
+          alignItems: "flex-end", // KEY: Perfect baseline alignment
+          justifyContent: "space-between",
+          marginBottom: 20,
+          borderBottom: "1px solid #eee",
+          paddingBottom: 16,
+          minHeight: 32
+        }}>
+          <h3 style={{ 
+            margin: 0, 
+            color: "#333", 
+            height: 32,
+            display: "flex",
+            alignItems: "center",
+            boxSizing: "border-box"
+          }}>
+            Restore Hidden Products ({hiddenProducts.length})
+          </h3>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              fontSize: 18,
+              cursor: "pointer",
+              color: "#666",
+              height: 32,
+              width: 32,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 4,
+              boxSizing: "border-box"
+            }}
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14, fontWeight: 600, paddingLeft: 12 }}>
+            <input
+              type="checkbox"
+              checked={selectedIds.length === hiddenProducts.length && hiddenProducts.length > 0}
+              onChange={handleSelectAll}
+            />
+            Select All
+          </label>
+        </div>
+
+        <div style={{ 
+          maxHeight: 300, 
+          overflowY: "auto", 
+          border: "1px solid #ddd", 
+          borderRadius: 4,
+          marginBottom: 20
+        }}>
+          {hiddenProducts.map(product => (
+            <div
+              key={product.cliniko_id}
+              style={{
+                padding: 12,
+                borderBottom: "1px solid #eee",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                backgroundColor: selectedIds.includes(product.cliniko_id) ? "#f0f8ff" : "white"
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(product.cliniko_id)}
+                onChange={() => handleSelectProduct(product.cliniko_id)}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{product.name}</div>
+                <div style={{ fontSize: 12, color: "#666" }}>
+                  Supplier: {product.supplier_name || "N/A"} | Stock: {product.stock}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "10px 20px",
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              background: "white",
+              color: "#333",
+              cursor: "pointer",
+              fontSize: 14
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleRestore}
+            disabled={selectedIds.length === 0}
+            style={{
+              padding: "10px 20px",
+              border: "none",
+              borderRadius: 4,
+              background: selectedIds.length === 0 ? "#ccc" : "#28a745",
+              color: "white",
+              cursor: selectedIds.length === 0 ? "not-allowed" : "pointer",
+              fontSize: 14,
+              fontWeight: 600
+            }}
+          >
+            Restore Selected ({selectedIds.length})
+          </button>
+        </div>
       </div>
     </div>
   );
