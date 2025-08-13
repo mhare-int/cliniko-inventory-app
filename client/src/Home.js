@@ -247,7 +247,7 @@ function Home() {
             e.target.style.transform = "translateY(0)";
             e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
-            Generate Supplier Files
+            Send Orders to Suppliers
           </button>
         </Link>
         <Link to="/purchase-requests" style={{ textDecoration: "none" }}>

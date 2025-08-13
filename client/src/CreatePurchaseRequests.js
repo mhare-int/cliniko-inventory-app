@@ -107,6 +107,12 @@ function CreatePurchaseRequests() {
     }
     window.api.getAllProducts()
       .then(res => {
+        console.log('[DEBUG CreatePurchaseRequests] Received products:', res.slice(0, 3));
+        console.log('[DEBUG CreatePurchaseRequests] Sample product structure:', {
+          sampleProduct: res[0],
+          hasSupplierName: !!res[0]?.supplier_name,
+          supplierNameValue: res[0]?.supplier_name
+        });
         setProducts(res);
         
         // Check if we have pre-selected items from Master List
@@ -212,6 +218,10 @@ function CreatePurchaseRequests() {
 
   // When a product is selected in the add row
   const handleProductSelect = (selectedOption) => {
+    console.log('[DEBUG handleProductSelect] selectedOption:', selectedOption);
+    console.log('[DEBUG handleProductSelect] selectedOption.data:', selectedOption?.data);
+    console.log('[DEBUG handleProductSelect] selectedOption.data.supplier_name:', selectedOption?.data?.supplier_name);
+    
     setAddRow(row => ({
       ...row,
       product: selectedOption ? selectedOption.data : null,

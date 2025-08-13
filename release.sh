@@ -207,7 +207,7 @@ print_success "Native dependencies rebuilt"
 
 # Step 10: Build Electron application
 print_step "Building Electron application..."
-npm run dist
+npm run package
 if [ $? -ne 0 ]; then
     print_error "Electron build failed!"
     exit 1

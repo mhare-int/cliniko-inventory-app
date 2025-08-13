@@ -197,6 +197,18 @@ ipcMain.handle('pickFolder', async () => {
   return result.filePaths[0];
 });
 
+// --- Open .eml file in default email client ---
+ipcMain.handle('openEmlFile', async (event, filePath) => {
+  try {
+    const { shell } = require('electron');
+    await shell.openPath(filePath);
+    return { success: true };
+  } catch (err) {
+    logErrorToFile('openEmlFile error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { success: false, error: err.message };
+  }
+});
+
 // --- Update stock from Cliniko API on app open ---
 ipcMain.handle('updateStockFromCliniko', async () => {
   try {
@@ -700,15 +712,31 @@ ipcMain.handle('setSmartPromptsSetting', async (event, enabled) => {
   }
 });
 
-// Email functionality - opens system default email client
+// Email functionality - creates email drafts using Outlook COM on Windows, .eml files on other platforms
 ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
   try {
-    const { exec } = require('child_process');
-    const util = require('util');
-    const execPromise = util.promisify(exec);
+    const path = require('path');
+    const fs = require('fs');
+    const os = require('os');
+    const mimeTypes = require('mime-types');
     
     let sentCount = 0;
     const errors = [];
+    const emlFiles = [];
+
+    // Check if we're on Windows and can use Outlook COM
+    const isWindows = os.platform() === 'win32';
+    let outlookApp = null;
+    
+    if (isWindows) {
+      try {
+        // Try to create Outlook COM object
+        const { spawn } = require('child_process');
+        // We'll use a PowerShell script to create Outlook emails
+      } catch (comError) {
+        console.log('Outlook COM not available, falling back to .eml files');
+      }
+    }
 
     for (const email of emailData) {
       try {
@@ -719,228 +747,223 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
           continue;
         }
 
-        // Handle attachment file (may be null if no attachments)
-        let attachmentPath = null;
-        if (attachmentFile) {
-          // Get full path to attachment file
-          attachmentPath = path.resolve(attachmentFile);
+        if (isWindows) {
+          // Use PowerShell to create Outlook COM email (more reliable than direct COM in Node.js)
+          const sanitizedVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
           
-          // Check if file exists
-          if (!fs.existsSync(attachmentPath)) {
-            errors.push(`Attachment file not found: ${attachmentFile}`);
-            continue;
-          }
-        }
-
-        // Try HTML first, fallback to plain text on failure
-        let emailContent = message; // Start with HTML version
-        let success = false;
-        let lastError = null;
-
-        // Escape special characters for command line
-        const escapedEmail = toEmail.replace(/"/g, '""');
-        const escapedSubject = subject.replace(/"/g, '""');
-        const escapedAttachment = attachmentPath ? attachmentPath.replace(/"/g, '""') : null;
-
-        let command;
-        
-        if (process.platform === 'win32') {
-          // Windows - Enhanced error handling and multiple fallbacks
-          console.log(`Attempting to send email to ${vendorName} (${toEmail}) on Windows`);
+          // Create PowerShell script content
+          const powershellScript = `
+try {
+    $outlook = New-Object -ComObject Outlook.Application
+    $mail = $outlook.CreateItem(0)
+    
+    $mail.To = "${toEmail.replace(/"/g, '""')}"
+    $mail.Subject = "${subject.replace(/"/g, '""')}"
+    
+    # Set HTML body with full formatting
+    $htmlBody = @"
+${message.replace(/"/g, '""')}
+"@
+    
+    $mail.HTMLBody = $htmlBody
+    
+    # Add attachment if provided
+    ${attachmentFile && fs.existsSync(attachmentFile) ? `
+    $attachmentPath = "${attachmentFile.replace(/\\/g, '\\\\').replace(/"/g, '""')}"
+    if (Test-Path $attachmentPath) {
+        $mail.Attachments.Add($attachmentPath)
+    }` : ''}
+    
+    # Display the email as editable draft
+    $mail.Display()
+    
+    Write-Host "SUCCESS: Email draft created for ${vendorName.replace(/"/g, '""')}"
+    exit 0
+} catch {
+    Write-Host "ERROR: $($_.Exception.Message)"
+    exit 1
+}`;
           
-          // Quick test to see if Outlook is available
-          try {
-            const testResult = await execPromise('powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "try { $outlook = New-Object -ComObject Outlook.Application; Write-Output \'OUTLOOK_AVAILABLE\' } catch { Write-Output \'OUTLOOK_NOT_AVAILABLE\' }"');
-            console.log(`Outlook availability test: ${testResult.stdout.trim()}`);
-          } catch (testError) {
-            console.log(`Outlook test failed: ${testError.message}`);
-          }
+          // Save PowerShell script to temp file
+          const tempDir = os.tmpdir();
+          const scriptPath = path.join(tempDir, `outlook_email_${Date.now()}.ps1`);
+          fs.writeFileSync(scriptPath, powershellScript, 'utf8');
           
-          // First try: Outlook COM object
-          try {
-            // Simple approach - create basic PowerShell script
-            const cleanSubject = subject.replace(/'/g, "''").replace(/"/g, '""');
-            const cleanMessage = emailContent.replace(/'/g, "''").replace(/"/g, '""').replace(/\r?\n/g, '<br>');
-            const cleanEmail = toEmail.replace(/'/g, "''").replace(/"/g, '""');
-            
-            // Use single quotes in PowerShell to avoid most escaping issues
-            command = `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "
+          // Execute PowerShell script
+          const { spawn } = require('child_process');
+          const powershell = spawn('powershell.exe', [
+            '-ExecutionPolicy', 'Bypass',
+            '-File', scriptPath
+          ], {
+            stdio: ['pipe', 'pipe', 'pipe']
+          });
+          
+          let scriptOutput = '';
+          let scriptError = '';
+          
+          powershell.stdout.on('data', (data) => {
+            scriptOutput += data.toString();
+          });
+          
+          powershell.stderr.on('data', (data) => {
+            scriptError += data.toString();
+          });
+          
+          await new Promise((resolve, reject) => {
+            powershell.on('close', (code) => {
+              // Clean up temp script file
               try {
-                $$outlook = New-Object -ComObject Outlook.Application;
-                $$mail = $$outlook.CreateItem(0);
-                $$mail.To = '${cleanEmail}';
-                $$mail.Subject = '${cleanSubject}';
-                $$mail.HTMLBody = '${cleanMessage}';`;
-                
-            if (attachmentPath) {
-              command += `
-                $$mail.Attachments.Add('${attachmentPath.replace(/\\/g, '\\\\')}');`;
-            }
-            
-            command += `
-                $$mail.Display();
-                Write-Output 'SUCCESS';
-              } catch {
-                Write-Output ('ERROR: ' + $$_.Exception.Message);
-                exit 1;
+                fs.unlinkSync(scriptPath);
+              } catch (e) {}
+              
+              if (code === 0 && scriptOutput.includes('SUCCESS')) {
+                console.log(`✅ Created Outlook draft for ${vendorName}`);
+                sentCount++;
+                emlFiles.push({
+                  vendor: vendorName,
+                  email: toEmail,
+                  file: `Outlook Draft - ${vendorName}`,
+                  filename: `Draft created in Outlook for ${vendorName}`,
+                  isOutlookDraft: true
+                });
+                resolve();
+              } else {
+                console.error(`❌ PowerShell error for ${vendorName}: ${scriptError || scriptOutput}`);
+                errors.push(`Failed to create Outlook draft for ${vendorName}: ${scriptError || 'Unknown error'}`);
+                resolve(); // Continue with other emails
               }
-            "`;
+            });
             
-            console.log(`🔄 Trying Outlook COM for ${vendorName}...`);
-            const result = await execPromise(command);
-            
-            if (result.stdout && result.stdout.includes('SUCCESS')) {
-              console.log(`✅ Outlook email created for ${vendorName}`);
-              success = true;
+            powershell.on('error', (err) => {
+              console.error(`❌ PowerShell spawn error for ${vendorName}:`, err);
+              errors.push(`Failed to launch PowerShell for ${vendorName}: ${err.message}`);
+              resolve(); // Continue with other emails
+            });
+          });
+          
+        } else {
+          // Non-Windows: Create .eml file (existing logic)
+          const sanitizedVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const emlFilename = `PO_${sanitizedVendorName}_${timestamp}.eml`;
+          
+          // Use the same output folder that was selected for Excel files, or get from first file
+          let outputFolder = '';
+          if (attachmentFile) {
+            outputFolder = path.dirname(attachmentFile);
+          } else {
+            // If no attachment file, try to find output folder from other emails in this batch
+            const fileWithAttachment = emailData.find(e => e.attachmentFile);
+            if (fileWithAttachment) {
+              outputFolder = path.dirname(fileWithAttachment.attachmentFile);
             } else {
-              throw new Error(`Outlook command failed: ${result.stderr || result.stdout || 'Unknown error'}`);
-            }
-            
-          } catch (outlookError) {
-            console.log(`❌ Outlook failed for ${vendorName}:`, outlookError.message);
-            
-            // Second try: Windows mailto with default email client
-            try {
-              const encodedSubject = encodeURIComponent(subject);
-              const encodedBody = encodeURIComponent(fallbackMessage || emailContent.replace(/<[^>]*>/g, ''));
-              const mailto = `mailto:${toEmail}?subject=${encodedSubject}&body=${encodedBody}`;
-              
-              console.log(`🔄 Trying Windows start command for ${vendorName}...`);
-              
-              command = `start "" "${mailto}"`;
-              await execPromise(command);
-              console.log(`✅ Default email client opened for ${vendorName}`);
-              success = true;
-              
-            } catch (mailtoError) {
-              console.log(`❌ mailto failed for ${vendorName}:`, mailtoError.message);
-              
-              // Third try: PowerShell Start-Process mailto
-              try {
-                console.log(`🔄 Trying PowerShell Start-Process for ${vendorName}...`);
-                const psSubject = subject.replace(/'/g, "''");
-                const psBody = (fallbackMessage || emailContent.replace(/<[^>]*>/g, '')).replace(/'/g, "''");
-                
-                command = `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "
-                  try {
-                    Add-Type -AssemblyName System.Web;
-                    $$subject = [System.Web.HttpUtility]::UrlEncode('${psSubject}');
-                    $$body = [System.Web.HttpUtility]::UrlEncode('${psBody}');
-                    $$mailto = 'mailto:${toEmail}?subject=' + $$subject + '&body=' + $$body;
-                    Start-Process $$mailto;
-                    Write-Output 'PowerShell SUCCESS';
-                  } catch {
-                    Write-Output ('PowerShell ERROR: ' + $$_.Exception.Message);
-                    exit 1;
-                  }
-                "`;
-                
-                const psResult = await execPromise(command);
-                if (psResult.stdout && psResult.stdout.includes('SUCCESS')) {
-                  console.log(`✅ PowerShell mailto worked for ${vendorName}`);
-                  success = true;
-                } else {
-                  throw new Error(`PowerShell command failed: ${psResult.stderr || psResult.stdout || 'Unknown error'}`);
-                }
-                success = true;
-                
-              } catch (psError) {
-                lastError = new Error(`All Windows email methods failed: Outlook (${outlookError.message}), CMD mailto (${mailtoError.message}), PowerShell (${psError.message})`);
-              }
-            }
-          }
-        } else if (process.platform === 'darwin') {
-          // macOS - Try HTML first, fallback to plain text
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              const currentMessage = attempt === 0 ? emailContent : (fallbackMessage || emailContent);
-              
-              // Escape for AppleScript
-              const appleScriptSubject = subject.replace(/"/g, '\\"').replace(/'/g, "\\'");
-              const appleScriptMessage = currentMessage.replace(/"/g, '\\"').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-              const appleScriptEmail = toEmail.replace(/"/g, '\\"').replace(/'/g, "\\'");
-              
-              const attachmentScript = attachmentPath ? 
-                `make new attachment with properties {file name:POSIX file \\"${escapedAttachment}\\"}` : '';
-              
-              command = `osascript -e "
-                tell application \\"Mail\\"
-                  activate
-                  set newMessage to make new outgoing message with properties {subject:\\"${appleScriptSubject}\\", content:\\"${appleScriptMessage}\\"}
-                  tell newMessage
-                    make new to recipient with properties {address:\\"${appleScriptEmail}\\"}
-                    ${attachmentScript}
-                  end tell
-                  set visible of newMessage to true
-                end tell
-              "`;
-              
-              console.log(`Opening email client for ${vendorName} (${toEmail}) - Attempt ${attempt + 1}: ${attempt === 0 ? 'HTML' : 'Plain Text'}`);
-              await execPromise(command);
-              success = true;
-              break; // Success, exit the retry loop
-              
-            } catch (err) {
-              lastError = err;
-              console.log(`Attempt ${attempt + 1} failed for ${vendorName}:`, err.message);
-              if (attempt === 0) {
-                console.log(`Retrying with plain text fallback for ${vendorName}`);
-              }
+              // Fallback to desktop if no output folder can be determined
+              outputFolder = require('os').homedir();
             }
           }
           
-          if (!success) {
-            throw lastError;
-          }
-        } else {
-          // Linux - Try different email clients
-          const mailto = `mailto:${encodeURIComponent(toEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailContent)}`;
-          command = `xdg-open "${mailto}"`;
-          
-          console.log(`Opening email client for ${vendorName} (${toEmail})`);
-          await execPromise(command);
-          success = true;
-        }
+          const emlFilePath = path.join(outputFolder, emlFilename);
 
-        if (success) {
-          sentCount++;
-          console.log(`✅ Successfully processed email for ${email.vendorName || 'Unknown'}`);
-          // Small delay between emails to prevent overwhelming the system
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } else {
-          console.log(`❌ Failed to process email for ${email.vendorName || 'Unknown'}`);
-          if (lastError) {
-            errors.push(`Failed to open email for ${email.vendorName}: ${lastError.message}`);
+          // Create proper .eml file content (RFC 2822 email format)
+          let emlContent = '';
+          
+          // Add X-Unsent header to make it open as editable draft in Outlook
+          emlContent += `X-Unsent: 1\r\n`;
+          
+          // Standard email headers
+          emlContent += `From: "The Good Life Clinic" <noreply@goodlifeclinic.com.au>\r\n`;
+          emlContent += `To: ${toEmail}\r\n`;
+          emlContent += `Subject: ${subject}\r\n`;
+          emlContent += `Date: ${new Date().toUTCString()}\r\n`;
+          emlContent += `MIME-Version: 1.0\r\n`;
+          
+          // Handle attachments if present
+          if (attachmentFile && fs.existsSync(attachmentFile)) {
+            const boundary = `----=_NextPart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            emlContent += `Content-Type: multipart/mixed; boundary="${boundary}"\r\n`;
+            emlContent += `\r\n`;
+            emlContent += `This is a multi-part message in MIME format.\r\n`;
+            emlContent += `\r\n`;
+            emlContent += `--${boundary}\r\n`;
+            emlContent += `Content-Type: text/html; charset="utf-8"\r\n`;
+            emlContent += `Content-Transfer-Encoding: quoted-printable\r\n`;
+            emlContent += `\r\n`;
+            emlContent += message.replace(/=/g, '=3D');
+            emlContent += `\r\n`;
+            emlContent += `\r\n`;
+            emlContent += `--${boundary}\r\n`;
+            
+            const attachmentName = path.basename(attachmentFile);
+            const mimeType = mimeTypes.lookup(attachmentFile) || 'application/octet-stream';
+            const attachmentData = fs.readFileSync(attachmentFile);
+            const base64Data = attachmentData.toString('base64');
+            
+            emlContent += `Content-Type: ${mimeType}; name="${attachmentName}"\r\n`;
+            emlContent += `Content-Transfer-Encoding: base64\r\n`;
+            emlContent += `Content-Disposition: attachment; filename="${attachmentName}"\r\n`;
+            emlContent += `\r\n`;
+            
+            // Split base64 data into 76-character lines
+            const lines = base64Data.match(/.{1,76}/g);
+            if (lines) {
+              emlContent += lines.join('\r\n');
+            }
+            emlContent += `\r\n`;
+            emlContent += `\r\n`;
+            emlContent += `--${boundary}--\r\n`;
+          } else {
+            // Simple HTML email without attachments
+            emlContent += `Content-Type: text/html; charset="utf-8"\r\n`;
+            emlContent += `Content-Transfer-Encoding: quoted-printable\r\n`;
+            emlContent += `\r\n`;
+            emlContent += message.replace(/=/g, '=3D');
           }
+
+          // Write .eml file
+          fs.writeFileSync(emlFilePath, emlContent);
+          
+          emlFiles.push({
+            vendor: vendorName,
+            email: toEmail,
+            file: emlFilePath,
+            filename: emlFilename
+          });
+          
+          sentCount++;
+          console.log(`✅ Created .eml file for ${vendorName}: ${emlFilename}`);
         }
         
-      } catch (err) {
-        console.error(`Failed to open email for ${email.vendorName}:`, err);
-        errors.push(`Failed to open email for ${email.vendorName}: ${err.message}`);
+      } catch (emailError) {
+        console.error(`❌ Error creating email for ${email.vendorName}:`, emailError);
+        errors.push(`Failed to create email for ${email.vendorName}: ${emailError.message}`);
       }
     }
 
-    if (sentCount > 0) {
-      return { 
-        success: true, 
-        sentCount, 
-        message: `Opened ${sentCount} email(s) in your default email client`,
-        errors: errors.length > 0 ? errors : undefined
-      };
-    } else {
-      return { 
-        success: false, 
-        error: 'Failed to open any emails', 
-        details: errors 
-      };
-    }
-    
+    const result = {
+      success: true,
+      sentCount,
+      totalCount: emailData.length,
+      errors,
+      emlFiles,
+      message: isWindows 
+        ? `Created ${sentCount} editable email draft(s) in Outlook. Check your Outlook drafts folder.`
+        : `Created ${sentCount} email template file(s). Double-click any .eml file to open in your email client.`
+    };
+
+    console.log(`📧 Email generation complete: ${sentCount}/${emailData.length} files created`);
+    return result;
+
   } catch (err) {
+    console.error('sendSupplierEmails error:', err);
     logErrorToFile('sendSupplierEmails error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { 
-      success: false, 
-      error: 'Failed to open email client', 
-      details: err.message 
+    return {
+      success: false,
+      error: 'Failed to create email files: ' + (err && err.message ? err.message : 'Unknown error'),
+      sentCount: 0,
+      totalCount: emailData ? emailData.length : 0,
+      errors: [err && err.message ? err.message : 'Unknown error'],
+      emlFiles: []
     };
   }
 });

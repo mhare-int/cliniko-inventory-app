@@ -75,7 +75,7 @@ Website: www.goodlifeclinic.com`
     { variable: '{{supplierEmail}}', description: 'Supplier email address' },
     { variable: '{{supplierContactName}}', description: 'Contact person name' },
     { variable: '{{supplierInstructions}}', description: 'Special supplier instructions' },
-    { variable: '{{orderNumber}}', description: 'Purchase order number (e.g., PUR00001)' },
+    { variable: '{{orderNumber}}', description: 'Purchase order number (e.g., PO00001)' },
     { variable: '{{orderTable}}', description: 'Formatted table of ordered items' },
     { variable: '{{currentDate}}', description: 'Current date' },
     { variable: '{{companyName}}', description: 'Your company name', editable: true, value: companyName, setValue: setCompanyName }
@@ -118,7 +118,7 @@ Sample Product 3                         2
       '{{supplierEmail}}': selectedSupplier.email || 'supplier@example.com',
       '{{supplierContactName}}': selectedSupplier.contact_name || 'John Doe',
       '{{supplierInstructions}}': selectedSupplier.special_instructions ? `Special Instructions: ${selectedSupplier.special_instructions}` : (selectedSupplier.comments ? `Special Instructions: ${selectedSupplier.comments}` : ''),
-      '{{orderNumber}}': 'PUR00001',
+      '{{orderNumber}}': 'PO00001',
       '{{orderTable}}': sampleOrderTable,
       '{{currentDate}}': new Date().toLocaleDateString(),
       '{{companyName}}': companyName

@@ -12,6 +12,7 @@ function GenerateSupplierFiles() {
   const [apiKeySet, setApiKeySet] = useState(false);
   const [checkingApiKey, setCheckingApiKey] = useState(true);
   const [emailMode, setEmailMode] = useState(false);
+  const [emailPreview, setEmailPreview] = useState(null);
   const [emailSettings, setEmailSettings] = useState({
     subject: "",
     message: "",
@@ -85,11 +86,11 @@ function GenerateSupplierFiles() {
     setError("");
     setDownloadLinks([]);
     if (!selectedPRId) {
-      setError("Please select a Purchase Order to generate supplier order files.");
+      setError("Please select a Purchase Order to send orders to suppliers.");
       return;
     }
-    if (createFiles && !outputFolder) {
-      setError("Please select an output folder for the supplier order files.");
+    if (!outputFolder) {
+      setError("Please select an output folder for the email files.");
       return;
     }
     setLoading(true);
@@ -130,13 +131,12 @@ function GenerateSupplierFiles() {
             return { file: String(f) };
           });
         }
-        alert("Supplier order files created successfully!");
+        alert("Orders sent to suppliers successfully!");
       } else {
-        // Just create virtual file entries for email purposes        
-        files = Object.keys(vendorGroups).map(vendorName => ({
-          file: `${vendorName}_${purNumber}.csv`
-        }));
-        alert("Email template prepared (no files created).");
+        // Don't create virtual file entries when files aren't actually created
+        files = [];
+        // Automatically create email files when not creating CSV files
+        alert("Preparing email templates...");
       }
       
       setDownloadLinks(files);
@@ -228,10 +228,145 @@ The Good Life Clinic`;
       setEmailSettings({
         vendorEmails: vendorEmailsObj
       });
+      
+      // When not creating files, automatically create email templates
+      if (!createFiles) {
+        setEmailMode(true);
+        // Directly create email files
+        try {
+          // Load email template
+          let defaultSubject = `Purchase Order - ${purNumber}`;
+          let defaultMessage = `Dear Supplier,
+
+Please find attached our purchase order ${purNumber}.
+
+Could you please confirm receipt and provide an estimated delivery date?`;
+          let defaultSignature = `Thank you for your continued service.
+
+Best regards,
+The Good Life Clinic`;
+
+          try {
+            const savedTemplate = await window.api.getEmailTemplate();
+            if (savedTemplate && !savedTemplate.error) {
+              defaultSubject = savedTemplate.subject || defaultSubject;
+              defaultMessage = savedTemplate.body || defaultMessage;
+              defaultSignature = savedTemplate.signature || defaultSignature;
+            }
+          } catch (error) {
+            console.error('Error loading email template:', error);
+          }
+
+          // Create email data directly from vendor groups
+          const emailData = Object.keys(vendorGroups).map(vendorName => {
+            const vendorInfo = vendorEmailsObj[vendorName] || {};
+            const vendorItems = vendorGroups[vendorName];
+            
+            // Create replacement function for this supplier
+            const replaceVarsForSupplier = (text) => {
+              const orderTableContent = vendorItems.length > 0 ? 
+                `<table border="1" style="border-collapse: collapse; width: 100%; margin: 10px 0;">
+                  <tr style="background-color: #f0f0f0;">
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Product Name</th>
+                    <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Quantity</th>
+                  </tr>` + 
+                vendorItems.map(item => {
+                  const productName = item["Product Name"] || item.name || "Unknown Product";
+                  const quantity = item["No. to Order"] ?? item.no_to_order ?? 0;
+                  return `<tr><td style="border: 1px solid #ddd; padding: 8px;">${productName}</td><td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${quantity}</td></tr>`;
+                }).join('') + 
+                '</table>' : '';
+
+              return text
+                .replace(/\{\{orderNumber\}\}/g, purNumber)
+                .replace(/\{\{supplierName\}\}/g, vendorName)
+                .replace(/\{\{supplierEmail\}\}/g, vendorInfo.email || '')
+                .replace(/\{\{supplierContactName\}\}/g, vendorInfo.contactName || '')
+                .replace(/\{\{supplierInstructions\}\}/g, vendorInfo.special_instructions || vendorInfo.comments || '')
+                .replace(/\{\{orderTable\}\}/g, orderTableContent)
+                .replace(/\{\{currentDate\}\}/g, new Date().toLocaleDateString())
+                .replace(/\{\{companyName\}\}/g, 'The Good Life Clinic')
+                .replace(/\{purchaseOrderNumber\}/g, purNumber)
+                .replace(/\{supplierName\}/g, vendorName)
+                .replace(/\{contactName\}/g, vendorInfo.contactName || '')
+                .replace(/\{date\}/g, new Date().toLocaleDateString())
+                .replace(/\{companyName\}/g, 'The Good Life Clinic');
+            };
+
+            const supplierSpecificSubject = replaceVarsForSupplier(defaultSubject);
+            const supplierSpecificMessage = replaceVarsForSupplier(defaultMessage);
+            const supplierSpecificSignature = replaceVarsForSupplier(defaultSignature);
+
+            const finalEmailMessage = `
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: Arial, sans-serif; line-height: 1.4; margin: 0; padding: 20px; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background-color: #f0f0f0; text-align: center; }
+p { margin: 8px 0; }
+</style>
+</head>
+<body>
+${supplierSpecificMessage.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}
+${supplierSpecificSignature.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}
+</body>
+</html>
+            `.trim();
+
+            return {
+              vendorName,
+              email: typeof vendorInfo === 'string' ? vendorInfo : (vendorInfo.email || ""),
+              subject: supplierSpecificSubject,
+              message: finalEmailMessage,
+              fallbackMessage: finalEmailMessage,
+              attachmentFile: null // No attachments when not creating files
+            };
+          }).filter(email => email.email.trim() !== "");
+
+          // When not creating files, always show email setup for review/editing
+          setLoading(false);
+          setEmailMode(true);
+          
+          // Populate the initial email settings for all suppliers with existing emails or blank
+          const emailSetup = {};
+          for (const vendorName of Object.keys(vendorGroups)) {
+            const vendorInfo = vendorEmailsObj[vendorName];
+            const existingEmail = typeof vendorInfo === 'string' ? vendorInfo : (vendorInfo?.email || "");
+            const existingContact = typeof vendorInfo === 'object' ? (vendorInfo?.contactName || "") : "";
+            
+            emailSetup[vendorName] = { 
+              email: existingEmail, 
+              contactName: existingContact 
+            };
+          }
+          setEmailSettings(prev => ({
+            ...prev,
+            vendorEmails: emailSetup
+          }));
+          
+          setDownloadLinks([{ 
+            type: 'placeholder', 
+            vendor: 'Email Setup', 
+            path: '',
+            filename: 'Email Setup' 
+          }]);
+          return;
+
+        } catch (emailError) {
+          console.error('Error creating email templates:', emailError);
+          setError("Failed to create email templates: " + (emailError.message || emailError));
+        }
+      } else {
+        // For CSV file creation, just set email mode for manual email sending later
+        setEmailMode(false);
+      }
     } catch (err) {
       setError(
         err?.error || err?.message ||
-        "Something went wrong while creating supplier order files."
+        "Something went wrong while sending orders to suppliers."
       );
     }
     setLoading(false);
@@ -296,32 +431,51 @@ Website: www.goodlifeclinic.com`
       const pr = activePRs.find(pr => (pr.id || pr._id).toString() === selectedPRId);
       const purNumber = pr?.name || pr?.number || pr?.id || pr?._id || "";
 
-      // Prepare email data with order tables
-      const emailData = downloadLinks.map(file => {
-        // Extract vendor name from filename - handle cases like "VendorName_PUR00001.csv" or "VendorName/VendorName_PUR00001.csv"
-        let vendorName = file.file.split('_')[0] || file.file.split('.')[0];
-        
-        // Clean up vendor name - remove any duplicate parts separated by "/"
-        if (vendorName.includes('/')) {
-          const parts = vendorName.split('/');
-          vendorName = parts[0]; // Take the first part
-        }
-        
-        const vendorInfo = emailSettings.vendorEmails[vendorName] || {};
-        
-        // Get items for this vendor from the original PR
-        const pr = activePRs.find(pr => (pr.id || pr._id).toString() === selectedPRId);
-        console.log('PR found:', pr);
-        console.log('Looking for vendor:', vendorName);
-        console.log('Original filename vendor:', file.file.split('_')[0]);
-        
-        const vendorItems = pr?.items?.filter(item => {
-          const itemSupplier = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
-          console.log('Item supplier:', itemSupplier, 'Matches:', itemSupplier === vendorName);
-          return itemSupplier === vendorName;
-        }) || [];
-        
-        console.log('Vendor items found:', vendorItems);
+      // Group items by vendor directly from the PR data if no CSV files exist
+      let emailData = [];
+      
+      // Check if we have real CSV files (not placeholder entries)
+      const realFiles = downloadLinks.filter(file => file.type !== 'email' && file.type !== 'placeholder' && file.file);
+      
+      if (realFiles.length > 0) {
+        // If CSV files exist, prepare email data from files
+        emailData = realFiles.map(file => {
+          // Extract vendor name from filename - handle cases like "VendorName_PUR00001.csv" or "VendorName/VendorName_PUR00001.csv"
+          let vendorName = file.file.split('_')[0] || file.file.split('.')[0];
+          
+          // Clean up vendor name - remove any duplicate parts separated by "/"
+          if (vendorName.includes('/')) {
+            const parts = vendorName.split('/');
+            vendorName = parts[0]; // Take the first part
+          }
+          
+          const vendorInfo = emailSettings.vendorEmails[vendorName] || {};
+          
+          // Get items for this vendor from the original PR
+          const vendorItems = pr?.items?.filter(item => {
+            const itemSupplier = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+            return itemSupplier === vendorName;
+          }) || [];
+          
+          return { vendorName, vendorInfo, vendorItems };
+        });
+      } else {
+        // If no CSV files, create email data directly from emailSettings.vendorEmails
+        emailData = Object.keys(emailSettings.vendorEmails || {}).map(vendorName => {
+          const vendorInfo = emailSettings.vendorEmails[vendorName] || {};
+          
+          // Get items for this vendor from the original PR
+          const vendorItems = pr?.items?.filter(item => {
+            const itemSupplier = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+            return itemSupplier === vendorName;
+          }) || [];
+          
+          return { vendorName, vendorInfo, vendorItems };
+        });
+      }
+
+      // Process each vendor's email data
+      const processedEmailData = emailData.map(({ vendorName, vendorInfo, vendorItems }) => {
         
         // Create both HTML and plain text tables for this vendor's items
         let htmlTable = '';
@@ -335,7 +489,7 @@ Website: www.goodlifeclinic.com`
             return `<tr><td style="border: 1px solid #ddd; padding: 8px;">${productName}</td><td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${quantity}</td></tr>`;
           }).join('');
           
-          htmlTable = `\n\n\nORDER DETAILS:\n\n<table border="1" style="border-collapse: collapse; width: 100%; margin: 20px 0;"><tr style="background-color: #f0f0f0;"><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Product Name</th><th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Quantity</th></tr>${htmlTableRows}</table>\n\nPlease confirm receipt and estimated delivery date.\n\n`;
+          htmlTable = `\n\nORDER DETAILS:\n\n<table border="1" style="border-collapse: collapse; width: 100%; margin: 10px 0;"><tr style="background-color: #f0f0f0;"><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Product Name</th><th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Quantity</th></tr>${htmlTableRows}</table>\n\nPlease confirm receipt and estimated delivery date.\n\n`;
           
           // Plain Text Table (fallback)
           const tableHeader = '\n\n\nORDER DETAILS:\n' + 
@@ -364,15 +518,19 @@ Website: www.goodlifeclinic.com`
 
         // Create replacement function for this supplier
         const replaceVarsForSupplier = (text) => {
-          // Create order table for this supplier
+          // Create HTML table for this supplier
           const orderTableContent = vendorItems.length > 0 ? 
-            'ORDER DETAILS:\n==========================================\nProduct Name                    Quantity\n==========================================\n' + 
+            `<table border="1" style="border-collapse: collapse; width: 100%; margin: 10px 0;">
+              <tr style="background-color: #f0f0f0;">
+                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Product Name</th>
+                <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Quantity</th>
+              </tr>` + 
             vendorItems.map(item => {
               const productName = item["Product Name"] || item.name || "Unknown Product";
               const quantity = item["No. to Order"] ?? item.no_to_order ?? 0;
-              return `${productName.padEnd(30)} ${quantity}`;
-            }).join('\n') + 
-            '\n==========================================' : '';
+              return `<tr><td style="border: 1px solid #ddd; padding: 8px;">${productName}</td><td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${quantity}</td></tr>`;
+            }).join('') + 
+            '</table>' : '';
 
           const vendorInfo = emailSettings.vendorEmails[vendorName] || {};
           
@@ -399,8 +557,25 @@ Website: www.goodlifeclinic.com`
         const supplierSpecificMessage = replaceVarsForSupplier(rawTemplate.body);
         const supplierSpecificSignature = replaceVarsForSupplier(rawTemplate.signature);
 
-        // The template already includes the order table via {{orderTable}}, so we don't need to add it again
-        const finalEmailMessage = supplierSpecificMessage + '\n\n' + supplierSpecificSignature;
+        // Wrap the entire email content in HTML for proper formatting
+        const finalEmailMessage = `
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: Arial, sans-serif; line-height: 1.4; margin: 0; padding: 20px; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background-color: #f0f0f0; text-align: center; }
+p { margin: 8px 0; }
+</style>
+</head>
+<body>
+${supplierSpecificMessage.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}
+${supplierSpecificSignature.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}
+</body>
+</html>
+        `.trim();
         
         console.log('Final email for', vendorName, ':', finalEmailMessage);
         
@@ -410,27 +585,56 @@ Website: www.goodlifeclinic.com`
           subject: supplierSpecificSubject,
           message: finalEmailMessage,
           fallbackMessage: finalEmailMessage, // Same content for both since template handles formatting
-          attachmentFile: includeAttachments && createFiles ? `${outputFolder}/${file.file}` : null // Only attach if both options are enabled
+          attachmentFile: includeAttachments && createFiles && downloadLinks.find(f => f.file.includes(vendorName)) ? `${outputFolder}/${downloadLinks.find(f => f.file.includes(vendorName)).file}` : null // Only attach if both options are enabled
         };
       }).filter(email => email.email.trim() !== ""); // Only send to vendors with email addresses
 
-      if (emailData.length === 0) {
-        alert("Please enter at least one vendor email address.");
+      if (processedEmailData.length === 0) {
         setSendingEmails(false);
+        // Keep email mode open so user can enter email addresses
+        setEmailMode(true);
         return;
       }
 
-      const result = await window.api.sendSupplierEmails(emailData);
+      const result = await window.api.sendSupplierEmails(processedEmailData);
       
       if (result.success) {
-        let message = `Successfully opened ${result.sentCount} email(s) in your default email client!`;
+        // Show success message with instructions for .oft files
+        let message = `Successfully created ${result.sentCount} email template file(s)!\n\n`;
+        message += `Email template files have been saved to your output folder:\n`;
+        result.emlFiles.forEach(eml => {
+          message += `• ${eml.filename} (${eml.vendor})\n`;
+        });
+        message += `\nDouble-click any .oft file to open it as an editable template in Outlook, or drag the files to your email application.`;
+        
         if (result.errors && result.errors.length > 0) {
           message += `\n\nNote: ${result.errors.join(', ')}`;
         }
         alert(message);
+        
+        // Update downloadLinks to include .eml files for display
+        const emlLinks = result.emlFiles.map(eml => ({
+          file: eml.filename,
+          path: eml.file,
+          vendor: eml.vendor,
+          email: eml.email,
+          type: 'email',
+          isOutlookDraft: eml.isOutlookDraft || false
+        }));
+        
+        // Replace placeholder entries with actual email files
+        setDownloadLinks(prev => {
+          console.log('Current downloadLinks:', prev);
+          console.log('Adding emlLinks:', emlLinks);
+          // Remove placeholder entries and add email files
+          const nonPlaceholderLinks = prev.filter(link => link.type !== 'placeholder');
+          const newLinks = [...nonPlaceholderLinks, ...emlLinks];
+          console.log('New downloadLinks:', newLinks);
+          return newLinks;
+        });
         setEmailMode(false);
       } else {
-        throw new Error(result.error || "Failed to open email client");
+        throw new Error(result.error || "Failed to create email files");
       }
     } catch (err) {
       alert(`Failed to open email client: ${err.message}`);
@@ -479,7 +683,7 @@ Website: www.goodlifeclinic.com`
         ←
       </button>
       <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
-        Generate Supplier Order Files
+        Send Orders to Suppliers
       </h2>
       <div style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 16 }}>
         {/* Row 1: Folder Picker */}
@@ -552,10 +756,10 @@ Website: www.goodlifeclinic.com`
               boxSizing: 'border-box'
             }}
           >
-            <option value="">-- Select Active PR --</option>
+            <option value="">-- Select Active PO --</option>
             {activePRs && activePRs.length > 0 && activePRs.map(pr => (
               <option key={pr.id || pr._id} value={pr.id || pr._id}>
-                {pr.name ? pr.name : `PR #${pr.id || pr._id}`}
+                {pr.name ? pr.name : `PO #${pr.id || pr._id}`}
               </option>
             ))}
           </select>
@@ -593,7 +797,7 @@ Website: www.goodlifeclinic.com`
                 alignItems: "center"
               }}
             >
-              Create supplier files
+              Create order files for suppliers
             </label>
           </div>
           <div style={{ 
@@ -651,12 +855,17 @@ Website: www.goodlifeclinic.com`
             transition: "background 0.2s"
           }}
         >
-          {loading ? "Processing..." : createFiles ? "Create Supplier Order Files" : "Prepare Email Template"}
+          {loading ? "Processing..." : createFiles ? "Send Orders to Suppliers" : "Prepare Email Template"}
         </button>
       </div>
       {downloadLinks.length > 0 && (
         <div style={{ marginTop: 28 }}>
-          <h4>{createFiles ? "Supplier Order Files Created" : "Email Template Ready"}</h4>
+          <h4>
+            {downloadLinks.some(file => file.type === 'placeholder') && emailMode ? 
+              "📧 Email Setup Required" : 
+              (createFiles ? "Orders Sent to Suppliers" : "Email Template Ready")
+            }
+          </h4>
           
           {/* Action Buttons */}
           <div style={{ display: "flex", gap: "12px", marginBottom: 20 }}>
@@ -677,21 +886,23 @@ Website: www.goodlifeclinic.com`
                 📥 Download All
               </button>
             )}
-            <button
-              style={{
-                background: emailMode ? "#666" : "#22b573",
-                color: "#fff",
-                fontWeight: 600,
-                padding: "8px 16px",
-                border: "none",
-                borderRadius: "5px",
-                cursor: "pointer"
-              }}
-              onClick={() => setEmailMode(!emailMode)}
-              type="button"
-            >
-              {emailMode ? "📋 View Files" : "📧 Open in Email"}
-            </button>
+            {!downloadLinks.some(file => file.type === 'placeholder') && (
+              <button
+                style={{
+                  background: emailMode ? "#666" : "#22b573",
+                  color: "#fff",
+                  fontWeight: 600,
+                  padding: "8px 16px",
+                  border: "none",
+                  borderRadius: "5px",
+                  cursor: "pointer"
+                }}
+                onClick={() => setEmailMode(!emailMode)}
+                type="button"
+              >
+                {emailMode ? "📋 View Files" : "📧 Open in Email"}
+              </button>
+            )}
           </div>
 
           {emailMode ? (
@@ -720,16 +931,7 @@ Website: www.goodlifeclinic.com`
               {/* Vendor Email Addresses */}
               <div style={{ marginBottom: 20 }}>
                 <h6 style={{ margin: "0 0 10px 0", color: "#374151" }}>Vendor Email Addresses:</h6>
-                {downloadLinks.map((file, idx) => {
-                  // Extract vendor name consistently
-                  let vendorName = file.file.split('_')[0] || file.file.split('.')[0];
-                  
-                  // Clean up vendor name - remove any duplicate parts separated by "/"
-                  if (vendorName.includes('/')) {
-                    const parts = vendorName.split('/');
-                    vendorName = parts[0]; // Take the first part
-                  }
-                  
+                {Object.keys(emailSettings.vendorEmails || {}).map((vendorName, idx) => {
                   const vendorInfo = emailSettings.vendorEmails[vendorName] || {};
                   const email = typeof vendorInfo === 'string' ? vendorInfo : (vendorInfo.email || "");
                   const contactName = typeof vendorInfo === 'object' ? vendorInfo.contactName : "";
@@ -777,23 +979,44 @@ Website: www.goodlifeclinic.com`
                   fontSize: "16px"
                 }}
               >
-                {sendingEmails ? "📤 Opening..." : "📧 Open Emails in Client"}
+                {sendingEmails ? "📤 Creating..." : "📧 Create Email Files"}
               </button>
             </div>
           ) : (
-            /* File List */
-            createFiles ? (
+            /* File List - Show both regular files and .oft template files */
+            (createFiles || downloadLinks.some(file => file.type === 'email')) && downloadLinks.some(file => file.type !== 'placeholder') ? (
               <ul style={{ paddingLeft: 20, listStyle: "none" }}>
-                {downloadLinks.map((file, idx) => (
+                {downloadLinks.filter(file => file.type !== 'placeholder').map((file, idx) => (
                   <li key={idx} style={{ marginBottom: 5 }}>
                     <button
                       type="button"
                       onClick={async () => {
-                        if (!window.api || !window.api.downloadFile) return;
-                        try {
-                          const filePath = await window.api.downloadFile(file.file);
-                          window.open(filePath);
-                        } catch (e) {}
+                        // Handle different file types
+                        if (file.isOutlookDraft) {
+                          // For Outlook drafts, just show info message
+                          alert(`This email was created as a draft in Outlook. Please check your Outlook drafts folder for: ${file.vendor}`);
+                        } else if (file.type === 'email' && file.path) {
+                          // Handle .eml template files
+                          try {
+                            if (window.api && window.api.openEmlFile) {
+                              const result = await window.api.openEmlFile(file.path);
+                              if (!result.success) {
+                                alert(`Failed to open email template file: ${result.error}`);
+                              }
+                            } else {
+                              alert('Email file opening not available');
+                            }
+                          } catch (e) {
+                            alert(`Failed to open email file: ${e.message}`);
+                          }
+                        } else {
+                          // Handle regular files (Excel/CSV)
+                          if (!window.api || !window.api.downloadFile) return;
+                          try {
+                            const filePath = await window.api.downloadFile(file.file);
+                            window.open(filePath);
+                          } catch (e) {}
+                        }
                       }}
                       style={{ 
                         background: "none", 
@@ -804,7 +1027,7 @@ Website: www.goodlifeclinic.com`
                         fontSize: "14px"
                       }}
                     >
-                      📄 {file.file}
+                      {file.isOutlookDraft ? '📧' : (file.type === 'email' ? '📧' : '📄')} {file.file}
                     </button>
                   </li>
                 ))}
@@ -818,10 +1041,10 @@ Website: www.goodlifeclinic.com`
                 color: "#374151"
               }}>
                 <p style={{ margin: "0 0 10px 0", fontWeight: 500 }}>
-                  📧 Email template prepared for {downloadLinks.length} supplier{downloadLinks.length === 1 ? '' : 's'}:
+                  📧 Email template prepared for {downloadLinks.filter(file => file.type !== 'placeholder').length} supplier{downloadLinks.filter(file => file.type !== 'placeholder').length === 1 ? '' : 's'}:
                 </p>
                 <ul style={{ margin: 0, paddingLeft: 20 }}>
-                  {downloadLinks.map((file, idx) => {
+                  {downloadLinks.filter(file => file.type !== 'placeholder').map((file, idx) => {
                     let vendorName = file.file.split('_')[0] || file.file.split('.')[0];
                     if (vendorName.includes('/')) {
                       vendorName = vendorName.split('/')[0];

@@ -21,7 +21,7 @@ const KnowledgeBase = () => {
           'View sales data and trends',
           'Manage user accounts and permissions'
         ],
-        workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase orders for needed items → Generate supplier files → Send to suppliers → Receive and log deliveries'
+        workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase orders for needed items → Send orders to suppliers → Send to suppliers → Receive and log deliveries'
       }
     },
     {
@@ -35,7 +35,7 @@ const KnowledgeBase = () => {
           'Good Life company logo at the top',
           'Welcome message confirms you\'re in the right place',
           'Blue "Create Purchase Orders" button - click to start ordering',
-          'Green "Generate Supplier Files" button - click after making requests',
+          'Green "Send Orders to Suppliers" button - click after making requests',
           'Navigation tabs at the top take you to other sections'
         ],
         tips: [
@@ -143,7 +143,7 @@ const KnowledgeBase = () => {
     },
     {
       id: 'generate-files',
-      title: '🏢 Generate Supplier Files',
+      title: '🏢 Send Orders to Suppliers',
       icon: '📄',
       content: {
         title: 'How to Send Orders to Your Suppliers',

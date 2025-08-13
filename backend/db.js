@@ -1216,7 +1216,14 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
 // --- Product Options ---
 function getProductOptions(term) {
   return new Promise((resolve, reject) => {
-    db.all('SELECT * FROM products WHERE LOWER(name) LIKE ? LIMIT 20', [`%${(term || '').toLowerCase()}%`], (err, rows) => {
+    const query = `
+      SELECT p.*, s.name as supplier_name 
+      FROM products p 
+      LEFT JOIN suppliers s ON p.supplier_id = s.id 
+      WHERE LOWER(p.name) LIKE ? 
+      LIMIT 20
+    `;
+    db.all(query, [`%${(term || '').toLowerCase()}%`], (err, rows) => {
       if (err) return reject({ error: 'DB error' });
       const results = rows.map(row => ({
         label: row.name,
@@ -1321,7 +1328,7 @@ function createPurchaseRequest(data) {
     db.get('SELECT COUNT(*) as count FROM purchase_requests', (err, row) => {
       if (err) return reject(err);
       const pr_count = (row ? row.count : 0) + 1;
-      const pr_id = `PUR${String(pr_count).padStart(5, '0')}`;
+      const pr_id = `PO${String(pr_count).padStart(5, '0')}`;
       const date_created = new Date().toISOString();
       db.run('INSERT INTO purchase_requests (pr_id, date_created, received) VALUES (?, ?, ?)', [pr_id, date_created, 0], function (err2) {
         if (err2) return reject(err2);
@@ -1333,6 +1340,14 @@ function createPurchaseRequest(data) {
           const product_name = item['Product Name'] || item.name || item.product_name;
           const supplier_name = item['Supplier Name'] || item.supplier_name;
           const no_to_order = item['No. to Order'] || item.no_to_order || item.qty || 0;
+          
+          console.log('[DEBUG createPurchaseRequest] Item data:', {
+            product_id,
+            product_name,
+            supplier_name,
+            rawItem: item
+          });
+          
           db.run(
             `INSERT INTO purchase_request_items (pr_id, product_id, product_name, supplier_name, no_to_order, received, received_so_far)
             VALUES (?, ?, ?, ?, ?, 0, 0)`,
