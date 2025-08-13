@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 6;
+const CURRENT_DB_VERSION = 7;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -255,6 +255,54 @@ const migrations = [
               
               console.log('✅ Suppliers table migration completed');
               resolve();
+            });
+          });
+        });
+      });
+    }
+  },
+  {
+    version: 7,
+    description: "Convert cliniko_id to TEXT and add proper supplier_id foreign key",
+    up: (db) => {
+      return new Promise((resolve, reject) => {
+        console.log('🔄 Converting cliniko_id to TEXT and adding supplier_id foreign key...');
+        
+        // Step 1: Create new products table with TEXT cliniko_id and supplier_id
+        db.run(`CREATE TABLE products_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          cliniko_id TEXT UNIQUE,
+          name TEXT NOT NULL,
+          supplier_id INTEGER,
+          stock INTEGER DEFAULT 0,
+          reorder_level INTEGER DEFAULT 0,
+          barcode TEXT,
+          FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
+        )`, (err) => {
+          if (err) return reject(err);
+          
+          // Step 2: Migrate data - match supplier names to supplier IDs
+          db.run(`INSERT INTO products_new (id, cliniko_id, name, supplier_id, stock, reorder_level, barcode)
+                  SELECT p.id, CAST(p.cliniko_id AS TEXT), p.name, s.id, p.stock, p.reorder_level, p.barcode 
+                  FROM products p
+                  LEFT JOIN suppliers s ON p.supplier_name = s.name`, (err) => {
+            if (err) return reject(err);
+            
+            // Step 3: Replace old table
+            db.run('DROP TABLE products', (err) => {
+              if (err) return reject(err);
+              
+              db.run('ALTER TABLE products_new RENAME TO products', (err) => {
+                if (err) return reject(err);
+                
+                // Step 4: Recreate index
+                db.run('CREATE UNIQUE INDEX idx_products_cliniko_id_unique ON products(cliniko_id)', (err) => {
+                  if (err) return reject(err);
+                  
+                  console.log('✅ Successfully converted cliniko_id to TEXT and added supplier_id foreign key');
+                  resolve();
+                });
+              });
             });
           });
         });

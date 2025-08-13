@@ -745,31 +745,110 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
         let command;
         
         if (process.platform === 'win32') {
-          // Windows - PowerShell with HTML support (Outlook handles HTML well)
-          const escapedMessage = emailContent.replace(/"/g, '""').replace(/\n/g, '\\n');
+          // Windows - Enhanced error handling and multiple fallbacks
+          console.log(`Attempting to send email to ${vendorName} (${toEmail}) on Windows`);
           
-          const attachmentScript = attachmentPath ? `$mail.Attachments.Add('${escapedAttachment}')` : '';
+          // Quick test to see if Outlook is available
+          try {
+            const testResult = await execPromise('powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "try { $outlook = New-Object -ComObject Outlook.Application; Write-Output \'OUTLOOK_AVAILABLE\' } catch { Write-Output \'OUTLOOK_NOT_AVAILABLE\' }"');
+            console.log(`Outlook availability test: ${testResult.stdout.trim()}`);
+          } catch (testError) {
+            console.log(`Outlook test failed: ${testError.message}`);
+          }
           
-          command = `powershell -Command "
-            try {
-              $outlook = New-Object -ComObject Outlook.Application
-              $mail = $outlook.CreateItem(0)
-              $mail.To = '${escapedEmail}'
-              $mail.Subject = '${escapedSubject}'
-              $mail.HTMLBody = '${escapedMessage.replace(/\n/g, '<br>')}'
-              ${attachmentScript}
-              $mail.Display()
-              Write-Host 'Success'
-            } catch {
-              Write-Host 'Error: Could not create Outlook email. Trying mailto fallback...'
-              # Fallback to simple mailto (without attachment)
-              $subject = '${escapedSubject}'
-              $body = '${escapedMessage}'
-              $mailto = 'mailto:${escapedEmail}?subject=' + [System.Web.HttpUtility]::UrlEncode($subject) + '&body=' + [System.Web.HttpUtility]::UrlEncode($body)
-              Start-Process $mailto
-              Write-Host 'Fallback Success'
+          // First try: Outlook COM object
+          try {
+            // Simple approach - create basic PowerShell script
+            const cleanSubject = subject.replace(/'/g, "''").replace(/"/g, '""');
+            const cleanMessage = emailContent.replace(/'/g, "''").replace(/"/g, '""').replace(/\r?\n/g, '<br>');
+            const cleanEmail = toEmail.replace(/'/g, "''").replace(/"/g, '""');
+            
+            // Use single quotes in PowerShell to avoid most escaping issues
+            command = `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "
+              try {
+                $$outlook = New-Object -ComObject Outlook.Application;
+                $$mail = $$outlook.CreateItem(0);
+                $$mail.To = '${cleanEmail}';
+                $$mail.Subject = '${cleanSubject}';
+                $$mail.HTMLBody = '${cleanMessage}';`;
+                
+            if (attachmentPath) {
+              command += `
+                $$mail.Attachments.Add('${attachmentPath.replace(/\\/g, '\\\\')}');`;
             }
-          "`;
+            
+            command += `
+                $$mail.Display();
+                Write-Output 'SUCCESS';
+              } catch {
+                Write-Output ('ERROR: ' + $$_.Exception.Message);
+                exit 1;
+              }
+            "`;
+            
+            console.log(`🔄 Trying Outlook COM for ${vendorName}...`);
+            const result = await execPromise(command);
+            
+            if (result.stdout && result.stdout.includes('SUCCESS')) {
+              console.log(`✅ Outlook email created for ${vendorName}`);
+              success = true;
+            } else {
+              throw new Error(`Outlook command failed: ${result.stderr || result.stdout || 'Unknown error'}`);
+            }
+            
+          } catch (outlookError) {
+            console.log(`❌ Outlook failed for ${vendorName}:`, outlookError.message);
+            
+            // Second try: Windows mailto with default email client
+            try {
+              const encodedSubject = encodeURIComponent(subject);
+              const encodedBody = encodeURIComponent(fallbackMessage || emailContent.replace(/<[^>]*>/g, ''));
+              const mailto = `mailto:${toEmail}?subject=${encodedSubject}&body=${encodedBody}`;
+              
+              console.log(`🔄 Trying Windows start command for ${vendorName}...`);
+              
+              command = `start "" "${mailto}"`;
+              await execPromise(command);
+              console.log(`✅ Default email client opened for ${vendorName}`);
+              success = true;
+              
+            } catch (mailtoError) {
+              console.log(`❌ mailto failed for ${vendorName}:`, mailtoError.message);
+              
+              // Third try: PowerShell Start-Process mailto
+              try {
+                console.log(`🔄 Trying PowerShell Start-Process for ${vendorName}...`);
+                const psSubject = subject.replace(/'/g, "''");
+                const psBody = (fallbackMessage || emailContent.replace(/<[^>]*>/g, '')).replace(/'/g, "''");
+                
+                command = `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "
+                  try {
+                    Add-Type -AssemblyName System.Web;
+                    $$subject = [System.Web.HttpUtility]::UrlEncode('${psSubject}');
+                    $$body = [System.Web.HttpUtility]::UrlEncode('${psBody}');
+                    $$mailto = 'mailto:${toEmail}?subject=' + $$subject + '&body=' + $$body;
+                    Start-Process $$mailto;
+                    Write-Output 'PowerShell SUCCESS';
+                  } catch {
+                    Write-Output ('PowerShell ERROR: ' + $$_.Exception.Message);
+                    exit 1;
+                  }
+                "`;
+                
+                const psResult = await execPromise(command);
+                if (psResult.stdout && psResult.stdout.includes('SUCCESS')) {
+                  console.log(`✅ PowerShell mailto worked for ${vendorName}`);
+                  success = true;
+                } else {
+                  throw new Error(`PowerShell command failed: ${psResult.stderr || psResult.stdout || 'Unknown error'}`);
+                }
+                success = true;
+                
+              } catch (psError) {
+                lastError = new Error(`All Windows email methods failed: Outlook (${outlookError.message}), CMD mailto (${mailtoError.message}), PowerShell (${psError.message})`);
+              }
+            }
+          }
         } else if (process.platform === 'darwin') {
           // macOS - Try HTML first, fallback to plain text
           for (let attempt = 0; attempt < 2; attempt++) {
@@ -825,8 +904,14 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
 
         if (success) {
           sentCount++;
+          console.log(`✅ Successfully processed email for ${email.vendorName || 'Unknown'}`);
           // Small delay between emails to prevent overwhelming the system
           await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+          console.log(`❌ Failed to process email for ${email.vendorName || 'Unknown'}`);
+          if (lastError) {
+            errors.push(`Failed to open email for ${email.vendorName}: ${lastError.message}`);
+          }
         }
         
       } catch (err) {

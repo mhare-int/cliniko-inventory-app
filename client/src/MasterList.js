@@ -113,27 +113,43 @@ function MasterStockList() {
   const fetchProducts = async () => {
     setLoading(true);
     try {
+      // Clear any cached data first
+      setProducts([]);
+      setEditingLevels({});
+      setEditingBarcodes({});
+      
+      console.log(`[DEBUG Frontend] Fetching fresh products from API...`);
+      
       // Fetch products and purchase requests in parallel
       const [productsRes, pursRes] = await Promise.all([
         window.api.getAllProducts(),
         window.api.getPurchaseRequests(true, false) // active only
       ]);
       
-      // Extract products array from API response
-      const productsArray = productsRes || [];
+      // Extract products array from API response and ensure cliniko_ids are strings
+      const productsArray = (productsRes || []).map(p => ({
+        ...p,
+        cliniko_id: String(p.cliniko_id) // Ensure precision preservation
+      }));
+      
+      console.log(`[DEBUG Frontend] Fetched ${productsArray.length} products. Sample products:`, 
+        productsArray.slice(0, 3).map(p => ({ cliniko_id: p.cliniko_id, name: p.name, id_type: typeof p.cliniko_id })));
+      
       setProducts(productsArray);
       
-      // Set up editing levels
+      // Set up editing levels using string keys
       const levels = {};
       productsArray.forEach(p => {
-        levels[p.cliniko_id] = p.reorder_level || 0;
+        const idStr = String(p.cliniko_id);
+        levels[idStr] = p.reorder_level || 0;
       });
       setEditingLevels(levels);
       
-      // Initialize editable barcodes map
+      // Initialize editable barcodes map using string keys
       const barcodes = {};
       productsArray.forEach(p => {
-        barcodes[p.cliniko_id] = p.barcode || '';
+        const idStr = String(p.cliniko_id);
+        barcodes[idStr] = p.barcode || '';
       });
       setEditingBarcodes(barcodes);
       
@@ -183,8 +199,8 @@ function MasterStockList() {
   };
 
   const filteredProducts = products.filter(p => {
-    // First check if product is hidden
-    if (hiddenProducts.has(p.cliniko_id)) {
+    // First check if product is hidden (ensure string comparison)
+    if (hiddenProducts.has(String(p.cliniko_id))) {
       return false;
     }
     
@@ -217,10 +233,11 @@ function MasterStockList() {
   });
 
   const handleSelectRow = (cliniko_id) => {
+    const idStr = String(cliniko_id); // Ensure string key
     setSelectedIds(ids =>
-      ids.includes(cliniko_id)
-        ? ids.filter(id => id !== cliniko_id)
-        : [...ids, cliniko_id]
+      ids.includes(idStr)
+        ? ids.filter(id => id !== idStr)
+        : [...ids, idStr]
     );
   };
 
@@ -228,7 +245,7 @@ function MasterStockList() {
     if (selectedIds.length === filteredProducts.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(filteredProducts.map(p => p.cliniko_id));
+      setSelectedIds(filteredProducts.map(p => String(p.cliniko_id))); // Ensure string IDs
     }
   };
 
@@ -244,36 +261,45 @@ function MasterStockList() {
   };
 
   const handleReorderLevelChange = (cliniko_id, value) => {
+    const idStr = String(cliniko_id); // Ensure string key
     const intVal = value === "" ? 0 : Math.max(0, parseInt(value) || 0);
-    setEditingLevels(levels => ({ ...levels, [cliniko_id]: intVal }));
+    setEditingLevels(levels => ({ ...levels, [idStr]: intVal }));
   };
 
   const handleReorderLevelBlur = async (id) => {
-    const newLevel = editingLevels[id];
+    // Ensure ID is treated as string to preserve precision
+    const idStr = String(id);
+    const newLevel = editingLevels[idStr];
+    console.log(`[DEBUG Frontend] handleReorderLevelBlur called with id: ${idStr} (original: ${id}, type: ${typeof id}), newLevel: ${newLevel}`);
+    
     try {
       if (!window.api || !window.api.updateProductReorderLevel) throw new Error("updateProductReorderLevel not available");
-      await window.api.updateProductReorderLevel(id, newLevel);
-      setProducts(products.map(p => p.cliniko_id === id ? { ...p, reorder_level: newLevel } : p));
-      setEditingLevels(levels => ({ ...levels, [id]: newLevel }));
+      console.log(`[DEBUG Frontend] Calling updateProductReorderLevel with id: ${idStr}, newLevel: ${newLevel}`);
+      await window.api.updateProductReorderLevel(idStr, newLevel);
+      setProducts(products.map(p => String(p.cliniko_id) === idStr ? { ...p, reorder_level: newLevel } : p));
+      setEditingLevels(levels => ({ ...levels, [idStr]: newLevel }));
+      console.log(`[DEBUG Frontend] Successfully updated reorder level for product ${idStr}`);
     } catch (err) {
-      console.error('Failed to update reorder level', err);
+      console.error(`[DEBUG Frontend] Failed to update reorder level for product ${idStr}:`, err);
       alert('Failed to update reorder level');
     }
   };
 
   const handleBarcodeChange = (cliniko_id, value) => {
-    setEditingBarcodes(prev => ({ ...prev, [cliniko_id]: value }));
+    const idStr = String(cliniko_id); // Ensure string key
+    setEditingBarcodes(prev => ({ ...prev, [idStr]: value }));
   };
 
   const handleBarcodeBlur = async (cliniko_id) => {
-    const newBarcode = editingBarcodes[cliniko_id];
+    const idStr = String(cliniko_id); // Ensure string key
+    const newBarcode = editingBarcodes[idStr];
     try {
       if (!window.api || !window.api.updateProductBarcode) throw new Error('updateProductBarcode not available');
-      const res = await window.api.updateProductBarcode(cliniko_id, newBarcode || null);
+      const res = await window.api.updateProductBarcode(idStr, newBarcode || null);
       if (res && res.error) throw new Error(res.error);
       // reflect in local products array
-      setProducts(prev => prev.map(p => p.cliniko_id === cliniko_id ? { ...p, barcode: newBarcode || null } : p));
-      setEditingBarcodes(prev => ({ ...prev, [cliniko_id]: newBarcode || null }));
+      setProducts(prev => prev.map(p => String(p.cliniko_id) === idStr ? { ...p, barcode: newBarcode || null } : p));
+      setEditingBarcodes(prev => ({ ...prev, [idStr]: newBarcode || null }));
     } catch (err) {
       console.error('Failed to update barcode', err);
       alert('Failed to update barcode');
@@ -281,9 +307,10 @@ function MasterStockList() {
   };
 
   const handleHideProduct = (cliniko_id) => {
-    setHiddenProducts(prev => new Set([...prev, cliniko_id]));
+    const idStr = String(cliniko_id); // Ensure string key
+    setHiddenProducts(prev => new Set([...prev, idStr]));
     // Also remove from selected if it was selected
-    setSelectedIds(prev => prev.filter(id => id !== cliniko_id));
+    setSelectedIds(prev => prev.filter(id => id !== idStr));
   };
 
   const handleRestoreProducts = (productIds) => {
@@ -303,7 +330,7 @@ function MasterStockList() {
   };
 
   const getHiddenProductsList = () => {
-    return products.filter(p => hiddenProducts.has(p.cliniko_id));
+    return products.filter(p => hiddenProducts.has(String(p.cliniko_id))); // Ensure string comparison
   };
 
   const handleCreatePurchaseRequest = () => {
@@ -340,7 +367,7 @@ function MasterStockList() {
 
       {/* Custom upload UI - Single horizontal line */}
       <div style={{ display: "flex", alignItems: "flex-end", gap: 18, marginBottom: 20, minHeight: 48 }}>
-        {/* Choose File Button - 33% */}
+        {/* Choose File Button - 28% */}
         <button
           type="button"
           onClick={handleFakeButtonClick}
@@ -354,7 +381,7 @@ function MasterStockList() {
             fontSize: "1em",
             cursor: "pointer",
             boxSizing: "border-box",
-            width: "33%",
+            width: "28%",
             height: 48,
             display: "flex",
             alignItems: "center",
@@ -364,7 +391,7 @@ function MasterStockList() {
           Choose File
         </button>
         
-        {/* Filename field - 33% */}
+        {/* Filename field - 28% */}
         <span style={{
           fontSize: "1em",
           color: fileInput ? "#222" : "#999",
@@ -376,7 +403,7 @@ function MasterStockList() {
           borderRadius: 4,
           border: "1px solid #ccc",
           boxSizing: "border-box",
-          width: "33%",
+          width: "28%",
           display: "flex",
           alignItems: "center",
           height: 48,
@@ -386,7 +413,7 @@ function MasterStockList() {
           {fileInput ? fileInput.name : "No file chosen"}
         </span>
         
-        {/* Upload Button - 20% */}
+        {/* Upload Button - 18% */}
         <button
           onClick={handleUploadClick}
           disabled={uploading}
@@ -401,7 +428,7 @@ function MasterStockList() {
             cursor: uploading ? "wait" : "pointer",
             transition: "background 0.2s",
             boxSizing: "border-box",
-            width: "20%",
+            width: "18%",
             height: 48,
             display: "flex",
             alignItems: "center",
@@ -411,7 +438,7 @@ function MasterStockList() {
           {uploading ? "Uploading..." : "Update Reorder Levels from File"}
         </button>
         
-        {/* Small Template Button - 14% */}
+        {/* Template Button - 26% (expanded from 13% + removed 13% refresh button) */}
         <button
           onClick={handleDownloadTemplate}
           style={{
@@ -424,7 +451,7 @@ function MasterStockList() {
             fontSize: "1em",
             cursor: "pointer",
             boxSizing: "border-box",
-            width: "14%",
+            width: "26%",
             height: 48,
             display: "flex",
             alignItems: "center",
@@ -744,19 +771,20 @@ function MasterStockList() {
           )}
 
           {filteredProducts.map(p => {
-            const reorderLevel = editingLevels[p.cliniko_id];
+            const idStr = String(p.cliniko_id); // Ensure string key
+            const reorderLevel = editingLevels[idStr];
             // If reorderLevel is not set or is falsy (null, undefined, 0, ""), No. to Order should be 0
             const noToOrder = !reorderLevel ? 0 : Math.max(0, reorderLevel - (p.stock ?? 0));
-            const isSelected = selectedIds.includes(p.cliniko_id);
+            const isSelected = selectedIds.includes(idStr);
             const onOrderQty = onOrderQuantities[p.name] || 0;
 
             return (
-              <tr key={p.cliniko_id} style={{ backgroundColor: isSelected ? "#e6f0fa" : "transparent" }}>
+              <tr key={idStr} style={{ backgroundColor: isSelected ? "#e6f0fa" : "transparent" }}>
                 <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center" }}>
                   <input
                     type="checkbox"
                     checked={isSelected}
-                    onChange={() => handleSelectRow(p.cliniko_id)}
+                    onChange={() => handleSelectRow(idStr)}
                   />
                 </td>
                 <td style={{ padding: 8, border: "1px solid #ccc" }}>{p.name}</td>
@@ -770,8 +798,8 @@ function MasterStockList() {
                     type="number"
                     min="0"
                     value={reorderLevel === 0 ? "" : reorderLevel}
-                    onChange={e => handleReorderLevelChange(p.cliniko_id, e.target.value)}
-                    onBlur={() => handleReorderLevelBlur(p.cliniko_id)}
+                    onChange={e => handleReorderLevelChange(idStr, e.target.value)}
+                    onBlur={() => handleReorderLevelBlur(idStr)}
                     style={{ width: 70, textAlign: "center", fontSize: 14 }}
                   />
                 </td>
@@ -779,16 +807,16 @@ function MasterStockList() {
                 <td style={{ padding: 8, border: "1px solid #ccc" }}>
                   <input
                     type="text"
-                    value={editingBarcodes[p.cliniko_id] ?? ''}
-                    onChange={e => handleBarcodeChange(p.cliniko_id, e.target.value)}
-                    onBlur={() => handleBarcodeBlur(p.cliniko_id)}
+                    value={editingBarcodes[idStr] ?? ''}
+                    onChange={e => handleBarcodeChange(idStr, e.target.value)}
+                    onBlur={() => handleBarcodeBlur(idStr)}
                     placeholder="Scan or type barcode"
                     style={{ width: 160, fontSize: 14 }}
                   />
                 </td>
                 <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center" }}>
                   <button
-                    onClick={() => handleHideProduct(p.cliniko_id)}
+                    onClick={() => handleHideProduct(idStr)}
                     style={{
                       background: "#dc3545",
                       color: "white",
