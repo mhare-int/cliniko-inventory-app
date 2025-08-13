@@ -3,6 +3,9 @@ import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import "./TabsNav.css"; // Ensure this CSS file has your blue styles
 
+// Get version from environment variable (set during build)
+const APP_VERSION = process.env.REACT_APP_VERSION || '2.0.1';
+
 
 const TabsNav = ({ user, onLogout }) => {
   const navigate = useNavigate();
@@ -104,7 +107,7 @@ const TabsNav = ({ user, onLogout }) => {
           marginTop: "2px",
           fontWeight: "500"
         }}>
-          v1.2.1
+          v{APP_VERSION}
         </div>
         {user && (
           <button className="tabsnav__btn" onClick={handleLogout} style={{ marginTop: "8px" }}>

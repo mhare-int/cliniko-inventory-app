@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 5;
+const CURRENT_DB_VERSION = 6;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -220,10 +220,50 @@ const migrations = [
         Promise.all(promises).then(() => resolve()).catch(reject);
       });
     }
+  },
+  {
+    version: 6,
+    description: "Ensure suppliers table exists for existing databases",
+    up: (db) => {
+      return new Promise((resolve, reject) => {
+        // Create suppliers table if it doesn't exist
+        db.run(`CREATE TABLE IF NOT EXISTS suppliers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT UNIQUE NOT NULL,
+          email TEXT,
+          contact_name TEXT,
+          special_instructions TEXT,
+          source TEXT DEFAULT 'Manual',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+          if (err) return reject(err);
+          
+          // Add source column if it doesn't exist (for databases created between versions)
+          db.run(`ALTER TABLE suppliers ADD COLUMN source TEXT DEFAULT 'Manual'`, (sourceErr) => {
+            // Ignore error if column already exists
+            if (sourceErr && !sourceErr.message.includes('duplicate column name')) {
+              console.error('Warning: Could not add source column to suppliers table:', sourceErr);
+            }
+            
+            // Add special_instructions column if it doesn't exist
+            db.run(`ALTER TABLE suppliers ADD COLUMN special_instructions TEXT`, (instructionsErr) => {
+              // Ignore error if column already exists
+              if (instructionsErr && !instructionsErr.message.includes('duplicate column name')) {
+                console.error('Warning: Could not add special_instructions column to suppliers table:', instructionsErr);
+              }
+              
+              console.log('✅ Suppliers table migration completed');
+              resolve();
+            });
+          });
+        });
+      });
+    }
   }
   // Example future migration:
   // {
-  //   version: 3,
+  //   version: 7,
   //   description: "Add new column to products table",
   //   up: (db) => {
   //     return new Promise((resolve, reject) => {

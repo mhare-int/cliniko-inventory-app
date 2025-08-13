@@ -1,7 +1,7 @@
 {
   "name": "goodlife-stockapp",
   "productName": "Good Life Clinic - Inventory Management",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Cliniko App packaged with Electron.",
   "author": "The Good Life Stok App",
   "type": "commonjs",
