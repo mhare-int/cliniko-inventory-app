@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 
 function EmailTemplateManagement() {
   const [suppliers, setSuppliers] = useState([]);
-  const [companyName, setCompanyName] = useState('The Good Life Clinic');
   const [template, setTemplate] = useState({
     subject: 'Purchase Order - {{orderNumber}}',
     body: `Dear {{supplierName}},
@@ -75,10 +74,10 @@ Website: www.goodlifeclinic.com`
     { variable: '{{supplierEmail}}', description: 'Supplier email address' },
     { variable: '{{supplierContactName}}', description: 'Contact person name' },
     { variable: '{{supplierInstructions}}', description: 'Special supplier instructions' },
-    { variable: '{{orderNumber}}', description: 'Purchase order number (e.g., PO00001)' },
+    { variable: '{{orderNumber}}', description: 'Purchase request number (e.g., PUR00001)' },
     { variable: '{{orderTable}}', description: 'Formatted table of ordered items' },
     { variable: '{{currentDate}}', description: 'Current date' },
-    { variable: '{{companyName}}', description: 'Your company name', editable: true, value: companyName, setValue: setCompanyName }
+    { variable: '{{companyName}}', description: 'Your company name' }
   ];
 
   const insertVariable = (field, variable) => {
@@ -118,10 +117,10 @@ Sample Product 3                         2
       '{{supplierEmail}}': selectedSupplier.email || 'supplier@example.com',
       '{{supplierContactName}}': selectedSupplier.contact_name || 'John Doe',
       '{{supplierInstructions}}': selectedSupplier.special_instructions ? `Special Instructions: ${selectedSupplier.special_instructions}` : (selectedSupplier.comments ? `Special Instructions: ${selectedSupplier.comments}` : ''),
-      '{{orderNumber}}': 'PO00001',
+      '{{orderNumber}}': 'PUR00001',
       '{{orderTable}}': sampleOrderTable,
       '{{currentDate}}': new Date().toLocaleDateString(),
-      '{{companyName}}': companyName
+      '{{companyName}}': 'The Good Life Clinic'
     };
 
     const preview = {};
@@ -222,7 +221,7 @@ Website: www.goodlifeclinic.com`
             background: previewMode ? '#22b573' : '#006bb6',
             color: '#fff',
             border: 'none',
-            padding: '0 12px',
+            padding: '0 20px',
             borderRadius: 6,
             cursor: 'pointer',
             fontWeight: 600,
@@ -231,9 +230,7 @@ Website: www.goodlifeclinic.com`
             alignItems: 'center',
             justifyContent: 'center',
             boxSizing: 'border-box',
-            whiteSpace: 'nowrap',
-            maxWidth: '140px',
-            fontSize: '14px'
+            whiteSpace: 'nowrap'
           }}
         >
           {previewMode ? '📝 Edit Mode' : '👁️ Preview Mode'}
@@ -244,7 +241,7 @@ Website: www.goodlifeclinic.com`
             background: '#6b7280',
             color: '#fff',
             border: 'none',
-            padding: '0 12px',
+            padding: '0 20px',
             borderRadius: 6,
             cursor: 'pointer',
             fontWeight: 600,
@@ -253,9 +250,7 @@ Website: www.goodlifeclinic.com`
             alignItems: 'center',
             justifyContent: 'center',
             boxSizing: 'border-box',
-            whiteSpace: 'nowrap',
-            maxWidth: '120px',
-            fontSize: '14px'
+            whiteSpace: 'nowrap'
           }}
         >
           Reset to Default
@@ -266,7 +261,7 @@ Website: www.goodlifeclinic.com`
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             color: '#fff',
             border: 'none',
-            padding: '0 12px',
+            padding: '0 20px',
             borderRadius: 6,
             cursor: 'pointer',
             fontWeight: 600,
@@ -275,9 +270,7 @@ Website: www.goodlifeclinic.com`
             alignItems: 'center',
             justifyContent: 'center',
             boxSizing: 'border-box',
-            whiteSpace: 'nowrap',
-            maxWidth: '120px',
-            fontSize: '14px'
+            whiteSpace: 'nowrap'
           }}
         >
           Save Template
@@ -506,24 +499,6 @@ Website: www.goodlifeclinic.com`
                         <p style={{ margin: '5px 0 0 0', fontSize: 12, color: '#6b7280' }}>
                           {item.description}
                         </p>
-                        {item.editable && (
-                          <div style={{ marginTop: 8 }}>
-                            <input
-                              type="text"
-                              value={item.value}
-                              onChange={(e) => item.setValue(e.target.value)}
-                              placeholder="Enter company name"
-                              style={{
-                                width: '100%',
-                                padding: '6px 8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: 4,
-                                fontSize: 12,
-                                boxSizing: 'border-box'
-                              }}
-                            />
-                          </div>
-                        )}
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginLeft: 8 }}>
                         <button

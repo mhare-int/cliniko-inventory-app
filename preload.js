@@ -57,7 +57,7 @@ contextBridge.exposeInMainWorld('api', {
   createSupplierOrderFilesForVendors: (items, outputFolder) => ipcRenderer.invoke('createSupplierOrderFilesForVendors', items, outputFolder),
   // Send supplier emails using system default email client
   sendSupplierEmails: (emailData) => ipcRenderer.invoke('sendSupplierEmails', emailData),
-  // Get active POs for a barcode
+  // Get active PURs for a barcode
   getActivePURsForBarcode: (barcode) => ipcRenderer.invoke('getActivePURsForBarcode', barcode),
   
   // User behavior tracking APIs
@@ -106,9 +106,6 @@ contextBridge.exposeInMainWorld('api', {
   },
   onDownloadProgress: (callback) => {
     ipcRenderer.on('download-progress', (event, progress) => callback(progress));
-  },
-  
-  // Open .eml file in default email client
-  openEmlFile: (filePath) => ipcRenderer.invoke('openEmlFile', filePath)
+  }
   // Add more functions here as you expose them in main.js
 });

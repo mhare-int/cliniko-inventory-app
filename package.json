@@ -1,7 +1,7 @@
 {
   "name": "goodlife-stockapp",
   "productName": "Good Life Clinic - Inventory Management",
-  "version": "2.0.3",
+  "version": "1.2.1",
   "description": "Cliniko App packaged with Electron.",
   "author": "The Good Life Stok App",
   "type": "commonjs",
@@ -19,13 +19,11 @@
   "main": "main.js",
   "scripts": {
     "electron": "electron .",
-    "postinstall": "electron-builder install-app-deps",
-    "rebuild": "electron-rebuild",
-    "package": "npm run rebuild && electron-builder --win --x64",
+    "package": "electron-builder --win --x64",
     "dist": "electron-builder",
     "validate-db": "node validate-database.js",
     "validate-dist-db": "node validate-dist-db.js",
-    "clean-db": "node clean-database-for-dist-fixed.js",
+    "clean-db": "node clean-database-for-dist.js",
     "pre-dist": "npm run validate-db && npm run validate-dist-db",
     "build-validated": "./build-with-validation.sh",
     "build-clean": "npm run clean-db && npm run build-validated"
@@ -55,16 +53,9 @@
       }
     ],
     "win": {
-      "target": {
-        "target": "nsis",
-        "arch": [
-          "x64"
-        ]
-      },
+      "target": "nsis",
       "icon": "client/public/goodlife-512.png"
     },
-    "nodeGypRebuild": false,
-    "buildDependenciesFromSource": false,
     "mac": {
       "icon": "client/public/goodlife-512.png",
       "category": "public.app-category.business"
@@ -91,9 +82,7 @@
     ]
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.2",
     "electron": "^37.2.3",
-    "electron-builder": "^26.0.12",
-    "mime-types": "^3.0.1"
+    "electron-builder": "^26.0.12"
   }
 }

@@ -145,8 +145,8 @@ export const useSmartPrompts = (user, currentPath) => {
         id: 'suggest_supplier_files',
         type: 'workflow',
         title: '🏢 Complete the Workflow',
-        message: 'Send your purchase orders directly to suppliers with organized order files.',
-        action: 'Send Orders',
+        message: 'Generate supplier order files to send your purchase requests directly to vendors.',
+        action: 'Generate Files',
         actionPath: '/generate-supplier-files',
         priority: 4
       });

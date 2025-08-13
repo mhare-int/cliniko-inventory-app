@@ -78,7 +78,7 @@ function CreatePurchaseRequests() {
   };
 
   React.useEffect(() => {
-    // Load purchase orders on mount to populate onOrderMap
+    // Load purchase requests on mount to populate onOrderMap
     if (!window.api || !window.api.getPurchaseRequests) {
       setOnOrderMap({});
       return;
@@ -107,12 +107,6 @@ function CreatePurchaseRequests() {
     }
     window.api.getAllProducts()
       .then(res => {
-        console.log('[DEBUG CreatePurchaseRequests] Received products:', res.slice(0, 3));
-        console.log('[DEBUG CreatePurchaseRequests] Sample product structure:', {
-          sampleProduct: res[0],
-          hasSupplierName: !!res[0]?.supplier_name,
-          supplierNameValue: res[0]?.supplier_name
-        });
         setProducts(res);
         
         // Check if we have pre-selected items from Master List
@@ -155,10 +149,10 @@ function CreatePurchaseRequests() {
 
   // No handleSubmit needed for PR creation only
 
-  // Create Purchase Order for selected items
+  // Create Purchase Request for selected items
   const handleCreatePR = async () => {
     if (selectedRows.length === 0) {
-      alert("Please select at least one item to create a purchase order.");
+      alert("Please select at least one item to create a purchase request.");
       return;
     }
     setLoading(true);
@@ -183,7 +177,7 @@ function CreatePurchaseRequests() {
       });
       const prItems = Object.values(combinedMap);
       await window.api.createPurchaseRequest({ items: prItems });
-      alert("Purchase Order created successfully!");
+      alert("Purchase Request created successfully!");
       // Optionally refresh PR map after creation
       if (window.api.getPurchaseRequests) {
         const res = await window.api.getPurchaseRequests(true, undefined);
@@ -199,7 +193,7 @@ function CreatePurchaseRequests() {
       }
       navigate("/generate-supplier-files");
     } catch (err) {
-      setError("Failed to create purchase order.");
+      setError("Failed to create purchase request.");
     }
     setLoading(false);
   };
@@ -218,10 +212,6 @@ function CreatePurchaseRequests() {
 
   // When a product is selected in the add row
   const handleProductSelect = (selectedOption) => {
-    console.log('[DEBUG handleProductSelect] selectedOption:', selectedOption);
-    console.log('[DEBUG handleProductSelect] selectedOption.data:', selectedOption?.data);
-    console.log('[DEBUG handleProductSelect] selectedOption.data.supplier_name:', selectedOption?.data?.supplier_name);
-    
     setAddRow(row => ({
       ...row,
       product: selectedOption ? selectedOption.data : null,
@@ -321,7 +311,7 @@ function CreatePurchaseRequests() {
         />
         <div style={{ marginBottom: 38 }}>
           <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
-            Create Purchase Orders
+            Create Purchase Requests
           </h2>
           {location.state?.fromMasterList ? (
             <p
@@ -359,7 +349,7 @@ function CreatePurchaseRequests() {
             </h4>
             <div style={{ color: "#4b5563" }}>
               <p style={{ margin: "0 0 8px 0" }}>
-                <strong>📦 Start New Purchase Order:</strong> Create any ad-hoc orders by manually selecting products
+                <strong>📦 Start New Purchase Request:</strong> Create any ad-hoc orders by manually selecting products
               </p>
               <p style={{ margin: "0" }}>
                 <strong>📊 Run Stock Comparison:</strong> Automatically finds all items below reorder level (you can still add extra products after)
@@ -422,7 +412,7 @@ function CreatePurchaseRequests() {
                     e.target.style.background = "#28a745";
                   }}
                 >
-                  Start New Purchase Order
+                  Start New Purchase Request
                 </button>
                 <button
                   type="button"
@@ -869,7 +859,7 @@ function CreatePurchaseRequests() {
               </div>
             )}
 
-            {/* Floating Create Purchase Order Button */}
+            {/* Floating Create Purchase Request Button */}
             <div
               style={{
                 position: "fixed",
@@ -913,7 +903,7 @@ function CreatePurchaseRequests() {
                   }
                 }}
               >
-                Create Purchase Order
+                Create Purchase Request
               </button>
             </div>
           </>

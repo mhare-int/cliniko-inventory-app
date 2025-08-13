@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 7;
+const CURRENT_DB_VERSION = 5;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -220,98 +220,10 @@ const migrations = [
         Promise.all(promises).then(() => resolve()).catch(reject);
       });
     }
-  },
-  {
-    version: 6,
-    description: "Ensure suppliers table exists for existing databases",
-    up: (db) => {
-      return new Promise((resolve, reject) => {
-        // Create suppliers table if it doesn't exist
-        db.run(`CREATE TABLE IF NOT EXISTS suppliers (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT UNIQUE NOT NULL,
-          email TEXT,
-          contact_name TEXT,
-          special_instructions TEXT,
-          source TEXT DEFAULT 'Manual',
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )`, (err) => {
-          if (err) return reject(err);
-          
-          // Add source column if it doesn't exist (for databases created between versions)
-          db.run(`ALTER TABLE suppliers ADD COLUMN source TEXT DEFAULT 'Manual'`, (sourceErr) => {
-            // Ignore error if column already exists
-            if (sourceErr && !sourceErr.message.includes('duplicate column name')) {
-              console.error('Warning: Could not add source column to suppliers table:', sourceErr);
-            }
-            
-            // Add special_instructions column if it doesn't exist
-            db.run(`ALTER TABLE suppliers ADD COLUMN special_instructions TEXT`, (instructionsErr) => {
-              // Ignore error if column already exists
-              if (instructionsErr && !instructionsErr.message.includes('duplicate column name')) {
-                console.error('Warning: Could not add special_instructions column to suppliers table:', instructionsErr);
-              }
-              
-              console.log('✅ Suppliers table migration completed');
-              resolve();
-            });
-          });
-        });
-      });
-    }
-  },
-  {
-    version: 7,
-    description: "Convert cliniko_id to TEXT and add proper supplier_id foreign key",
-    up: (db) => {
-      return new Promise((resolve, reject) => {
-        console.log('🔄 Converting cliniko_id to TEXT and adding supplier_id foreign key...');
-        
-        // Step 1: Create new products table with TEXT cliniko_id and supplier_id
-        db.run(`CREATE TABLE products_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          cliniko_id TEXT UNIQUE,
-          name TEXT NOT NULL,
-          supplier_id INTEGER,
-          stock INTEGER DEFAULT 0,
-          reorder_level INTEGER DEFAULT 0,
-          barcode TEXT,
-          FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
-        )`, (err) => {
-          if (err) return reject(err);
-          
-          // Step 2: Migrate data - match supplier names to supplier IDs
-          db.run(`INSERT INTO products_new (id, cliniko_id, name, supplier_id, stock, reorder_level, barcode)
-                  SELECT p.id, CAST(p.cliniko_id AS TEXT), p.name, s.id, p.stock, p.reorder_level, p.barcode 
-                  FROM products p
-                  LEFT JOIN suppliers s ON p.supplier_name = s.name`, (err) => {
-            if (err) return reject(err);
-            
-            // Step 3: Replace old table
-            db.run('DROP TABLE products', (err) => {
-              if (err) return reject(err);
-              
-              db.run('ALTER TABLE products_new RENAME TO products', (err) => {
-                if (err) return reject(err);
-                
-                // Step 4: Recreate index
-                db.run('CREATE UNIQUE INDEX idx_products_cliniko_id_unique ON products(cliniko_id)', (err) => {
-                  if (err) return reject(err);
-                  
-                  console.log('✅ Successfully converted cliniko_id to TEXT and added supplier_id foreign key');
-                  resolve();
-                });
-              });
-            });
-          });
-        });
-      });
-    }
   }
   // Example future migration:
   // {
-  //   version: 7,
+  //   version: 3,
   //   description: "Add new column to products table",
   //   up: (db) => {
   //     return new Promise((resolve, reject) => {

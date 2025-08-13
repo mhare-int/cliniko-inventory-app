@@ -16,7 +16,7 @@ function Home() {
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch active purchase orders
+      // Fetch active purchase requests
       const pursResponse = await window.api.getPurchaseRequests(true, false);
       
       // Fetch all products to check reorder points
@@ -88,6 +88,22 @@ function Home() {
         }}
       />
       
+      {/* Version Indicator */}
+      <div style={{
+        textAlign: "center",
+        margin: "0 0 24px 0",
+        padding: "8px 16px",
+        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        color: "white",
+        borderRadius: "20px",
+        fontSize: "14px",
+        fontWeight: "600",
+        display: "inline-block",
+        boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)"
+      }}>
+                ✨ Version 1.2.1 - v1.1.5 Config + Auto-updater Fix! ✨
+      </div>
+      
       {/* Dashboard Summary */}
       <div style={{
         background: "#f8fafc",
@@ -127,7 +143,7 @@ function Home() {
                 {dashboardData.activePURs}
               </div>
               <div style={{ color: "#64748b", fontSize: "0.9em", fontWeight: 500 }}>
-                Active Purchase Orders
+                Active Purchase Requests
               </div>
             </div>
             
@@ -217,7 +233,7 @@ function Home() {
             e.target.style.transform = "translateY(0)";
             e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
-            Create Purchase Orders
+            Create Purchase Requests
           </button>
         </Link>
         <Link to="/generate-supplier-files" style={{ textDecoration: "none" }}>
@@ -247,7 +263,7 @@ function Home() {
             e.target.style.transform = "translateY(0)";
             e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
-            Send Orders to Suppliers
+            Generate Supplier Files
           </button>
         </Link>
         <Link to="/purchase-requests" style={{ textDecoration: "none" }}>
