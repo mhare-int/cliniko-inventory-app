@@ -1,0 +1,89 @@
+{
+  "name": "goodlife-stockapp",
+  "productName": "Good Life Clinic - Inventory Management",
+  "version": "2.0.5",
+  "description": "Cliniko App packaged with Electron.",
+  "author": "The Good Life Stok App",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "bcryptjs": "^3.0.2",
+    "electron-updater": "^6.6.2",
+    "exceljs": "^4.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "react-select": "^5.10.1",
+    "sqlite3": "^5.1.7",
+    "xlsx": "^0.18.5"
+  },
+  "main": "main.js",
+  "scripts": {
+    "electron": "electron .",
+    "package": "electron-builder --win --x64",
+    "dist": "electron-builder",
+    "rebuild": "npx electron-rebuild",
+    "validate-db": "node validate-database.js",
+    "validate-dist-db": "node validate-dist-db.js",
+    "clean-db": "node clean-database-for-dist.js",
+    "pre-dist": "npm run validate-db && npm run validate-dist-db",
+    "build-validated": "./build-with-validation.sh",
+    "build-clean": "npm run clean-db && npm run build-validated"
+  },
+  "build": {
+    "appId": "com.goodlife.stockapp",
+    "productName": "Good Life Clinic - Inventory Management",
+    "icon": "client/public/goodlife-512.png",
+    "publish": {
+      "provider": "github",
+      "owner": "mhare-int",
+      "repo": "cliniko-inventory-app",
+      "private": true,
+      "releaseType": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "backend/**",
+      "client/build/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/appdata.db",
+        "to": "backend/appdata.db"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "client/public/goodlife-512.png"
+    },
+    "mac": {
+      "icon": "client/public/goodlife-512.png",
+      "category": "public.app-category.business"
+    },
+    "linux": {
+      "icon": "client/public/goodlife-512.png",
+      "category": "Office"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "asarUnpack": [
+      "backend/*.js",
+      "node_modules/express/**",
+      "node_modules/cors/**",
+      "node_modules/jsonwebtoken/**",
+      "node_modules/sqlite3/**",
+      "node_modules/bcryptjs/**",
+      "node_modules/body-parser/**"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^37.2.3",
+    "electron-builder": "^26.0.12"
+  }
+}
