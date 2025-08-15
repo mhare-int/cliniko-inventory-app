@@ -1,5 +1,226 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// RestoreSuppliersPopup component
+function RestoreSuppliersPopup({ 
+  suppliers, 
+  inactiveSuppliers, 
+  onClose, 
+  onRestore 
+}) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [supplierProductCounts, setSupplierProductCounts] = useState({});
+  
+  const inactiveSuppliersData = suppliers.filter(supplier => 
+    inactiveSuppliers.has(supplier.id)
+  );
+
+  // Load product counts for inactive suppliers
+  useEffect(() => {
+    const loadProductCounts = async () => {
+      try {
+        // Get all products and count how many belong to each inactive supplier
+        const allProductsResult = await window.api.getAllProducts();
+        if (allProductsResult && !allProductsResult.error) {
+          const counts = {};
+          
+          // Initialize counts for all inactive suppliers
+          inactiveSuppliersData.forEach(supplier => {
+            counts[supplier.id] = 0;
+          });
+          
+          // Count products for each supplier
+          allProductsResult.forEach(product => {
+            if (product.supplier_id && counts.hasOwnProperty(product.supplier_id)) {
+              counts[product.supplier_id]++;
+            }
+          });
+          
+          setSupplierProductCounts(counts);
+        }
+      } catch (err) {
+        console.error('Error loading product counts:', err);
+        // Set all counts to 0 on error
+        const counts = {};
+        inactiveSuppliersData.forEach(supplier => {
+          counts[supplier.id] = 0;
+        });
+        setSupplierProductCounts(counts);
+      }
+    };
+
+    if (inactiveSuppliersData.length > 0) {
+      loadProductCounts();
+    }
+  }, [inactiveSuppliersData.length]);
+
+  const handleSelectAll = () => {
+    if (selectedIds.length === inactiveSuppliersData.length && inactiveSuppliersData.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(inactiveSuppliersData.map(s => s.id));
+    }
+  };
+
+  const handleSelectSupplier = (supplierId) => {
+    setSelectedIds(prev => 
+      prev.includes(supplierId) 
+        ? prev.filter(id => id !== supplierId)
+        : [...prev, supplierId]
+    );
+  };
+
+  const handleRestore = () => {
+    if (selectedIds.length > 0) {
+      onRestore(selectedIds);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(0, 0, 0, 0.5)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 2000
+    }}>
+      <div style={{
+        backgroundColor: "white",
+        borderRadius: 8,
+        padding: 24,
+        maxWidth: 600,
+        width: "90%",
+        maxHeight: "80vh",
+        overflow: "auto",
+        boxShadow: "0 10px 25px rgba(0, 0, 0, 0.2)"
+      }}>
+        <div style={{
+          display: "flex",
+          alignItems: "flex-end", // KEY: Perfect baseline alignment
+          justifyContent: "space-between",
+          marginBottom: 20,
+          borderBottom: "1px solid #eee",
+          paddingBottom: 16,
+          minHeight: 32
+        }}>
+          <h3 style={{ 
+            margin: 0, 
+            color: "#333", 
+            height: 32,
+            display: "flex",
+            alignItems: "center",
+            boxSizing: "border-box"
+          }}>
+            Restore Inactive Suppliers ({inactiveSuppliersData.length})
+          </h3>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              fontSize: 18,
+              cursor: "pointer",
+              color: "#666",
+              height: 32,
+              width: 32,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 4,
+              boxSizing: "border-box"
+            }}
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14, fontWeight: 600, paddingLeft: 12 }}>
+            <input
+              type="checkbox"
+              checked={selectedIds.length === inactiveSuppliersData.length && inactiveSuppliersData.length > 0}
+              onChange={handleSelectAll}
+            />
+            Select All
+          </label>
+        </div>
+
+        <div style={{ 
+          maxHeight: 300, 
+          overflowY: "auto", 
+          border: "1px solid #ddd", 
+          borderRadius: 4,
+          marginBottom: 20
+        }}>
+          {inactiveSuppliersData.map(supplier => (
+            <div
+              key={supplier.id}
+              style={{
+                padding: 12,
+                borderBottom: "1px solid #eee",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                backgroundColor: selectedIds.includes(supplier.id) ? "#f0f8ff" : "white"
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(supplier.id)}
+                onChange={() => handleSelectSupplier(supplier.id)}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{supplier.name}</div>
+                <div style={{ fontSize: 12, color: "#666" }}>
+                  Email: {supplier.email || "N/A"} | Contact: {supplier.contact_name || "N/A"} | Products: {supplierProductCounts[supplier.id] !== undefined ? supplierProductCounts[supplier.id] : "Loading..."}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "10px 20px",
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              background: "white",
+              color: "#333",
+              cursor: "pointer",
+              fontSize: 14
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleRestore}
+            disabled={selectedIds.length === 0}
+            style={{
+              padding: "10px 20px",
+              border: "none",
+              borderRadius: 4,
+              background: selectedIds.length === 0 ? "#ccc" : "#28a745",
+              color: "white",
+              cursor: selectedIds.length === 0 ? "not-allowed" : "pointer",
+              fontSize: 14,
+              fontWeight: 600
+            }}
+          >
+            Restore Selected ({selectedIds.length})
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SuppliersManagement() {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -7,11 +228,14 @@ function SuppliersManagement() {
   const [editingSupplier, setEditingSupplier] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [inactiveSuppliers, setInactiveSuppliers] = useState(new Set());
+  const [showRestorePopup, setShowRestorePopup] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     contactName: '',
-    specialInstructions: ''
+    specialInstructions: '',
+    accountNumber: ''
   });
   const editFormRef = useRef(null);
 
@@ -28,6 +252,11 @@ function SuppliersManagement() {
         setError(result.error);
       } else {
         setSuppliers(result);
+        // Load inactive suppliers and populate the set
+        const inactiveResult = await window.api.getInactiveSuppliers();
+        if (!inactiveResult.error && inactiveResult.length > 0) {
+          setInactiveSuppliers(new Set(inactiveResult.map(s => s.id)));
+        }
       }
     } catch (err) {
       setError('Failed to load suppliers');
@@ -47,21 +276,23 @@ function SuppliersManagement() {
           formData.name,
           formData.email,
           formData.contactName,
-          formData.specialInstructions
+          formData.specialInstructions,
+          formData.accountNumber
         );
       } else {
         result = await window.api.addSupplier(
           formData.name,
           formData.email,
           formData.contactName,
-          formData.specialInstructions
+          formData.specialInstructions,
+          formData.accountNumber
         );
       }
       
       if (result.error) {
         setError(result.error);
       } else {
-        setFormData({ name: '', email: '', contactName: '', specialInstructions: '' });
+        setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '' });
         setEditingSupplier(null);
         setShowAddForm(false);
         loadSuppliers();
@@ -77,7 +308,8 @@ function SuppliersManagement() {
       name: supplier.name || '',
       email: supplier.email || '',
       contactName: supplier.contact_name || '',
-      specialInstructions: supplier.special_instructions || supplier.comments || ''
+      specialInstructions: supplier.special_instructions || supplier.comments || '',
+      accountNumber: supplier.account_number || ''
     });
     setShowAddForm(true);
     
@@ -112,7 +344,7 @@ function SuppliersManagement() {
   };
 
   const handleCancel = () => {
-    setFormData({ name: '', email: '', contactName: '', specialInstructions: '' });
+    setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '' });
     setEditingSupplier(null);
     setShowAddForm(false);
     setError('');
@@ -125,6 +357,32 @@ function SuppliersManagement() {
     }));
   };
 
+  const handleRestoreSuppliers = async (supplierIds) => {
+    setError('');
+    try {
+      for (const supplierId of supplierIds) {
+        const result = await window.api.reactivateSupplier(supplierId);
+        if (result.error) {
+          setError(`Failed to restore supplier: ${result.error}`);
+          return;
+        }
+      }
+      
+      // Update local state
+      setInactiveSuppliers(prev => {
+        const newSet = new Set(prev);
+        supplierIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+      
+      setShowRestorePopup(false);
+      // Optionally reload all suppliers to ensure consistency
+      loadSuppliers();
+    } catch (err) {
+      setError('Failed to restore suppliers');
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -133,8 +391,11 @@ function SuppliersManagement() {
     );
   }
 
-  // Filter suppliers based on search term
+  // Filter suppliers based on search term and exclude inactive suppliers
   const filteredSuppliers = suppliers.filter(supplier => {
+    // Skip inactive suppliers
+    if (inactiveSuppliers.has(supplier.id)) return false;
+    
     if (!searchTerm.trim()) return true;
     const search = searchTerm.toLowerCase();
     return (
@@ -226,6 +487,61 @@ function SuppliersManagement() {
           + Add Supplier
         </button>
       </div>
+
+      {/* Inactive Suppliers Indicator - Separate line below */}
+      {inactiveSuppliers.size > 0 && (
+        <div style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          marginBottom: "20px"
+        }}>
+          <div style={{
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 8,
+            width: "fit-content"
+          }}>
+            <span style={{
+              fontSize: 11,
+              color: "#856404",
+              background: "#fff3cd",
+              border: "1px solid #ffeaa7",
+              borderRadius: 4,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+              height: 32,
+              display: "flex",
+              alignItems: "center",
+              paddingLeft: 10,
+              paddingRight: 10,
+              boxSizing: "border-box"
+            }}>
+              📦 {inactiveSuppliers.size} supplier{inactiveSuppliers.size !== 1 ? 's' : ''} inactive
+            </span>
+            <button
+              onClick={() => setShowRestorePopup(true)}
+              style={{
+                background: "#856404",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                fontSize: 9,
+                cursor: "pointer",
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+                padding: "0 6px",
+                height: 32,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxSizing: "border-box"
+              }}
+            >
+              Manage Inactive Suppliers
+            </button>
+          </div>
+        </div>
+      )}
 
       {searchTerm && (
         <div style={{
@@ -328,6 +644,29 @@ function SuppliersManagement() {
                 type="text"
                 value={formData.contactName}
                 onChange={(e) => handleInputChange('contactName', e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: 8,
+                  fontSize: 16,
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                  boxSizing: 'border-box'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                onBlur={(e) => e.target.style.borderColor = '#e1e5e9'}
+              />
+            </div>
+            
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', marginBottom: 5, color: '#555', fontWeight: 500 }}>
+                Account Number
+              </label>
+              <input
+                type="text"
+                value={formData.accountNumber}
+                onChange={(e) => handleInputChange('accountNumber', e.target.value)}
                 style={{
                   width: '100%',
                   padding: '12px 16px',
@@ -497,6 +836,15 @@ function SuppliersManagement() {
                   color: '#246aa8',
                   borderBottom: '1px solid #e2e8f0'
                 }}>
+                  Account Number
+                </th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  color: '#246aa8',
+                  borderBottom: '1px solid #e2e8f0'
+                }}>
                   Special Instructions
                 </th>
                 <th style={{ 
@@ -534,6 +882,9 @@ function SuppliersManagement() {
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     {supplier.contact_name || '-'}
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    {supplier.account_number || '-'}
                   </td>
                   <td style={{ padding: '12px 16px', maxWidth: '200px' }}>
                     <div style={{ 
@@ -612,6 +963,15 @@ function SuppliersManagement() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {showRestorePopup && (
+        <RestoreSuppliersPopup
+          suppliers={suppliers}
+          inactiveSuppliers={inactiveSuppliers}
+          onClose={() => setShowRestorePopup(false)}
+          onRestore={handleRestoreSuppliers}
+        />
       )}
     </div>
   );
