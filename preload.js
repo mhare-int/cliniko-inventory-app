@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   getFileStats: (filePath) => ipcRenderer.invoke('getFileStats', filePath),
   deleteGeneratedFile: (prId, vendorName, fileType, filename) => ipcRenderer.invoke('deleteGeneratedFile', prId, vendorName, fileType, filename),
   deleteFileFromDisk: (filePath) => ipcRenderer.invoke('deleteFileFromDisk', filePath),
+  openOftFile: (filePath) => ipcRenderer.invoke('openOftFile', filePath),
   receiveItemById: (itemId, quantityReceived) => ipcRenderer.invoke('receiveItemById', itemId, quantityReceived),
   updateStockFromCliniko: () => {
     console.log('updateStockFromCliniko called from frontend');
