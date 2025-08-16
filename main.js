@@ -811,6 +811,54 @@ ${message}`;
   }
 });
 
+// Delete file from disk
+ipcMain.handle('deleteFileFromDisk', async (event, filePath) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: 'File not found' };
+    }
+    
+    fs.unlinkSync(filePath);
+    return { success: true, message: 'File deleted successfully' };
+    
+  } catch (err) {
+    logErrorToFile('deleteFileFromDisk error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { success: false, error: 'Failed to delete file', details: err.message };
+  }
+});
+
+// Check if vendor files have been created for a specific type
+ipcMain.handle('hasVendorFilesCreated', async (event, prId, vendorName, fileType) => {
+  try {
+    return await db.hasVendorFilesCreated(prId, vendorName, fileType);
+  } catch (err) {
+    logErrorToFile('hasVendorFilesCreated error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return false;
+  }
+});
+
+// Open .oft file with default application
+ipcMain.handle('openOftFile', async (event, filePath) => {
+  try {
+    const { shell } = require('electron');
+    const fs = require('fs');
+    
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: 'File not found' };
+    }
+    
+    await shell.openPath(filePath);
+    return { success: true, message: 'File opened successfully' };
+    
+  } catch (err) {
+    logErrorToFile('openOftFile error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { success: false, error: 'Failed to open file', details: err.message };
+  }
+});
+
 // Supplier management API endpoints
 ipcMain.handle('getAllSuppliers', async () => {
   try {
