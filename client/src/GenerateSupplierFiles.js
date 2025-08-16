@@ -1617,15 +1617,6 @@ Website: www.goodlifeclinic.com`
 
   return (
     <div className="center-card">
-      {/* Hide native browser clear/cancel buttons for the vendor search input */}
-      <style>{`
-        /* WebKit clear button */
-        #gsf-vendor-search::-webkit-search-cancel-button { display: none; }
-        #gsf-vendor-search::-webkit-search-decoration { display: none; }
-        /* IE/Edge clear/reveal buttons */
-        #gsf-vendor-search::-ms-clear { display: none; }
-        #gsf-vendor-search::-ms-reveal { display: none; }
-      `}</style>
   {/* UI cleaned: debug panel removed */}
       <button
         type="button"
@@ -1764,21 +1755,14 @@ Website: www.goodlifeclinic.com`
           {/* Vendor search (single plain input) */}
           <div data-gsf-filter-area style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginBottom: 12 }}>
             <span style={{ height: 48, display: 'flex', alignItems: 'center', paddingLeft: 12, paddingRight: 12, boxSizing: 'border-box', fontWeight: 600 }}>Filter:</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: 640 }}>
-              <input
-                id="gsf-vendor-search"
-                list="vendor-options"
-                type="text"
-                placeholder="Vendor name or filename"
-                value={vendorSearch}
-                onChange={e => setVendorSearch(e.target.value)}
-                style={{ height: 40, padding: '0 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box', width: '100%' }}
-              />
-              <datalist id="vendor-options">
-                {vendorOptions.map((v, i) => <option key={i} value={v} />)}
-              </datalist>
-              {/* Clear button removed to avoid duplicate/extra cancel control next to the input */}
-            </div>
+            <input
+              id="gsf-vendor-search"
+              type="text"
+              placeholder="Vendor name or filename"
+              value={vendorSearch}
+              onChange={e => setVendorSearch(e.target.value)}
+              style={{ height: 40, padding: '0 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box', width: '100%', maxWidth: 640 }}
+            />
           </div>
 
           {/* Excel group */}
