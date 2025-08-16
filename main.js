@@ -752,96 +752,51 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
           const oftFilePath = path.join(outputFolder, oftFilename);
 
-          // Write PowerShell script to temporary file to avoid command line escaping issues
-          const tempDir = require('os').tmpdir();
-          const scriptPath = path.join(tempDir, `oft_create_${timestamp}.ps1`);
-          
-          const powershellScript = `
-try {
-    Write-Host "Creating Outlook COM object..."
-    $outlook = New-Object -ComObject Outlook.Application
-    Write-Host "Outlook COM object created"
-    
-    # Create mail item and set properties
-    $mail = $outlook.CreateItem(0)  # olMailItem
-    $mail.To = "${toEmail}"
-    $mail.Subject = "${subject}"
-    $mail.HTMLBody = @"
-${message}
-"@
-    Write-Host "Mail content configured"
-    
-    $oftPath = "${oftFilePath.replace(/\\/g, '\\\\')}"
-    Write-Host "Target path: $oftPath"
-    
-    # Try different save format approaches (based on test_comprehensive_oft.ps1)
-    try {
-        # Method 1: Save as MSG first, then copy to OFT
-        $msgPath = $oftPath.Replace('.oft', '.msg')
-        Write-Host "Saving as MSG first to: $msgPath"
-        $mail.SaveAs($msgPath, 3)  # olMSG = 3
-        
-        if (Test-Path $msgPath) {
-            Write-Host "MSG file created successfully"
-            # Copy and rename to .oft
-            Copy-Item $msgPath $oftPath -Force
-            Remove-Item $msgPath -Force
-            Write-Host "SUCCESS: OFT created via MSG method"
-        } else {
-            Write-Host "MSG file was not created, trying direct method"
-            $mail.SaveAs($oftPath, 5)  # olTemplate = 5
-            Write-Host "SUCCESS: OFT created via direct method"
-        }
-        
-    } catch {
-        Write-Host "MSG method failed: $($_.Exception.Message)"
-        # Method 2: Direct OFT save with error handling
-        Write-Host "Trying direct OFT save..."
-        $mail.SaveAs($oftPath, 5)  # olTemplate = 5
-        Write-Host "SUCCESS: OFT created via direct method"
-    }
-    
-    # Clean up COM objects
-    $mail = $null
-    $outlook = $null
-    Write-Host "COM objects cleaned up"
-    
-    # Verify file was created and check size
-    if (Test-Path $oftPath) {
-        $fileInfo = Get-Item $oftPath
-        Write-Host "VERIFIED: OFT file exists - Size: $($fileInfo.Length) bytes"
-    } else {
-        Write-Host "ERROR: OFT file was not created"
-    }
-    
-} catch {
-    Write-Host "ERROR: $($_.Exception.Message)"
-    Write-Host "Full error: $($_.Exception.ToString())"
-}
-`;
-
-          // Write script to temp file
-          fs.writeFileSync(scriptPath, powershellScript, 'utf8');
-          
-          // Execute PowerShell script from file
+          // Create PowerShell script exactly like your test_comprehensive_oft.ps1
           const { exec } = require('child_process');
           const util = require('util');
           const execPromise = util.promisify(exec);
           
-          const command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`;
+          const command = `powershell -ExecutionPolicy Bypass -Command "
+try {
+    \\$outlook = New-Object -ComObject Outlook.Application
+    \\$mail = \\$outlook.CreateItem(0)
+    \\$mail.To = '${toEmail}'
+    \\$mail.Subject = '${subject}'
+    \\$mail.HTMLBody = @'
+${message}
+'@
+    
+    \\$oftPath = '${oftFilePath.replace(/\\/g, '\\\\')}'
+    
+    try {
+        \\$msgPath = \\$oftPath.Replace('.oft', '.msg')
+        \\$mail.SaveAs(\\$msgPath, 3)
+        
+        if (Test-Path \\$msgPath) {
+            Copy-Item \\$msgPath \\$oftPath -Force
+            Remove-Item \\$msgPath -Force
+            Write-Host 'SUCCESS: OFT created via MSG method'
+        }
+    } catch {
+        \\$mail.SaveAs(\\$oftPath, 5)
+        Write-Host 'SUCCESS: OFT created via direct method'
+    }
+    
+    \\$mail = \\$null
+    \\$outlook = \\$null
+    
+    if (Test-Path \\$oftPath) {
+        \\$fileInfo = Get-Item \\$oftPath
+        Write-Host \\\"File created: \\$（\\$fileInfo.Length） bytes\\\"
+    }
+} catch {
+    Write-Host \\\"ERROR: \\$（\\$_.Exception.Message）\\\"
+}
+"`;
           
           const result = await execPromise(command);
           console.log(`PowerShell output: ${result.stdout}`);
-          if (result.stderr) {
-            console.log(`PowerShell errors: ${result.stderr}`);
-          }
-          
-          // Clean up temp script file
-          try {
-            fs.unlinkSync(scriptPath);
-          } catch (cleanupErr) {
-            console.log(`Could not clean up temp script: ${cleanupErr.message}`);
-          }
           
           // Verify file was created and check size
           if (fs.existsSync(oftFilePath)) {
