@@ -168,7 +168,7 @@ function GenerateSupplierFiles() {
       return;
     }
     if (!outputFolder) {
-      setError("Please select an output folder for the email files.");
+      setError("Please select an output folder for the template files.");
       return;
     }
     setLoading(true);
@@ -269,7 +269,7 @@ function GenerateSupplierFiles() {
       } else {
         // Don't create virtual file entries when files aren't actually created
         files = [];
-        // Automatically create email files when not creating CSV files
+        // Automatically create email templates when not creating CSV files
         alert("Preparing email templates...");
       }
       
@@ -367,7 +367,7 @@ The Good Life Clinic`;
       // When not creating files, automatically create email templates
       if (!createFiles) {
         setEmailMode(true);
-        // Directly create email files
+        // Directly create email templates
         try {
           // Load email template
           let defaultSubject = `Purchase Order - ${purNumber}`;
@@ -1015,9 +1015,9 @@ ${supplierSpecificSignature}
         message += `Email template files have been saved to your output folder:\n`;
         
         // Safety check for oftFiles array
-        const emailFiles = result.oftFiles || result.emlFiles || [];
+        const emailFiles = result.oftFiles || [];
         emailFiles.forEach(file => {
-          const fileType = file.isOutlookTemplate ? '.oft template' : '.eml email';
+          const fileType = file.isOutlookTemplate ? '.oft template' : 'email file';
           message += `• ${file.filename} (${file.vendor}) - ${fileType}\n`;
         });
         message += `\nClick on .oft file to open it as an editable template in Outlook`;
@@ -1064,7 +1064,7 @@ ${supplierSpecificSignature}
           isOutlookTemplate: file.isOutlookTemplate || false
         }));
         
-        // Merge new email files with existing ones, avoiding duplicates
+        // Merge new template files with existing ones, avoiding duplicates
         setDownloadLinks(prev => {
           console.log('Current downloadLinks:', prev);
           console.log('Adding emailLinks:', emailLinks);
@@ -1084,7 +1084,7 @@ ${supplierSpecificSignature}
         });
         setEmailMode(false);
       } else {
-        throw new Error(result.error || "Failed to create email files");
+        throw new Error(result.error || "Failed to create template files");
       }
     } catch (err) {
       alert(`Failed to open email client: ${err.message}`);
@@ -1313,7 +1313,7 @@ ${supplierSpecificSignature}
           <h4>
             {downloadLinks.some(file => file.type === 'placeholder') && emailMode ? 
               "📧 Email Setup Required" : 
-              "📄 Generated Files"
+              (createFiles ? "Orders Sent to Suppliers" : "Email Template Ready")
             }
           </h4>
           
@@ -1350,7 +1350,7 @@ ${supplierSpecificSignature}
                 onClick={() => setEmailMode(!emailMode)}
                 type="button"
               >
-                {emailMode ? "📋 View Files" : "📧 Create Supplier Emails"}
+                {emailMode ? "📋 View Files" : "📧 Create Email Templates"}
               </button>
             )}
           </div>
@@ -1429,7 +1429,7 @@ ${supplierSpecificSignature}
                   fontSize: "16px"
                 }}
               >
-                {sendingEmails ? "📤 Creating..." : "📧 Create Email Files"}
+                {sendingEmails ? "📤 Creating..." : "📧 Create Email Templates"}
               </button>
             </div>
           ) : (
@@ -1446,26 +1446,20 @@ ${supplierSpecificSignature}
                           // For Outlook drafts, just show info message
                           alert(`This email was created as a draft in Outlook. Please check your Outlook drafts folder for: ${file.vendor}`);
                         } else if (file.type === 'email' && file.path) {
-                          // Handle .oft and .eml template files
+                          // Handle .oft template files
                           try {
-                            if (window.api && window.api.openEmlFile) {
-                              const result = await window.api.openEmlFile(file.path);
+                            if (window.api && window.api.openOftFile) {
+                              const result = await window.api.openOftFile(file.path);
                               if (!result.success) {
                                 alert(`Failed to open email template file: ${result.error}`);
                               } else {
-                                const fileExt = file.path.split('.').pop().toLowerCase();
-                                if (fileExt === 'oft') {
-                                  // Special message for .oft files
-                                  console.log(`Opened .oft template file: ${file.filename}`);
-                                } else {
-                                  console.log(`Opened email file: ${file.filename}`);
-                                }
+                                console.log(`Opened .oft template file: ${file.filename}`);
                               }
                             } else {
-                              alert('Email file opening not available');
+                              alert('Email template file opening not available');
                             }
                           } catch (e) {
-                            alert(`Failed to open email file: ${e.message}`);
+                            alert(`Failed to open email template file: ${e.message}`);
                           }
                         } else {
                           // Handle regular files (Excel/CSV)
@@ -1538,7 +1532,7 @@ ${supplierSpecificSignature}
                   })}
                 </ul>
                 <p style={{ margin: "10px 0 0 0", fontSize: "14px", color: "#6b7280" }}>
-                  Click "📧 Create Supplier Emails" to compose emails with order tables.
+                  Click "📧 Create Email Templates" to generate .oft template files.
                 </p>
               </div>
             )
