@@ -23,6 +23,7 @@ import FirstTimeSetup from "./FirstTimeSetup";
 import PageWrapper from "./PageWrapper";
 import { useBehaviorTracking } from "./hooks/useBehaviorTracking";
 import { SmartPromptsProvider } from "./contexts/SmartPromptsContext";
+
 // Robust API base URL logic for Electron/packaged and browser environments
 const API_BASE_URL = window?.process?.versions?.electron
   ? "http://localhost:5000"

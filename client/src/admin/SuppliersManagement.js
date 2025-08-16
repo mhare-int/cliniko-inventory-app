@@ -4,15 +4,18 @@ import React, { useState, useEffect, useRef } from 'react';
 function RestoreSuppliersPopup({ 
   suppliers, 
   inactiveSuppliers, 
+  inactiveList, // optional: full supplier objects
   onClose, 
   onRestore 
 }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [supplierProductCounts, setSupplierProductCounts] = useState({});
   
-  const inactiveSuppliersData = suppliers.filter(supplier => 
-    inactiveSuppliers.has(supplier.id)
-  );
+  // If a full inactive list is provided prefer that, otherwise fall back
+  // to filtering the suppliers array by the inactive ID set.
+  const inactiveSuppliersData = Array.isArray(inactiveList) && inactiveList.length > 0
+    ? inactiveList
+    : suppliers.filter(supplier => inactiveSuppliers.has(supplier.id));
 
   // Load product counts for inactive suppliers
   useEffect(() => {
@@ -52,6 +55,18 @@ function RestoreSuppliersPopup({
       loadProductCounts();
     }
   }, [inactiveSuppliersData.length]);
+
+  // Debug: log the inactive supplier objects the popup will render
+  useEffect(() => {
+    try {
+      console.debug('[SuppliersManagement] RestoreSuppliersPopup inactiveSuppliersData count:', inactiveSuppliersData.length);
+      if (inactiveSuppliersData.length > 0) {
+        console.debug('[SuppliersManagement] Sample inactive supplier:', inactiveSuppliersData[0]);
+      }
+    } catch (e) {
+      console.error('Error logging inactiveSuppliersData:', e);
+    }
+  }, [inactiveSuppliersData]);
 
   const handleSelectAll = () => {
     if (selectedIds.length === inactiveSuppliersData.length && inactiveSuppliersData.length > 0) {
@@ -229,6 +244,7 @@ function SuppliersManagement() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [inactiveSuppliers, setInactiveSuppliers] = useState(new Set());
+  const [inactiveSuppliersList, setInactiveSuppliersList] = useState([]);
   const [showRestorePopup, setShowRestorePopup] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -248,20 +264,50 @@ function SuppliersManagement() {
     setError('');
     try {
       const result = await window.api.getAllSuppliers();
-      if (result.error) {
+  console.debug('[SuppliersManagement] getAllSuppliers result:', result && result.length ? `${result.length} suppliers` : result);
+      // Validate response
+      if (!result) {
+        setSuppliers([]);
+        setError('getAllSuppliers returned no data');
+      } else if (result.error) {
+        setSuppliers([]);
         setError(result.error);
+      } else if (!Array.isArray(result)) {
+        setSuppliers([]);
+        setError('Unexpected response from getAllSuppliers');
       } else {
         setSuppliers(result);
-        // Load inactive suppliers and populate the set
-        const inactiveResult = await window.api.getInactiveSuppliers();
-        if (!inactiveResult.error && inactiveResult.length > 0) {
-          setInactiveSuppliers(new Set(inactiveResult.map(s => s.id)));
+        // Load inactive suppliers and populate the set (tolerant)
+        try {
+          if (window.api && window.api.getInactiveSuppliers) {
+            const inactiveResult = await window.api.getInactiveSuppliers();
+    console.debug('[SuppliersManagement] getInactiveSuppliers result:', Array.isArray(inactiveResult) ? `${inactiveResult.length} inactive` : inactiveResult);
+            if (inactiveResult && !inactiveResult.error && Array.isArray(inactiveResult) && inactiveResult.length > 0) {
+              setInactiveSuppliers(new Set(inactiveResult.map(s => s.id)));
+              setInactiveSuppliersList(inactiveResult);
+            } else {
+              setInactiveSuppliers(new Set());
+              setInactiveSuppliersList([]);
+            }
+          }
+        } catch (inactiveErr) {
+          console.error('Failed to load inactive suppliers:', inactiveErr);
+          setInactiveSuppliers(new Set());
+          setInactiveSuppliersList([]);
         }
       }
     } catch (err) {
-      setError('Failed to load suppliers');
+      console.error('Error in loadSuppliers:', err);
+      setSuppliers([]);
+      setInactiveSuppliers(new Set());
+      setError(err && err.message ? `Failed to load suppliers: ${err.message}` : 'Failed to load suppliers');
     }
     setLoading(false);
+  };
+
+  const handleOpenRestorePopup = () => {
+    console.debug('[SuppliersManagement] Opening Restore popup - inactiveSuppliers.size:', inactiveSuppliers.size, 'inactiveSuppliersList.length:', inactiveSuppliersList.length);
+    setShowRestorePopup(true);
   };
 
   const handleSubmit = async (e) => {
@@ -346,6 +392,27 @@ function SuppliersManagement() {
     setEditingSupplier(null);
     setShowAddForm(false);
     setError('');
+  };
+
+  const handleDeactivate = async (supplier) => {
+    if (!window.confirm(`Are you sure you want to deactivate "${supplier.name}"? It will be hidden from the active list and can be restored from Manage Inactive Suppliers.`)) {
+      return;
+    }
+
+    setError('');
+    try {
+      const result = await window.api.deactivateSupplier(supplier.id);
+      if (result && result.error) {
+        setError(`Failed to deactivate supplier: ${result.error}`);
+        return;
+      }
+
+      // Refresh local state: reload suppliers (this also refreshes inactive list)
+      await loadSuppliers();
+    } catch (err) {
+      console.error('Error deactivating supplier:', err);
+      setError(err && err.message ? `Failed to deactivate supplier: ${err.message}` : 'Failed to deactivate supplier');
+    }
   };
 
   const handleInputChange = (field, value) => {
@@ -517,7 +584,7 @@ function SuppliersManagement() {
               📦 {inactiveSuppliers.size} supplier{inactiveSuppliers.size !== 1 ? 's' : ''} inactive
             </span>
             <button
-              onClick={() => setShowRestorePopup(true)}
+              onClick={handleOpenRestorePopup}
               style={{
                 background: "#856404",
                 color: "white",
@@ -935,9 +1002,9 @@ function SuppliersManagement() {
                         Edit
                       </button>
                       <button
-                        onClick={() => handleDelete(supplier.id)}
+                        onClick={() => handleDeactivate(supplier)}
                         style={{
-                          background: '#f44336',
+                          background: '#f59e0b',
                           color: '#fff',
                           border: 'none',
                           padding: '4px 8px',
@@ -952,7 +1019,7 @@ function SuppliersManagement() {
                           flex: 1
                         }}
                       >
-                        Delete
+                        Deactivate
                       </button>
                     </div>
                   </td>
@@ -967,6 +1034,7 @@ function SuppliersManagement() {
         <RestoreSuppliersPopup
           suppliers={suppliers}
           inactiveSuppliers={inactiveSuppliers}
+          inactiveList={inactiveSuppliersList}
           onClose={() => setShowRestorePopup(false)}
           onRestore={handleRestoreSuppliers}
         />

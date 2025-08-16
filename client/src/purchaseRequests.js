@@ -37,7 +37,26 @@ function PurchaseRequests() {
     }
     if (tabType === "pr") {
       const res = await window.api.getPurchaseRequests(true, undefined);
-      setPrs(res);
+      // Ensure supplier_files_created and oft_files_created reflect actual generated files
+      try {
+        if (window.api && window.api.getGeneratedFiles) {
+          const augmented = await Promise.all(res.map(async pr => {
+            try {
+              const files = await window.api.getGeneratedFiles(pr.id);
+              const hasExcel = Array.isArray(files) && files.some(f => (f.file_type === 'excel' || (f.type === 'file' && !(f.isOutlookTemplate)) || (f.file && /\.xlsx?$/.test(f.file))));
+              const hasOft = Array.isArray(files) && files.some(f => (f.file_type === 'oft' || (f.type === 'email' && f.isOutlookTemplate) || (f.file && f.file.toLowerCase().endsWith('.oft'))));
+              return { ...pr, supplier_files_created: !!hasExcel || !!pr.supplier_files_created, oft_files_created: !!hasOft || !!pr.oft_files_created };
+            } catch (err) {
+              return pr;
+            }
+          }));
+          setPrs(augmented);
+        } else {
+          setPrs(res);
+        }
+      } catch (e) {
+        setPrs(res);
+      }
       // Set editing state for all PRs and all lines, default to outstanding value
       const obj = {};
       res.forEach(pr => {
@@ -640,8 +659,18 @@ function PurchaseRequests() {
                 </th>
                 <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8" }}>PO ID</th>
                 <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8" }}>Date</th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>� Excel</th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>� Email</th>
+                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
+                  <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
+                    📄
+                  </span>
+                  <span style={{ marginLeft: 6 }}>Excel</span>
+                </th>
+                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
+                  <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
+                    📧
+                  </span>
+                  <span style={{ marginLeft: 6 }}>Email</span>
+                </th>
                 <th style={{ border: "1px solid #ccc", width: 44, textAlign: "center" }}></th>
               </tr>
             </thead>
@@ -686,12 +715,12 @@ function PurchaseRequests() {
                         : "—"}
                     </td>
                     <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center", fontSize: 18, backgroundColor: pr.supplier_files_created ? "#e8f5e8" : "#ffeaea" }}>
-                      <span style={{ color: pr.supplier_files_created ? "#28a745" : "#dc3545", fontWeight: "bold" }}>
+                      <span style={{ color: pr.supplier_files_created ? "#28a745" : "#dc3545", fontWeight: "bold", fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }}>
                         {pr.supplier_files_created ? "✓" : "✗"}
                       </span>
                     </td>
                     <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center", fontSize: 18, backgroundColor: pr.oft_files_created ? "#e8f5e8" : "#ffeaea" }}>
-                      <span style={{ color: pr.oft_files_created ? "#28a745" : "#dc3545", fontWeight: "bold" }}>
+                      <span style={{ color: pr.oft_files_created ? "#28a745" : "#dc3545", fontWeight: "bold", fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }}>
                         {pr.oft_files_created ? "✓" : "✗"}
                       </span>
                     </td>

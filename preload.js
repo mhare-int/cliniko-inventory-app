@@ -56,9 +56,21 @@ contextBridge.exposeInMainWorld('api', {
   // Expose createSupplierOrderFilesForVendors to frontend
   createSupplierOrderFilesForVendors: (items, outputFolder) => ipcRenderer.invoke('createSupplierOrderFilesForVendors', items, outputFolder),
   // Send supplier emails using system default email client
-  sendSupplierEmails: (emailData) => ipcRenderer.invoke('sendSupplierEmails', emailData),
+  sendSupplierEmails: (emailData, outputFolder) => ipcRenderer.invoke('sendSupplierEmails', emailData, outputFolder),
   // Get active PURs for a barcode
   getActivePURsForBarcode: (barcode) => ipcRenderer.invoke('getActivePURsForBarcode', barcode),
+  
+  // File management APIs for supplier files
+  getGeneratedFiles: (prId, fileType) => ipcRenderer.invoke('getGeneratedFiles', prId, fileType),
+  deleteGeneratedFile: (prId, vendorName, fileType, filename) => ipcRenderer.invoke('deleteGeneratedFile', prId, vendorName, fileType, filename),
+  markVendorFilesCreated: (prId, vendorName, fileType, filename, filePath, fileSize) => ipcRenderer.invoke('markVendorFilesCreated', prId, vendorName, fileType, filename, filePath, fileSize),
+  hasVendorFilesCreated: (prId, vendorName, fileType) => ipcRenderer.invoke('hasVendorFilesCreated', prId, vendorName, fileType),
+  updatePurchaseRequestSupplierFilesStatus: (prId, hasFiles) => ipcRenderer.invoke('updatePurchaseRequestSupplierFilesStatus', prId, hasFiles),
+  updatePurchaseRequestOftFilesStatus: (prId, hasFiles) => ipcRenderer.invoke('updatePurchaseRequestOftFilesStatus', prId, hasFiles),
+  fileExists: (filePath) => ipcRenderer.invoke('fileExists', filePath),
+  deleteFileFromDisk: (filePath) => ipcRenderer.invoke('deleteFileFromDisk', filePath),
+  getFileStats: (filePath) => ipcRenderer.invoke('getFileStats', filePath),
+  downloadGeneratedFile: (filename, filePath) => ipcRenderer.invoke('downloadGeneratedFile', filename, filePath),
   
   // User behavior tracking APIs
   startUserSession: (userId, sessionId) => ipcRenderer.invoke('startUserSession', userId, sessionId),
@@ -85,6 +97,9 @@ contextBridge.exposeInMainWorld('api', {
   updateSupplier: (id, name, email, contactName, comments) => ipcRenderer.invoke('updateSupplier', id, name, email, contactName, comments),
   deleteSupplier: (id) => ipcRenderer.invoke('deleteSupplier', id),
   getSupplierByName: (name) => ipcRenderer.invoke('getSupplierByName', name),
+  getInactiveSuppliers: () => ipcRenderer.invoke('getInactiveSuppliers'),
+  reactivateSupplier: (supplierId) => ipcRenderer.invoke('reactivateSupplier', supplierId),
+  deactivateSupplier: (supplierId) => ipcRenderer.invoke('deactivateSupplier', supplierId),
   
   // Email template management APIs
   saveEmailTemplate: (templateData) => ipcRenderer.invoke('saveEmailTemplate', templateData),
@@ -107,5 +122,8 @@ contextBridge.exposeInMainWorld('api', {
   onDownloadProgress: (callback) => {
     ipcRenderer.on('download-progress', (event, progress) => callback(progress));
   }
+  ,
+  // Open a file on disk (uses main process to call shell.openPath)
+  openOftFile: (filePath) => ipcRenderer.invoke('openOftFile', filePath)
   // Add more functions here as you expose them in main.js
 });

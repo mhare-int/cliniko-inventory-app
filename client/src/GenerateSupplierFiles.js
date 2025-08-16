@@ -22,6 +22,9 @@ function GenerateSupplierFiles() {
   const [sendingEmails, setSendingEmails] = useState(false);
   const [createFiles, setCreateFiles] = useState(true);
   const [includeAttachments, setIncludeAttachments] = useState(true);
+  const [excelOpen, setExcelOpen] = useState(true);
+  const [oftOpen, setOftOpen] = useState(true);
+  const [vendorSearch, setVendorSearch] = useState('');
 
   // Fetch API key status
   useEffect(() => {
@@ -126,6 +129,7 @@ function GenerateSupplierFiles() {
     }
   };
 
+
   // Load existing files when PR selection or output folder changes
   useEffect(() => {
     if (selectedPRId && outputFolder) {
@@ -135,6 +139,27 @@ function GenerateSupplierFiles() {
       setDownloadLinks([]);
     }
   }, [selectedPRId, outputFolder]);
+
+  // At mount: remove any stale/duplicate filter inputs or clickable remnants inside the filter area
+  useEffect(() => {
+    try {
+      const container = document.querySelector('[data-gsf-filter-area]');
+      if (!container) return;
+      const canonical = container.querySelector('#gsf-vendor-search');
+      // Remove any inputs that aren't the canonical input (stale DOM/HMR artifacts)
+      const inputs = Array.from(container.querySelectorAll('input'));
+      inputs.forEach(inp => { if (inp !== canonical) inp.remove(); });
+      // Remove any buttons or divs that look like suggestion chips (defensive)
+      const extras = Array.from(container.querySelectorAll('button, div')).filter(el => {
+        // keep the Clear button (it has onclick that clears vendorSearch) by checking its textContent
+        if (el.tagName.toLowerCase() === 'button' && el.textContent && el.textContent.trim().toLowerCase() === 'clear') return false;
+        return el !== canonical && el.tagName.toLowerCase() !== 'span';
+      });
+      extras.forEach(el => el.remove());
+    } catch (e) {
+      console.warn('Filter area cleanup failed', e);
+    }
+  }, []);
 
   // Load vendor emails when PR selection changes
   useEffect(() => {
@@ -549,13 +574,80 @@ ${supplierSpecificSignature}
   };
 
   const handleDownloadAll = () => {
-    downloadLinks.forEach(async file => {
-      if (!window.api || !window.api.downloadFile) return;
-      try {
-        const filePath = await window.api.downloadFile(file.file);
-        window.open(filePath);
-      } catch (e) {}
+    // Only open .oft Outlook template files
+    const oftFiles = downloadLinks.filter(f => {
+      if (!f) return false;
+      const fname = (f.file || f.filename || '').toString().toLowerCase();
+      if (fname.endsWith('.oft')) return true;
+      if (f.fileType && f.fileType.toLowerCase() === 'oft') return true;
+      if (f.type === 'email' && f.isOutlookTemplate) return true;
+      return false;
     });
+
+    if (oftFiles.length === 0) {
+      alert('No .oft template files found to open.');
+      return;
+    }
+
+    let opened = 0;
+    const failed = [];
+
+    // Open each .oft using the platform open API exposed by preload
+    (async () => {
+      for (const file of oftFiles) {
+        try {
+          const pathToOpen = file.path || file.file || file.filename;
+          if (!pathToOpen) {
+            failed.push({ file, reason: 'No path available' });
+            continue;
+          }
+
+          if (window.api && window.api.openOftFile) {
+            const res = await window.api.openOftFile(pathToOpen);
+            if (res && res.success) {
+              opened++;
+            } else {
+              // Fallback to downloadFile if openOftFile returned non-success
+              if (window.api && window.api.downloadFile && file.file) {
+                try {
+                  const dres = await window.api.downloadFile(file.file);
+                  if (dres && dres.success && dres.path) {
+                    window.open(dres.path);
+                    opened++;
+                    continue;
+                  }
+                } catch (dErr) {}
+              }
+              failed.push({ file, reason: (res && res.error) ? res.error : 'openOftFile failed' });
+            }
+          } else if (window.api && window.api.downloadFile && file.file) {
+            // No openOftFile available, fallback to downloading/opening the file
+            try {
+              const dres = await window.api.downloadFile(file.file);
+              if (dres && dres.success && dres.path) {
+                window.open(dres.path);
+                opened++;
+                continue;
+              }
+              failed.push({ file, reason: (dres && dres.error) ? dres.error : 'downloadFile failed' });
+            } catch (dErr) {
+              failed.push({ file, reason: dErr?.message || String(dErr) });
+            }
+          } else {
+            failed.push({ file, reason: 'No API available to open file' });
+          }
+        } catch (err) {
+          failed.push({ file, reason: err?.message || String(err) });
+        }
+      }
+
+      let msg = `Attempted to open ${oftFiles.length} .oft file(s). Successfully opened: ${opened}.`;
+      if (failed.length > 0) {
+        msg += `\nFailed to open ${failed.length} file(s). See console for details.`;
+        console.error('Failed to open .oft files:', failed);
+      }
+      alert(msg);
+    })();
   };
 
   // Delete a generated file from database and filesystem
@@ -1455,8 +1547,13 @@ Website: www.goodlifeclinic.com`
     }));
   };
 
+  // Whether there are real generated files (not placeholders)
+  const hasFiles = downloadLinks.some(file => file.type !== 'placeholder');
+  const createButtonLabel = loading ? 'Processing...' : (hasFiles ? 'Recreate Supplier Emails' : 'Create Supplier Emails');
+
   return (
     <div className="center-card">
+  {/* UI cleaned: debug panel removed */}
       <button
         type="button"
         onClick={() => navigate("/")}
@@ -1487,7 +1584,7 @@ Website: www.goodlifeclinic.com`
         Send Orders to Suppliers
       </h2>
       <div style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 16 }}>
-        {/* Row 1: Folder Picker */}
+        {/* Row 1: Folder Picker + PR selector and options on the right */}
         <div style={{ display: "flex", alignItems: "flex-end", gap: 18, minHeight: 48 }}>
           <button
             type="button"
@@ -1528,116 +1625,164 @@ Website: www.goodlifeclinic.com`
           }}>
             {outputFolder ? outputFolder : 'No folder selected'}
           </span>
-        </div>
-        {/* Row 2: Purchase Order Selector and Submit */}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 18, minHeight: 48 }}>
-          <label htmlFor="pr-select" style={{
-            fontWeight: 600,
-            minWidth: 170,
-            fontSize: 17,
-            height: 48,
-            display: 'flex',
-            alignItems: 'center',
-            boxSizing: 'border-box',
-            margin: 0,
-            padding: 0
-          }}>Select Purchase Order:</label>
-          <select
-            id="pr-select"
-            value={selectedPRId || ''}
-            onChange={e => setSelectedPRId(e.target.value)}
-            style={{
-              fontSize: 17,
-              height: 48,
-              padding: '0 16px',
-              borderRadius: 6,
-              border: '1px solid #bbb',
-              background: '#fff',
-              outline: 'none',
-              boxSizing: 'border-box'
-            }}
-          >
-            <option value="">-- Select Active PO --</option>
-            {activePRs && activePRs.length > 0 && activePRs.map(pr => (
-              <option key={pr.id || pr._id} value={pr.id || pr._id}>
-                {pr.name ? pr.name : `PO #${pr.id || pr._id}`}
-              </option>
-            ))}
-          </select>
-        </div>
-        
-        {/* Row 3: Options Checkboxes */}
-        <div style={{ display: "flex", alignItems: "center", gap: 30, minHeight: 40, marginTop: 10 }}>
-          <div style={{ 
-            display: "flex", 
-            alignItems: "center", 
-            gap: 8,
-            height: 32
-          }}>
-            <input
-              type="checkbox"
-              id="create-files"
-              checked={createFiles}
-              onChange={(e) => setCreateFiles(e.target.checked)}
-              style={{ 
-                width: 16, 
-                height: 16,
-                margin: 0,
-                verticalAlign: "middle"
-              }}
-            />
-            <label 
-              htmlFor="create-files" 
-              style={{ 
-                fontSize: 16, 
-                fontWeight: 500, 
-                color: "#374151",
-                margin: 0,
-                lineHeight: "16px",
-                display: "flex",
-                alignItems: "center"
+
+          {/* PR selector and option checkboxes on the same line, aligned right */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 18, minHeight: 48 }}>
+            <label htmlFor="pr-select" style={{ height: 48, display: 'flex', alignItems: 'center', paddingLeft: 12, paddingRight: 12, boxSizing: 'border-box', fontWeight: 600, fontSize: 15, paddingTop: 12, transform: 'translateY(10px)' }}>PO:</label>
+            <select
+              id="pr-select"
+              value={selectedPRId || ''}
+              onChange={e => setSelectedPRId(e.target.value)}
+              style={{
+                fontSize: 15,
+                height: 48,
+                lineHeight: '48px',
+                paddingLeft: 12,
+                paddingRight: 12,
+                display: 'flex',
+                alignItems: 'center',
+                borderRadius: 6,
+                border: '1px solid #bbb',
+                background: '#fff',
+                outline: 'none',
+                boxSizing: 'border-box',
+                minWidth: 260
               }}
             >
-              Create order files for suppliers
-            </label>
+              <option value="">-- Select Active PO --</option>
+              {activePRs && activePRs.length > 0 && activePRs.map(pr => (
+                <option key={pr.id || pr._id} value={pr.id || pr._id}>
+                  {pr.name ? pr.name : `PO #${pr.id || pr._id}`}
+                </option>
+              ))}
+            </select>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  id="create-files"
+                  checked={createFiles}
+                  onChange={(e) => setCreateFiles(e.target.checked)}
+                  style={{ width: 16, height: 16, margin: 0, verticalAlign: 'middle' }}
+                />
+                <label htmlFor="create-files" style={{ fontSize: 14, color: '#374151', margin: 0 }}>Create order files</label>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  id="include-attachments"
+                  checked={includeAttachments}
+                  onChange={(e) => setIncludeAttachments(e.target.checked)}
+                  disabled={!createFiles}
+                  style={{ width: 16, height: 16, margin: 0, verticalAlign: 'middle', opacity: createFiles ? 1 : 0.5 }}
+                />
+                <label htmlFor="include-attachments" style={{ fontSize: 14, color: createFiles ? '#374151' : '#9ca3af', margin: 0 }}>Include attachments</label>
+              </div>
+            </div>
           </div>
-          <div style={{ 
-            display: "flex", 
-            alignItems: "center", 
-            gap: 8,
-            height: 32
-          }}>
-            <input
-              type="checkbox"
-              id="include-attachments"
-              checked={includeAttachments}
-              onChange={(e) => setIncludeAttachments(e.target.checked)}
-              disabled={!createFiles}
-              style={{ 
-                width: 16, 
-                height: 16,
-                margin: 0,
-                verticalAlign: "middle",
-                opacity: createFiles ? 1 : 0.5
-              }}
-            />
-            <label 
-              htmlFor="include-attachments" 
-              style={{ 
-                fontSize: 16, 
-                fontWeight: 500, 
-                color: createFiles ? "#374151" : "#9ca3af",
-                margin: 0,
-                lineHeight: "16px",
-                display: "flex",
-                alignItems: "center"
-              }}
-            >
-              Include files as email attachments
-            </label>
-          </div>
-        </div>
+  </div>
       </div>
+      {/* If files already exist, show them above the create button grouped by type */}
+      {hasFiles && (
+        <div style={{ marginTop: 18 }}>
+          <h4>Existing Generated Files</h4>
+
+          {/* Vendor search (single plain input) */}
+          <div data-gsf-filter-area style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginBottom: 12 }}>
+            <span style={{ height: 48, display: 'flex', alignItems: 'center', paddingLeft: 12, paddingRight: 12, boxSizing: 'border-box', fontWeight: 600 }}>Filter:</span>
+            <input
+              id="gsf-vendor-search"
+              type="text"
+              placeholder="Vendor name or filename"
+              value={vendorSearch}
+              onChange={e => setVendorSearch(e.target.value)}
+              style={{ height: 40, padding: '0 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box', width: '100%', maxWidth: 640 }}
+            />
+          </div>
+
+          {/* Excel group */}
+            {(() => {
+            const excelFiles = downloadLinks.filter(f => f && (f.fileType === 'excel' || (f.type === 'file' && !f.isOutlookTemplate)));
+            const excelFilesFiltered = vendorSearch && vendorSearch.trim() !== '' ? excelFiles.filter(f => {
+              const hay = ((f.vendor || '') + ' ' + (f.file || '')).toLowerCase();
+              return hay.includes(vendorSearch.toLowerCase());
+            }) : excelFiles;
+            return (
+              <div style={{ marginBottom: 12, border: '1px solid #e6eef7', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f6fbff', padding: '8px 12px', cursor: 'pointer' }} onClick={() => setExcelOpen(prev => !prev)}>
+                  <div style={{ fontWeight: 600 }}>Excel / Files</div>
+                  <div style={{ fontSize: 13, color: '#0369a1' }}>{excelFiles.length} {excelFiles.length === 1 ? 'file' : 'files'} {excelOpen ? '▾' : '▸'}</div>
+                </div>
+                {excelOpen && (
+                  <ul style={{ paddingLeft: 20, listStyle: 'none', margin: 0 }}> 
+                    {excelFilesFiltered.map((file, idx) => {
+                      const globalIdx = downloadLinks.findIndex(dl => dl === file || (dl.file === file.file && dl.vendor === file.vendor));
+                      return (
+                        <li key={idx} style={{ marginBottom: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <button type="button" onClick={async () => {
+                            const pathToOpen = file.path || file.file;
+                            if (pathToOpen && window.api && window.api.openOftFile) {
+                              await window.api.openOftFile(pathToOpen);
+                            }
+                          }} style={{ background: 'none', border: 'none', color: '#1867c0', textDecoration: 'underline', cursor: 'pointer', fontSize: '14px', flex: 1, textAlign: 'center' }}>
+                            📄 {file.file}
+                          </button>
+                          <button type="button" onClick={() => handleDeleteFile(file, globalIdx)} style={{ background: '#ff4444', border: 'none', color: 'white', borderRadius: '3px', width: '20px', height: '20px', cursor: 'pointer', fontSize: '12px', marginLeft: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Delete file">×</button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* OFT group */}
+            {(() => {
+            const oftFiles = downloadLinks.filter(f => f && (f.fileType === 'oft' || (f.type === 'email' && f.isOutlookTemplate) || (f.file && f.file.toLowerCase().endsWith('.oft'))));
+            const oftFilesFiltered = vendorSearch && vendorSearch.trim() !== '' ? oftFiles.filter(f => {
+              const hay = ((f.vendor || '') + ' ' + (f.file || '')).toLowerCase();
+              return hay.includes(vendorSearch.toLowerCase());
+            }) : oftFiles;
+            return (
+              <div style={{ marginBottom: 12, border: '1px solid #eef7f6', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf9', padding: '8px 12px', cursor: 'pointer' }} onClick={() => setOftOpen(prev => !prev)}>
+                  <div style={{ fontWeight: 600 }}>Outlook Templates (.oft)</div>
+                  <div style={{ fontSize: 13, color: '#059669' }}>{oftFiles.length} {oftFiles.length === 1 ? 'file' : 'files'} {oftOpen ? '▾' : '▸'}</div>
+                </div>
+                {oftOpen && (
+                  <ul style={{ paddingLeft: 20, listStyle: 'none', margin: 0 }}>
+                    {oftFilesFiltered.map((file, idx) => {
+                      const globalIdx = downloadLinks.findIndex(dl => dl === file || (dl.file === file.file && dl.vendor === file.vendor));
+                      return (
+                        <li key={idx} style={{ marginBottom: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <button type="button" onClick={async () => {
+                            const pathToOpen = file.path || file.file;
+                            if (pathToOpen && window.api && window.api.openOftFile) {
+                              await window.api.openOftFile(pathToOpen);
+                            }
+                          }} style={{ background: 'none', border: 'none', color: '#1867c0', textDecoration: 'underline', cursor: 'pointer', fontSize: '14px', flex: 1, textAlign: 'center' }}>
+                            {file.isOutlookTemplate ? '📝' : '📧'} {file.file}
+                          </button>
+                          <button type="button" onClick={() => handleDeleteFile(file, globalIdx)} style={{ background: '#ff4444', border: 'none', color: 'white', borderRadius: '3px', width: '20px', height: '20px', cursor: 'pointer', fontSize: '12px', marginLeft: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Delete file">×</button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+            {createFiles && (
+              <button style={{ width: '100%', background: '#006bb6', color: '#fff', fontWeight: 600, padding: '10px 12px', border: 'none', borderRadius: '5px', cursor: 'pointer' }} onClick={handleDownloadAll} type="button">Open All Supplier emails</button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", marginTop: 10 }}>
         <button
           type="button"
@@ -1656,7 +1801,7 @@ Website: www.goodlifeclinic.com`
             transition: "background 0.2s"
           }}
         >
-          {loading ? "Processing..." : "TEST BUTTON - CODE IS WORKING"}
+          {createButtonLabel}
         </button>
       </div>
       
@@ -1722,7 +1867,7 @@ Website: www.goodlifeclinic.com`
         </div>
       )}
 
-      {downloadLinks.length > 0 && !emailMode && (
+  {downloadLinks.length > 0 && !hasFiles && (
         <div style={{ marginTop: 28 }}>
           <h4>
             {createFiles ? "📁 Files Created Successfully" : "📧 Email Templates Created Successfully"}
@@ -1761,29 +1906,65 @@ Website: www.goodlifeclinic.com`
                         if (file.isOutlookDraft) {
                           // For Outlook drafts, just show info message
                           alert(`This email was created as a draft in Outlook. Please check your Outlook drafts folder for: ${file.vendor}`);
-                        } else if (file.type === 'email' && file.path) {
-                          // Handle .oft template files
+                        } else if (file.type === 'email') {
+                          // Handle .oft template files (prefer file.path)
                           try {
-                            if (window.api && window.api.openOftFile) {
-                              const result = await window.api.openOftFile(file.path);
-                              if (!result.success) {
-                                alert(`Failed to open email template file: ${result.error}`);
+                            const pathToOpen = file.path || file.file;
+                            if (!pathToOpen) {
+                              alert('No file path available to open the email template');
+                            } else if (window.api && window.api.openOftFile) {
+                              const result = await window.api.openOftFile(pathToOpen);
+                              if (!result || !result.success) {
+                                alert(`Failed to open email template file: ${result && result.error ? result.error : 'Unknown error'}`);
                               } else {
-                                console.log(`Opened .oft template file: ${file.filename}`);
+                                console.log(`Opened .oft template file: ${pathToOpen}`);
                               }
                             } else {
-                              alert('Email template file opening not available');
+                              // Fallback: try downloadFile if openOftFile not available
+                              if (window.api && window.api.downloadFile && file.file) {
+                                try {
+                                  const res = await window.api.downloadFile(file.file);
+                                  if (res && res.success && res.path) {
+                                    window.open(res.path);
+                                  } else {
+                                    const msg = res && (res.error || (res.details ? JSON.stringify(res.details) : null)) ? (res.error || JSON.stringify(res.details)) : 'Unknown error';
+                                    alert('Failed to open email template file: ' + msg);
+                                  }
+                                } catch (innerErr) {
+                                  alert('Failed to open email template file: ' + (innerErr?.message || innerErr));
+                                }
+                              } else {
+                                alert('Email template file opening not available');
+                              }
                             }
                           } catch (e) {
                             alert(`Failed to open email template file: ${e.message}`);
                           }
                         } else {
                           // Handle regular files (Excel/CSV)
-                          if (!window.api || !window.api.downloadFile) return;
                           try {
-                            const filePath = await window.api.downloadFile(file.file);
-                            window.open(filePath);
-                          } catch (e) {}
+                            const pathToOpen = file.path || file.file;
+                            if (pathToOpen && window.api && window.api.openOftFile) {
+                              // openOftFile is a general openPath API in main process
+                              await window.api.openOftFile(pathToOpen);
+                            } else if (window.api && window.api.downloadFile && file.file) {
+                              try {
+                                const res = await window.api.downloadFile(file.file);
+                                if (res && res.success && res.path) {
+                                  window.open(res.path);
+                                } else {
+                                  const msg = res && (res.error || (res.details ? JSON.stringify(res.details) : null)) ? (res.error || JSON.stringify(res.details)) : 'Unknown error';
+                                  alert('Failed to open file: ' + msg);
+                                }
+                              } catch (innerErr) {
+                                alert('Failed to open file: ' + (innerErr?.message || innerErr));
+                              }
+                            } else {
+                              alert('File open not available');
+                            }
+                          } catch (e) {
+                            console.error('Failed to open file:', e);
+                          }
                         }
                       }}
                       style={{ 
