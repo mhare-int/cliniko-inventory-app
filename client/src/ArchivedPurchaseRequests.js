@@ -12,6 +12,31 @@ function ArchivedPurchaseRequests() {
   const [vendorSearch, setVendorSearch] = useState("");
   const [prSuggestions, setPrSuggestions] = useState([]);
   const [vendorSuggestions, setVendorSuggestions] = useState([]);
+  const [suppliersMap, setSuppliersMap] = useState({});
+
+  useEffect(() => {
+    if (window.api && window.api.getAllSuppliers) {
+      window.api.getAllSuppliers()
+        .then(suppliers => {
+          const map = {};
+          (suppliers || []).forEach(s => {
+            const id = s.id ?? s.cliniko_id ?? s.supplier_id;
+            if (id != null) map[id] = s.name || s.supplier_name || s.display_name || s.label || "";
+          });
+          setSuppliersMap(map);
+        })
+        .catch(() => setSuppliersMap({}));
+    }
+  }, []);
+
+  const getSupplierName = (item) => {
+    if (!item) return "Unknown Vendor";
+    const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
+    if (nameFromItem) return nameFromItem;
+    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || null;
+    if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
+    return "Unknown Vendor";
+  };
 
   useEffect(() => {
     fetchData(tab);
@@ -54,11 +79,11 @@ function ArchivedPurchaseRequests() {
           const allItemsByPrId = {};
           res.forEach(pr => {
             if (!Array.isArray(pr.items)) return;
-            pr.items.forEach(item => {
-              // Group by vendor
-              const vendor = item.supplier_name ?? item["Supplier Name"] ?? "Unknown Vendor";
-              if (!vendorMap[vendor]) vendorMap[vendor] = [];
-              vendorMap[vendor].push({ ...item, pr_id: item.pr_id ?? pr.id, date_created: pr.date_created ?? pr.date });
+                pr.items.forEach(item => {
+                  // Group by vendor using supplier-id-aware lookup
+                  const vendor = getSupplierName(item) || "Unknown Vendor";
+                  if (!vendorMap[vendor]) vendorMap[vendor] = [];
+                  vendorMap[vendor].push({ ...item, pr_id: item.pr_id ?? pr.id, date_created: pr.date_created ?? pr.date });
               // Build pr_id map
               const prId = item.pr_id ?? pr.id;
               if (!allItemsByPrId[prId]) allItemsByPrId[prId] = [];

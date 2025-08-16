@@ -25,6 +25,7 @@ function GenerateSupplierFiles() {
   const [excelOpen, setExcelOpen] = useState(true);
   const [oftOpen, setOftOpen] = useState(true);
   const [vendorSearch, setVendorSearch] = useState('');
+  const [suppliersMap, setSuppliersMap] = useState({});
 
   // Fetch API key status
   useEffect(() => {
@@ -82,10 +83,10 @@ function GenerateSupplierFiles() {
         return;
       }
 
-      // Group items by vendor
+      // Group items by vendor (use supplier_id-backed lookup when possible)
       const vendorGroups = {};
       pr.items.forEach(item => {
-        const vendorName = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+        const vendorName = getSupplierName(item);
         if (!vendorGroups[vendorName]) vendorGroups[vendorName] = [];
         vendorGroups[vendorName].push(item);
       });
@@ -170,6 +171,16 @@ function GenerateSupplierFiles() {
       setEmailMode(false);
     }
   }, [selectedPRId, activePRs]);
+
+  // Helper to get supplier display name from item (prefer supplier_id lookup)
+  const getSupplierName = (item) => {
+    if (!item) return "Unknown Supplier";
+    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || item.supplier || null;
+    const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
+    if (nameFromItem) return nameFromItem;
+    if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
+    return "Unknown Supplier";
+  };
 
   const handlePickFolder = async () => {
     if (window.api && window.api.pickFolder) {
@@ -271,10 +282,10 @@ function GenerateSupplierFiles() {
       // Define purNumber at the top so it's available throughout the function
       const purNumber = pr.name || pr.number || pr.id || pr._id || "";
       
-      // Create vendor groups for email template variables
+      // Create vendor groups for email template variables (use getSupplierName)
       const vendorGroups = {};
       pr.items.forEach(item => {
-        const supplierName = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+        const supplierName = getSupplierName(item);
         if (!vendorGroups[supplierName]) {
           vendorGroups[supplierName] = [];
         }
@@ -322,17 +333,17 @@ function GenerateSupplierFiles() {
         const vendorItems = pr.items.map(item => ({
           "PUR Number": purNumber,
           "Product Name": item["Product Name"] || item.name,
-          "Supplier Name": item["Supplier Name"] || item.supplier_name || "Unknown Supplier",
+          "Supplier Name": getSupplierName(item),
           "No. to Order": item["No. to Order"] ?? item.no_to_order ?? 0
         }));
         const res = await window.api.createSupplierOrderFilesForVendors(vendorItems, outputFolder);
         // Accept both array of strings or array of {supplier, file}
         if (res && Array.isArray(res.files)) {
-          files = res.files.map(f => {
-            if (typeof f === 'string') return { file: f };
-            if (f && typeof f === 'object' && f.file) return f;
-            return { file: String(f) };
-          });
+        files = res.files.map(f => {
+          if (typeof f === 'string') return { file: f };
+          if (f && typeof f === 'object' && f.file) return f;
+          return { file: String(f) };
+        });
         }
         alert("Orders sent to suppliers successfully!");
         
@@ -383,10 +394,10 @@ function GenerateSupplierFiles() {
       if (Object.keys(emailSettings.vendorEmails || {}).length > 0) {
         console.log('🔄 Starting automatic email template creation...');
         try {
-          // Get vendor groups from purchase request
+          // Get vendor groups from purchase request (use getSupplierName)
           const vendorGroups = {};
           pr?.items?.forEach(item => {
-            const vendorName = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+            const vendorName = getSupplierName(item);
             if (!vendorGroups[vendorName]) vendorGroups[vendorName] = [];
             vendorGroups[vendorName].push(item);
           });
@@ -827,7 +838,7 @@ Website: www.goodlifeclinic.com`
           
           // Get items for this vendor from the original PR
           const vendorItems = pr?.items?.filter(item => {
-            const itemSupplier = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+            const itemSupplier = getSupplierName(item);
             console.log(`📁 Checking item "${item["Product Name"] || item.name}" supplier "${itemSupplier}" against vendor "${vendorName}"`);
             return itemSupplier === vendorName;
           }) || [];
@@ -855,7 +866,7 @@ Website: www.goodlifeclinic.com`
           
           // Get items for this vendor from the original PR - use clean vendor name
           const vendorItems = pr?.items?.filter(item => {
-            const itemSupplier = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+            const itemSupplier = getSupplierName(item);
             console.log(`🔍 Checking item: "${item["Product Name"] || item.name}" with supplier: "${itemSupplier}" against vendor: "${cleanVendorName}"`);
             const isMatch = itemSupplier === cleanVendorName;
             console.log(`   - Match result: ${isMatch}`);
@@ -892,7 +903,7 @@ Website: www.goodlifeclinic.com`
       console.log('🔍 DEBUGGING: Purchase request items and their suppliers:');
       if (pr?.items) {
         pr.items.forEach((item, index) => {
-          console.log(`   Item ${index}: "${item["Product Name"] || item.name}" - Supplier: "${item["Supplier Name"] || item.supplier_name || "NO SUPPLIER"}"`);
+          console.log(`   Item ${index}: "${item["Product Name"] || item.name}" - Supplier: "${getSupplierName(item)}"`);
           console.log(`   Item ${index} full object:`, item);
         });
       } else {
@@ -943,7 +954,7 @@ Website: www.goodlifeclinic.com`
         // CRITICAL FIX: Force get items from PR if vendorItems is empty
         console.log('🚨 FORCE OVERRIDE: Getting items directly from PR!');
         const actualVendorItems = pr?.items?.filter(item => {
-          const itemSupplier = item["Supplier Name"] || item.supplier_name || "Unknown Supplier";
+          const itemSupplier = getSupplierName(item);
           console.log(`🚨 Force checking: "${itemSupplier}" === "${cleanVendorName}" = ${itemSupplier === cleanVendorName}`);
           return itemSupplier === cleanVendorName;
         }) || [];

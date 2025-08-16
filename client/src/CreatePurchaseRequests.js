@@ -22,6 +22,7 @@ function CreatePurchaseRequests() {
   const location = useLocation();
   // Remove outputFolder and downloadLinks, not needed for PR creation only
   const [products, setProducts] = React.useState([]);
+  const [suppliersMap, setSuppliersMap] = React.useState({});
   const [includeNegative, setIncludeNegative] = React.useState(false);
   const [items, setItems] = React.useState([]);
   const [selectedRows, setSelectedRows] = React.useState([]);
@@ -49,56 +50,12 @@ function CreatePurchaseRequests() {
       } else {
         setApiKeySet(false);
       }
-    } catch {
+    } catch (e) {
       setApiKeySet(false);
     }
     setCheckingApiKey(false);
   };
-
-  React.useEffect(() => {
-    fetchApiKey();
-    // eslint-disable-next-line
-  }, []);
-
-  // Handler for setting API key (calls backend)
-  const handleSetApiKey = async (key) => {
-    if (window.api && window.api.setApiKey) {
-      await window.api.setApiKey(key);
-      fetchApiKey();
-    }
-  };
-
-  // Handler for logging out (clearing API key)
-  const handleLogout = async () => {
-    if (window.api && window.api.setApiKey) {
-      await window.api.setApiKey("");
-      fetchApiKey();
-    }
-    navigate("/");
-  };
-
-  React.useEffect(() => {
-    // Load purchase requests on mount to populate onOrderMap
-    if (!window.api || !window.api.getPurchaseRequests) {
-      setOnOrderMap({});
-      return;
-    }
-    window.api.getPurchaseRequests(true, undefined)
-      .then((res) => {
-        setActivePRs(res);
-        const map = {};
-        res.forEach((pr) => {
-          pr.items.forEach((item) => {
-            const prodName = item["Product Name"] || item.name;
-            const qty = item["No. to Order"] || item.no_to_order || 0;
-            map[prodName] = (map[prodName] || 0) + qty;
-          });
-        });
-        setOnOrderMap(map);
-      })
-      .catch(() => setOnOrderMap({}));
-  }, []); // Only run once on mount
-
+  
   React.useEffect(() => {
     // Fetch products from backend on mount
     if (!window.api || !window.api.getAllProducts) {
@@ -125,7 +82,53 @@ function CreatePurchaseRequests() {
         }
       })
       .catch(() => setProducts([]));
+    // Also try to fetch suppliers list (optional) so we can map supplier_id -> supplier name
+    if (window.api && window.api.getAllSuppliers) {
+      window.api.getAllSuppliers()
+        .then((suppliers) => {
+          const map = {};
+          (suppliers || []).forEach(s => {
+            // support id or cliniko_id keys
+            const id = s.id ?? s.cliniko_id ?? s.supplier_id;
+            if (id != null) map[id] = s.name || s.supplier_name || s.display_name || s.label || "";
+          });
+          setSuppliersMap(map);
+        })
+        .catch(() => setSuppliersMap({}));
+    }
   }, [location.state]);
+
+  const getSupplierName = (item) => {
+    if (!item) return "";
+    const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
+    if (nameFromItem) return nameFromItem;
+    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || "";
+    return suppliersMap[supplierId] || "";
+  };
+
+  // Allow setting API key from ApiKeyModal
+  const handleSetApiKey = async (key) => {
+    try {
+      if (window.api && window.api.setApiKey) {
+        await window.api.setApiKey(key);
+      }
+    } catch (e) {
+      // ignore
+    }
+    // refresh local state
+    try { await fetchApiKey(); } catch (e) {}
+  };
+
+  // Logout handler used by ApiKeyModal
+  const handleLogout = async () => {
+    try {
+      if (window.api && window.api.setApiKey) {
+        await window.api.setApiKey("");
+      }
+    } catch (e) {}
+    try { await fetchApiKey(); } catch (e) {}
+    navigate("/");
+  };
 
   const handleNoToOrderChange = (idx, newValue) => {
     setItems((items) =>
@@ -164,10 +167,12 @@ function CreatePurchaseRequests() {
       const combinedMap = {};
       selectedItems.forEach(item => {
         const prodName = item["Product Name"] || item.name;
-        const supplier = item["Supplier Name"] || item.supplier_name || "";
-        const key = prodName + "__" + supplier;
+          // Prefer supplier id for grouping if present
+          const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || "";
+          const supplierName = getSupplierName(item) || suppliersMap[supplierId] || "";
+          const key = prodName + "__" + (supplierId || supplierName);
         if (!combinedMap[key]) {
-          combinedMap[key] = { ...item };
+            combinedMap[key] = { ...item };
         } else {
           // Sum No. to Order
           const prev = combinedMap[key]["No. to Order"] ?? combinedMap[key].no_to_order ?? 0;
@@ -236,7 +241,7 @@ function CreatePurchaseRequests() {
     const item = {
       "Id": prod.cliniko_id || prod.id, // both possible
       "Product Name": prod.name,
-      "Supplier Name": prod.supplier_name,
+  "Supplier Name": prod.supplier_name,
       "Stock": prod.stock,
       "Reorder Level": prod.reorder_level,
       ["No. to Order"]: Number(addRow.noToOrder)
@@ -563,7 +568,8 @@ function CreatePurchaseRequests() {
                 <tbody>
                   {items.map((item, idx) => {
                     const prodName = item["Product Name"] || item.name;
-                    const supplier = item["Supplier Name"] || item.supplier_name;
+                    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || "";
+                    const supplier = item["Supplier Name"] || item.supplier_name || suppliersMap[supplierId] || "";
                     const stock = item["Stock"] ?? item.stock ?? 0;
                     const reorderLevel = item["Reorder Level"] ?? item.reorder_level ?? 0;
                     const noToOrder = item["No. to Order"] ?? item.no_to_order ?? 0;
@@ -680,7 +686,7 @@ function CreatePurchaseRequests() {
                       <td style={{ 
                         padding: "12px 8px", 
                         border: "1px solid #dee2e6" 
-                      }}>{addRow.product ? addRow.product.supplier_name : "-"}</td>
+                      }}>{addRow.product ? (suppliersMap[addRow.product.supplier_id] || addRow.product.supplier_name || "-") : "-"}</td>
                       <td style={{ 
                         padding: "12px 8px", 
                         border: "1px solid #dee2e6", 

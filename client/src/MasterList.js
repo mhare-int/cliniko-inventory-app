@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 function MasterStockList() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
+  const [suppliersMap, setSuppliersMap] = useState({});
   const [selectedIds, setSelectedIds] = useState([]);
   const [editingLevels, setEditingLevels] = useState({});
   const [loading, setLoading] = useState(false);
@@ -114,9 +115,10 @@ function MasterStockList() {
     setLoading(true);
     try {
       // Fetch products and purchase requests in parallel
-      const [productsRes, pursRes] = await Promise.all([
+      const [productsRes, pursRes, suppliersRes] = await Promise.all([
         window.api.getAllProducts(),
-        window.api.getPurchaseRequests(true, false) // active only
+        window.api.getPurchaseRequests(true, false), // active only
+        window.api.getAllSuppliers ? window.api.getAllSuppliers() : Promise.resolve([])
       ]);
       
       // Extract products array from API response
@@ -151,6 +153,19 @@ function MasterStockList() {
         });
       }
       setOnOrderQuantities(onOrder);
+
+      // Build suppliers map if we have supplier list
+      try {
+        const suppliersArray = suppliersRes || [];
+        const map = {};
+        suppliersArray.forEach(s => {
+          const id = s.id ?? s.cliniko_id ?? s.supplier_id;
+          if (id != null) map[id] = s.name || s.supplier_name || s.display_name || s.label || "";
+        });
+        setSuppliersMap(map);
+      } catch (e) {
+        setSuppliersMap({});
+      }
       
       // Ensure initial sort is properly applied
       setSortField('name');
@@ -175,7 +190,10 @@ function MasterStockList() {
 
   const loadSupplierOptions = async (inputValue) => {
     if (!inputValue) return [];
-    const suppliers = [...new Set(products.map(p => p.supplier_name).filter(Boolean))];
+    // Prefer supplier list from suppliersMap, fallback to product.supplier_name
+    const supplierNames = Object.values(suppliersMap).filter(Boolean);
+    const fallback = [...new Set(products.map(p => p.supplier_name).filter(Boolean))];
+    const suppliers = supplierNames.length > 0 ? supplierNames : fallback;
     const filtered = suppliers
       .filter(s => s.toLowerCase().includes(inputValue.toLowerCase()))
       .map(s => ({ label: s, value: s }));
@@ -195,7 +213,14 @@ function MasterStockList() {
       matchesProduct = String(p.cliniko_id) === String(productFilter.value);
     }
     if (supplierFilter) {
-      matchesSupplier = p.supplier_name === supplierFilter.value;
+      // supplierFilter.value is a supplier name; if we have suppliersMap we should compare by id when possible
+      const targetName = supplierFilter.value;
+      if (p.supplier_id || p.SupplierId || p["Supplier Id"]) {
+        const pid = p.supplier_id || p.SupplierId || p["Supplier Id"];
+        matchesSupplier = (suppliersMap[pid] || p.supplier_name || "") === targetName;
+      } else {
+        matchesSupplier = (p.supplier_name || "") === targetName;
+      }
     }
     return matchesProduct && matchesSupplier;
   }).sort((a, b) => {
@@ -208,8 +233,10 @@ function MasterStockList() {
       aValue = (a.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
       bValue = (b.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
     } else if (sortField === 'supplier_name') {
-      aValue = (a.supplier_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
-      bValue = (b.supplier_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const aName = a.supplier_name || suppliersMap[a.supplier_id] || '';
+  const bName = b.supplier_name || suppliersMap[b.supplier_id] || '';
+  aValue = (aName).trim().toLowerCase().replace(/\s+/g, ' ');
+  bValue = (bName).trim().toLowerCase().replace(/\s+/g, ' ');
     }
     
     const comparison = aValue.localeCompare(bValue);
@@ -304,6 +331,20 @@ function MasterStockList() {
 
   const getHiddenProductsList = () => {
     return products.filter(p => hiddenProducts.has(p.cliniko_id));
+  };
+
+  // Resolve a supplier display name for an item, preferring explicit fields then suppliersMap by id
+  const getSupplierName = (item) => {
+    if (!item) return "";
+    // prefer existing text fields first for backwards compatibility
+    const direct = item["Supplier Name"] || item.supplier_name || item.vendor_name || item.vendor;
+    if (direct && String(direct).trim() !== "") return direct;
+
+    // fall back to suppliersMap lookups using common id keys
+    const id = item.supplier_id ?? item.SupplierId ?? item["Supplier Id"] ?? item.cliniko_supplier_id;
+    if (id != null && suppliersMap && suppliersMap[id]) return suppliersMap[id];
+
+    return "";
   };
 
   const handleCreatePurchaseRequest = () => {
@@ -760,7 +801,7 @@ function MasterStockList() {
                   />
                 </td>
                 <td style={{ padding: 8, border: "1px solid #ccc" }}>{p.name}</td>
-                <td style={{ padding: 8, border: "1px solid #ccc" }}>{p.supplier_name || "-"}</td>
+                <td style={{ padding: 8, border: "1px solid #ccc" }}>{getSupplierName(p) || "-"}</td>
                 <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center" }}>{p.stock}</td>
                 <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center", color: onOrderQty > 0 ? "#00a86b" : "#999" }}>
                   {onOrderQty}
@@ -869,6 +910,7 @@ function MasterStockList() {
           hiddenProducts={getHiddenProductsList()}
           onRestore={handleRestoreProducts}
           onClose={() => setShowRestorePopup(false)}
+          getSupplierName={getSupplierName}
         />
       )}
     </div>
@@ -876,7 +918,7 @@ function MasterStockList() {
 }
 
 // RestoreProductsPopup Component
-function RestoreProductsPopup({ hiddenProducts, onRestore, onClose }) {
+function RestoreProductsPopup({ hiddenProducts, onRestore, onClose, getSupplierName }) {
   const [selectedIds, setSelectedIds] = useState([]);
 
   const handleSelectAll = () => {
@@ -1003,7 +1045,7 @@ function RestoreProductsPopup({ hiddenProducts, onRestore, onClose }) {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{product.name}</div>
                 <div style={{ fontSize: 12, color: "#666" }}>
-                  Supplier: {product.supplier_name || "N/A"} | Stock: {product.stock}
+                  Supplier: {getSupplierName ? (getSupplierName(product) || "N/A") : (product.supplier_name || "N/A")} | Stock: {product.stock}
                 </div>
               </div>
             </div>

@@ -22,12 +22,38 @@ function PurchaseRequests() {
   const [vendorSearch, setVendorSearch] = useState("");
   const [prSuggestions, setPrSuggestions] = useState([]);
   const [vendorSuggestions, setVendorSuggestions] = useState([]);
+  const [suppliersMap, setSuppliersMap] = useState({});
 
 
   useEffect(() => {
     fetchData(tab);
     // eslint-disable-next-line
   }, [tab]);
+
+  // Load suppliers map once on mount so we can resolve supplier_id -> name
+  useEffect(() => {
+    if (window.api && window.api.getAllSuppliers) {
+      window.api.getAllSuppliers()
+        .then(suppliers => {
+          const map = {};
+          (suppliers || []).forEach(s => {
+            const id = s.id ?? s.cliniko_id ?? s.supplier_id;
+            if (id != null) map[id] = s.name || s.supplier_name || s.display_name || s.label || "";
+          });
+          setSuppliersMap(map);
+        })
+        .catch(() => setSuppliersMap({}));
+    }
+  }, []);
+
+  const getSupplierName = (item) => {
+    if (!item) return "-";
+    const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
+    if (nameFromItem) return nameFromItem;
+    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || item.supplier || null;
+    if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
+    return "-";
+  };
 
   const fetchData = async (tabType) => {
     setLoading(true);
@@ -751,7 +777,7 @@ function PurchaseRequests() {
                                     : ((item["No. to Order"] ?? item.no_to_order ?? 0) - (item["received_so_far"] ?? item.received_so_far ?? 0));
                                 const prevReceived = item["received_so_far"] ?? item.received_so_far ?? 0;
                                 const prodName = item["Product Name"] ?? item.name;
-                                const supplier = item["Supplier Name"] ?? item.supplier_name ?? "-";
+                                const supplier = getSupplierName(item);
                                 const val =
                                   editing[pr.id] && typeof editing[pr.id][idx] !== "undefined"
                                     ? editing[pr.id][idx]
