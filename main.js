@@ -51,7 +51,7 @@ function logErrorToFile(message) {
 
 let mainWindow;
 
-async function createWindow() {
+function createWindow() {
   console.log('[Electron] Creating main window...');
   
   try {
@@ -68,20 +68,8 @@ async function createWindow() {
     const htmlPath = path.join(__dirname, 'client', 'build', 'index.html');
     console.log('[Electron] Loading HTML from:', htmlPath);
     
-    // In development, try to connect to React dev server first
-    if (!app.isPackaged) {
-      try {
-        console.log('[Electron] Development mode - attempting to connect to React dev server at http://localhost:3000');
-        await mainWindow.loadURL('http://localhost:3000');
-        console.log('[Electron] Successfully connected to React dev server');
-      } catch (error) {
-        console.log('[Electron] React dev server not available, falling back to build folder:', error.message);
-        mainWindow.loadFile(htmlPath);
-      }
-    } else {
-      // Load the React build directly from the build folder
-      mainWindow.loadFile(htmlPath);
-    }
+    // Load the React build directly from the build folder
+    mainWindow.loadFile(htmlPath);
     
     // Open Developer Tools for debugging (only in development)
     if (!app.isPackaged) {
@@ -713,7 +701,7 @@ ipcMain.handle('setSmartPromptsSetting', async (event, enabled) => {
 });
 
 // Email functionality - opens system default email client
-ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
+ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
   try {
     const { exec } = require('child_process');
     const util = require('util');
@@ -721,173 +709,124 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
     
     let sentCount = 0;
     const errors = [];
-    const createdOftFiles = []; // Track only files created in this session
 
     for (const email of emailData) {
       try {
         const { vendorName, email: toEmail, subject, message, fallbackMessage, attachmentFile } = email;
-        
-        console.log(`🔍 BACKEND DEBUG: Processing email for vendor: ${vendorName}`);
-        console.log(`🔍 BACKEND DEBUG: Email data received:`, { 
-          vendorName, 
-          toEmail, 
-          subject: subject?.substring(0, 50) + '...', 
-          attachmentFile,
-          hasAttachment: !!attachmentFile
-        });
         
         if (!toEmail || !toEmail.trim()) {
           errors.push(`No email address provided for ${vendorName}`);
           continue;
         }
 
-        // Create .oft template file using Outlook COM
-        const fs = require('fs');
-        const path = require('path');
-        
-        if (!outputFolder) {
-          errors.push(`Output folder not provided`);
-          continue;
+        // Handle attachment file (may be null if no attachments)
+        let attachmentPath = null;
+        if (attachmentFile) {
+          // Get full path to attachment file
+          attachmentPath = path.resolve(attachmentFile);
+          
+          // Check if file exists
+          if (!fs.existsSync(attachmentPath)) {
+            errors.push(`Attachment file not found: ${attachmentFile}`);
+            continue;
+          }
         }
 
-        if (process.platform !== 'win32') {
-          errors.push(`OFT file creation only supported on Windows`);
-          continue;
-        }
+        // Try HTML first, fallback to plain text on failure
+        let emailContent = message; // Start with HTML version
+        let success = false;
+        let lastError = null;
 
-        try {
-          // Clean vendor name for filename
-          const cleanVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-          const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
-          const oftFilePath = path.join(outputFolder, oftFilename);
+        // Escape special characters for command line
+        const escapedEmail = toEmail.replace(/"/g, '""');
+        const escapedSubject = subject.replace(/"/g, '""');
+        const escapedAttachment = attachmentPath ? attachmentPath.replace(/"/g, '""') : null;
 
-          // Debug: Log attachment info
-          console.log(`DEBUG: Processing ${vendorName}`);
-          console.log(`DEBUG: attachmentFile = ${attachmentFile}`);
-          if (attachmentFile && fs.existsSync(attachmentFile)) {
-            console.log(`DEBUG: Attachment file exists: ${attachmentFile}`);
-          } else if (attachmentFile) {
-            console.log(`DEBUG: Attachment file NOT found: ${attachmentFile}`);
-          } else {
-            console.log(`DEBUG: No attachment file specified`);
-          }
-
-          // Write PowerShell script to temp file - exactly like your working test script
-          const tempDir = require('os').tmpdir();
-          const scriptPath = path.join(tempDir, `oft_create_${timestamp}.ps1`);
-          
-          const powershellScript = `
-try {
-    # Create Outlook application
-    $outlook = New-Object -ComObject Outlook.Application
-    
-    # Create mail item and set properties
-    $mail = $outlook.CreateItem(0)  # olMailItem
-    $mail.To = "${toEmail}"
-    $mail.Subject = "${subject}"
-    $mail.HTMLBody = @"
-${message}
-"@
-    
-    ${attachmentFile ? `# Add attachment
-    $attachmentPath = "${attachmentFile.replace(/\\/g, '\\\\')}"
-    if (Test-Path $attachmentPath) {
-        $mail.Attachments.Add($attachmentPath)
-        Write-Host "Attachment added: $attachmentPath"
-    } else {
-        Write-Host "WARNING: Attachment file not found: $attachmentPath"
-    }` : '# No attachment specified'}
-    
-    $oftPath = "${oftFilePath.replace(/\\/g, '\\\\')}"
-    
-    # Try different save format approaches (exactly like test_comprehensive_oft.ps1)
-    try {
-        # Method 1: Save as MSG first, then copy to OFT
-        $msgPath = $oftPath.Replace('.oft', '.msg')
-        $mail.SaveAs($msgPath, 3)  # olMSG = 3
+        let command;
         
-        if (Test-Path $msgPath) {
-            # Copy and rename to .oft
-            Copy-Item $msgPath $oftPath -Force
-            Remove-Item $msgPath -Force
-            Write-Host "SUCCESS: OFT created via MSG method"
-        }
-        
-    } catch {
-        # Method 2: Direct OFT save with error handling
-        Write-Host "MSG method failed, trying direct OFT save..."
-        $mail.SaveAs($oftPath, 5)  # olTemplate = 5
-        Write-Host "SUCCESS: OFT created via direct method"
-    }
-    
-    # Clean up COM objects
-    $mail = $null
-    $outlook = $null
-    
-    # Verify file was created and report size
-    if (Test-Path $oftPath) {
-        $fileInfo = Get-Item $oftPath
-        Write-Host "VERIFIED: OFT file exists - Size: $($fileInfo.Length) bytes"
-    } else {
-        Write-Host "ERROR: OFT file was not created"
-    }
-    
-} catch {
-    Write-Host "ERROR: $($_.Exception.Message)"
-}
-`;
-
-          // Write script to temp file
-          fs.writeFileSync(scriptPath, powershellScript, 'utf8');
+        if (process.platform === 'win32') {
+          // Windows - PowerShell with HTML support (Outlook handles HTML well)
+          const escapedMessage = emailContent.replace(/"/g, '""').replace(/\n/g, '\\n');
           
-          // Execute PowerShell script from file (like your test script)
-          const { exec } = require('child_process');
-          const util = require('util');
-          const execPromise = util.promisify(exec);
+          const attachmentScript = attachmentPath ? `$mail.Attachments.Add('${escapedAttachment}')` : '';
           
-          const command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`;
-          
-          const result = await execPromise(command);
-          console.log(`PowerShell output: ${result.stdout}`);
-          if (result.stderr) {
-            console.log(`PowerShell errors: ${result.stderr}`);
-          }
-          
-          // Clean up temp script file
-          try {
-            fs.unlinkSync(scriptPath);
-          } catch (cleanupErr) {
-            console.log(`Could not clean up temp script: ${cleanupErr.message}`);
-          }
-          
-          // Verify file was created and check size (expecting ~16kb like test script)
-          if (fs.existsSync(oftFilePath)) {
-            const stats = fs.statSync(oftFilePath);
-            console.log(`Created .oft template file: ${oftFilename} (${stats.size} bytes)`);
-            
-            if (stats.size > 10000) { // Should be around 16kb for proper OFT files
-              sentCount++;
-              // Add this specific file to our created files list
-              const oftFileObj = {
-                filename: oftFilename,
-                path: oftFilePath,
-                vendor: vendorName,
-                created: stats.birthtime || new Date(),
-                size: stats.size
-              };
-              console.log(`🔍 BACKEND DEBUG: Adding OFT file to createdOftFiles:`, oftFileObj);
-              createdOftFiles.push(oftFileObj);
-            } else {
-              errors.push(`Created .oft file for ${vendorName} but size is too small (${stats.size} bytes) - may be corrupted`);
+          command = `powershell -Command "
+            try {
+              $outlook = New-Object -ComObject Outlook.Application
+              $mail = $outlook.CreateItem(0)
+              $mail.To = '${escapedEmail}'
+              $mail.Subject = '${escapedSubject}'
+              $mail.HTMLBody = '${escapedMessage.replace(/\n/g, '<br>')}'
+              ${attachmentScript}
+              $mail.Display()
+              Write-Host 'Success'
+            } catch {
+              Write-Host 'Error: Could not create Outlook email. Trying mailto fallback...'
+              # Fallback to simple mailto (without attachment)
+              $subject = '${escapedSubject}'
+              $body = '${escapedMessage}'
+              $mailto = 'mailto:${escapedEmail}?subject=' + [System.Web.HttpUtility]::UrlEncode($subject) + '&body=' + [System.Web.HttpUtility]::UrlEncode($body)
+              Start-Process $mailto
+              Write-Host 'Fallback Success'
             }
-          } else {
-            errors.push(`Failed to create .oft file for ${vendorName} - file not found after PowerShell execution`);
+          "`;
+        } else if (process.platform === 'darwin') {
+          // macOS - Try HTML first, fallback to plain text
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const currentMessage = attempt === 0 ? emailContent : (fallbackMessage || emailContent);
+              
+              // Escape for AppleScript
+              const appleScriptSubject = subject.replace(/"/g, '\\"').replace(/'/g, "\\'");
+              const appleScriptMessage = currentMessage.replace(/"/g, '\\"').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+              const appleScriptEmail = toEmail.replace(/"/g, '\\"').replace(/'/g, "\\'");
+              
+              const attachmentScript = attachmentPath ? 
+                `make new attachment with properties {file name:POSIX file \\"${escapedAttachment}\\"}` : '';
+              
+              command = `osascript -e "
+                tell application \\"Mail\\"
+                  activate
+                  set newMessage to make new outgoing message with properties {subject:\\"${appleScriptSubject}\\", content:\\"${appleScriptMessage}\\"}
+                  tell newMessage
+                    make new to recipient with properties {address:\\"${appleScriptEmail}\\"}
+                    ${attachmentScript}
+                  end tell
+                  set visible of newMessage to true
+                end tell
+              "`;
+              
+              console.log(`Opening email client for ${vendorName} (${toEmail}) - Attempt ${attempt + 1}: ${attempt === 0 ? 'HTML' : 'Plain Text'}`);
+              await execPromise(command);
+              success = true;
+              break; // Success, exit the retry loop
+              
+            } catch (err) {
+              lastError = err;
+              console.log(`Attempt ${attempt + 1} failed for ${vendorName}:`, err.message);
+              if (attempt === 0) {
+                console.log(`Retrying with plain text fallback for ${vendorName}`);
+              }
+            }
           }
           
-        } catch (err) {
-          console.error(`Failed to create .oft file for ${vendorName}:`, err);
-          errors.push(`Failed to create .oft file for ${vendorName}: ${err.message}`);
+          if (!success) {
+            throw lastError;
+          }
+        } else {
+          // Linux - Try different email clients
+          const mailto = `mailto:${encodeURIComponent(toEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailContent)}`;
+          command = `xdg-open "${mailto}"`;
+          
+          console.log(`Opening email client for ${vendorName} (${toEmail})`);
+          await execPromise(command);
+          success = true;
+        }
+
+        if (success) {
+          sentCount++;
+          // Small delay between emails to prevent overwhelming the system
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
         
       } catch (err) {
@@ -897,19 +836,16 @@ ${message}
     }
 
     if (sentCount > 0) {
-      const response = { 
+      return { 
         success: true, 
         sentCount, 
-        message: `Created ${sentCount} .oft email template file(s)`,
-        oftFiles: createdOftFiles, // Return only files created in this session
+        message: `Opened ${sentCount} email(s) in your default email client`,
         errors: errors.length > 0 ? errors : undefined
       };
-      console.log(`🔍 BACKEND DEBUG: Final response with ${createdOftFiles.length} OFT files:`, response);
-      return response;
     } else {
       return { 
         success: false, 
-        error: 'Failed to create any .oft files', 
+        error: 'Failed to open any emails', 
         details: errors 
       };
     }
@@ -918,57 +854,9 @@ ${message}
     logErrorToFile('sendSupplierEmails error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { 
       success: false, 
-      error: 'Failed to create .oft email template files', 
+      error: 'Failed to open email client', 
       details: err.message 
     };
-  }
-});
-
-// Delete file from disk
-ipcMain.handle('deleteFileFromDisk', async (event, filePath) => {
-  try {
-    const fs = require('fs');
-    const path = require('path');
-    
-    if (!filePath || !fs.existsSync(filePath)) {
-      return { success: false, error: 'File not found' };
-    }
-    
-    fs.unlinkSync(filePath);
-    return { success: true, message: 'File deleted successfully' };
-    
-  } catch (err) {
-    logErrorToFile('deleteFileFromDisk error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { success: false, error: 'Failed to delete file', details: err.message };
-  }
-});
-
-// Check if vendor files have been created for a specific type
-ipcMain.handle('hasVendorFilesCreated', async (event, prId, vendorName, fileType) => {
-  try {
-    return await db.hasVendorFilesCreated(prId, vendorName, fileType);
-  } catch (err) {
-    logErrorToFile('hasVendorFilesCreated error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return false;
-  }
-});
-
-// Open .oft file with default application
-ipcMain.handle('openOftFile', async (event, filePath) => {
-  try {
-    const { shell } = require('electron');
-    const fs = require('fs');
-    
-    if (!filePath || !fs.existsSync(filePath)) {
-      return { success: false, error: 'File not found' };
-    }
-    
-    await shell.openPath(filePath);
-    return { success: true, message: 'File opened successfully' };
-    
-  } catch (err) {
-    logErrorToFile('openOftFile error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { success: false, error: 'Failed to open file', details: err.message };
   }
 });
 
@@ -1018,51 +906,6 @@ ipcMain.handle('getSupplierByName', async (event, name) => {
   }
 });
 
-ipcMain.handle('getInactiveSuppliers', async () => {
-  try {
-    return await db.getInactiveSuppliers();
-  } catch (err) {
-    logErrorToFile('getInactiveSuppliers error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to get inactive suppliers' };
-  }
-});
-
-ipcMain.handle('getSupplierUsageSummary', async () => {
-  try {
-    return await db.getSupplierUsageSummary();
-  } catch (err) {
-    logErrorToFile('getSupplierUsageSummary error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to get supplier usage summary' };
-  }
-});
-
-ipcMain.handle('deleteInactiveSuppliers', async (event, forceDelete = false) => {
-  try {
-    return await db.deleteInactiveSuppliers(forceDelete);
-  } catch (err) {
-    logErrorToFile('deleteInactiveSuppliers error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to delete inactive suppliers' };
-  }
-});
-
-ipcMain.handle('reactivateSupplier', async (event, supplierId) => {
-  try {
-    return await db.reactivateSupplier(supplierId);
-  } catch (err) {
-    logErrorToFile('reactivateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to reactivate supplier' };
-  }
-});
-
-ipcMain.handle('deactivateSupplier', async (event, supplierId) => {
-  try {
-    return await db.deactivateSupplier(supplierId);
-  } catch (err) {
-    logErrorToFile('deactivateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to deactivate supplier' };
-  }
-});
-
 // Email Template Management
 ipcMain.handle('saveEmailTemplate', async (event, templateData) => {
   try {
@@ -1079,70 +922,6 @@ ipcMain.handle('getEmailTemplate', async () => {
   } catch (err) {
     logErrorToFile('getEmailTemplate error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: 'Failed to get email template' };
-  }
-});
-
-// File tracking handlers
-ipcMain.handle('getGeneratedFiles', async (event, prId, fileType = null) => {
-  try {
-    return await db.getGeneratedFiles(prId, fileType);
-  } catch (err) {
-    logErrorToFile('getGeneratedFiles error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to get generated files' };
-  }
-});
-
-ipcMain.handle('markVendorFilesCreated', async (event, prId, vendorName, fileType, filename, filePath, fileSize = null) => {
-  try {
-    return await db.markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, fileSize);
-  } catch (err) {
-    logErrorToFile('markVendorFilesCreated error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to mark vendor files as created' };
-  }
-});
-
-ipcMain.handle('deleteGeneratedFile', async (event, prId, vendorName, fileType, filename) => {
-  try {
-    return await db.deleteGeneratedFile(prId, vendorName, fileType, filename);
-  } catch (err) {
-    logErrorToFile('deleteGeneratedFile error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to delete generated file' };
-  }
-});
-
-ipcMain.handle('getFileStats', async (event, filePath) => {
-  try {
-    return await db.getFileStats(filePath);
-  } catch (err) {
-    logErrorToFile('getFileStats error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return null;
-  }
-});
-
-ipcMain.handle('fileExists', async (event, filePath) => {
-  try {
-    return await db.fileExists(filePath);
-  } catch (err) {
-    logErrorToFile('fileExists error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return false;
-  }
-});
-
-ipcMain.handle('updatePurchaseRequestSupplierFilesStatus', async (event, prId, hasSupplierFiles) => {
-  try {
-    return await db.updatePurchaseRequestSupplierFilesStatus(prId, hasSupplierFiles);
-  } catch (err) {
-    logErrorToFile('updatePurchaseRequestSupplierFilesStatus error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to update supplier files status' };
-  }
-});
-
-ipcMain.handle('updatePurchaseRequestOftFilesStatus', async (event, prId, hasOftFiles) => {
-  try {
-    return await db.updatePurchaseRequestOftFilesStatus(prId, hasOftFiles);
-  } catch (err) {
-    logErrorToFile('updatePurchaseRequestOftFilesStatus error: ' + (err && err.message ? err.message : JSON.stringify(err)));
-    return { error: 'Failed to update OFT files status' };
   }
 });
 

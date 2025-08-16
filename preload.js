@@ -34,20 +34,6 @@ contextBridge.exposeInMainWorld('api', {
   getApiKey: () => ipcRenderer.invoke('getApiKey'),
   setApiKey: (newKey) => ipcRenderer.invoke('setApiKey', newKey),
   updatePurchaseRequestReceived: (pr_id, lines) => ipcRenderer.invoke('updatePurchaseRequestReceived', pr_id, lines),
-  updatePurchaseRequestSupplierFilesStatus: (pr_id, created) => ipcRenderer.invoke('updatePurchaseRequestSupplierFilesStatus', pr_id, created),
-  updatePurchaseRequestOftFilesStatus: (pr_id, created) => ipcRenderer.invoke('updatePurchaseRequestOftFilesStatus', pr_id, created),
-  hasVendorOftFilesCreated: (pr_id, vendorName) => ipcRenderer.invoke('hasVendorOftFilesCreated', pr_id, vendorName),
-  markVendorOftFilesCreated: (pr_id, vendorName, filename, filePath) => ipcRenderer.invoke('markVendorOftFilesCreated', pr_id, vendorName, filename, filePath),
-  getVendorsWithOftFiles: (pr_id) => ipcRenderer.invoke('getVendorsWithOftFiles', pr_id),
-  fileExists: (filePath) => ipcRenderer.invoke('fileExists', filePath),
-  listFiles: (dirPath, pattern) => ipcRenderer.invoke('listFiles', dirPath, pattern),
-  hasVendorFilesCreated: (pr_id, vendorName, fileType) => ipcRenderer.invoke('hasVendorFilesCreated', pr_id, vendorName, fileType),
-  markVendorFilesCreated: (pr_id, vendorName, fileType, filename, filePath, fileSize) => ipcRenderer.invoke('markVendorFilesCreated', pr_id, vendorName, fileType, filename, filePath, fileSize),
-  getGeneratedFiles: (pr_id, fileType) => ipcRenderer.invoke('getGeneratedFiles', pr_id, fileType),
-  getFileStats: (filePath) => ipcRenderer.invoke('getFileStats', filePath),
-  deleteGeneratedFile: (prId, vendorName, fileType, filename) => ipcRenderer.invoke('deleteGeneratedFile', prId, vendorName, fileType, filename),
-  deleteFileFromDisk: (filePath) => ipcRenderer.invoke('deleteFileFromDisk', filePath),
-  openOftFile: (filePath) => ipcRenderer.invoke('openOftFile', filePath),
   receiveItemById: (itemId, quantityReceived) => ipcRenderer.invoke('receiveItemById', itemId, quantityReceived),
   updateStockFromCliniko: () => {
     console.log('updateStockFromCliniko called from frontend');
@@ -70,7 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   // Expose createSupplierOrderFilesForVendors to frontend
   createSupplierOrderFilesForVendors: (items, outputFolder) => ipcRenderer.invoke('createSupplierOrderFilesForVendors', items, outputFolder),
   // Send supplier emails using system default email client
-  sendSupplierEmails: (emailData, outputFolder) => ipcRenderer.invoke('sendSupplierEmails', emailData, outputFolder),
+  sendSupplierEmails: (emailData) => ipcRenderer.invoke('sendSupplierEmails', emailData),
   // Get active PURs for a barcode
   getActivePURsForBarcode: (barcode) => ipcRenderer.invoke('getActivePURsForBarcode', barcode),
   
@@ -95,24 +81,14 @@ contextBridge.exposeInMainWorld('api', {
   
   // Supplier management APIs
   getAllSuppliers: () => ipcRenderer.invoke('getAllSuppliers'),
-  addSupplier: (name, email, contactName, comments, accountNumber) => ipcRenderer.invoke('addSupplier', name, email, contactName, comments, accountNumber),
-  updateSupplier: (id, name, email, contactName, comments, accountNumber) => ipcRenderer.invoke('updateSupplier', id, name, email, contactName, comments, accountNumber),
+  addSupplier: (name, email, contactName, comments) => ipcRenderer.invoke('addSupplier', name, email, contactName, comments),
+  updateSupplier: (id, name, email, contactName, comments) => ipcRenderer.invoke('updateSupplier', id, name, email, contactName, comments),
   deleteSupplier: (id) => ipcRenderer.invoke('deleteSupplier', id),
-  deactivateSupplier: (id) => ipcRenderer.invoke('deactivateSupplier', id),
   getSupplierByName: (name) => ipcRenderer.invoke('getSupplierByName', name),
-  
-  // Supplier status management APIs
-  getInactiveSuppliers: () => ipcRenderer.invoke('getInactiveSuppliers'),
-  getSupplierUsageSummary: () => ipcRenderer.invoke('getSupplierUsageSummary'),
-  deleteInactiveSuppliers: (forceDelete) => ipcRenderer.invoke('deleteInactiveSuppliers', forceDelete),
-  reactivateSupplier: (supplierId) => ipcRenderer.invoke('reactivateSupplier', supplierId),
   
   // Email template management APIs
   saveEmailTemplate: (templateData) => ipcRenderer.invoke('saveEmailTemplate', templateData),
   getEmailTemplate: () => ipcRenderer.invoke('getEmailTemplate'),
-  
-  // Email file handling
-  openEmlFile: (filePath) => ipcRenderer.invoke('openEmlFile', filePath),
   
   // Auto-updater APIs
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
