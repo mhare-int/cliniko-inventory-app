@@ -752,58 +752,91 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
           const oftFilePath = path.join(outputFolder, oftFilename);
 
-          // Create PowerShell script exactly like your test_comprehensive_oft.ps1
+          // Write PowerShell script to temp file - exactly like your working test script
+          const tempDir = require('os').tmpdir();
+          const scriptPath = path.join(tempDir, `oft_create_${timestamp}.ps1`);
+          
+          const powershellScript = `
+try {
+    # Create Outlook application
+    $outlook = New-Object -ComObject Outlook.Application
+    
+    # Create mail item and set properties
+    $mail = $outlook.CreateItem(0)  # olMailItem
+    $mail.To = "${toEmail}"
+    $mail.Subject = "${subject}"
+    $mail.HTMLBody = @"
+${message}
+"@
+    
+    $oftPath = "${oftFilePath.replace(/\\/g, '\\\\')}"
+    
+    # Try different save format approaches (exactly like test_comprehensive_oft.ps1)
+    try {
+        # Method 1: Save as MSG first, then copy to OFT
+        $msgPath = $oftPath.Replace('.oft', '.msg')
+        $mail.SaveAs($msgPath, 3)  # olMSG = 3
+        
+        if (Test-Path $msgPath) {
+            # Copy and rename to .oft
+            Copy-Item $msgPath $oftPath -Force
+            Remove-Item $msgPath -Force
+            Write-Host "SUCCESS: OFT created via MSG method"
+        }
+        
+    } catch {
+        # Method 2: Direct OFT save with error handling
+        Write-Host "MSG method failed, trying direct OFT save..."
+        $mail.SaveAs($oftPath, 5)  # olTemplate = 5
+        Write-Host "SUCCESS: OFT created via direct method"
+    }
+    
+    # Clean up COM objects
+    $mail = $null
+    $outlook = $null
+    
+    # Verify file was created and report size
+    if (Test-Path $oftPath) {
+        $fileInfo = Get-Item $oftPath
+        Write-Host "VERIFIED: OFT file exists - Size: $($fileInfo.Length) bytes"
+    } else {
+        Write-Host "ERROR: OFT file was not created"
+    }
+    
+} catch {
+    Write-Host "ERROR: $($_.Exception.Message)"
+}
+`;
+
+          // Write script to temp file
+          fs.writeFileSync(scriptPath, powershellScript, 'utf8');
+          
+          // Execute PowerShell script from file (like your test script)
           const { exec } = require('child_process');
           const util = require('util');
           const execPromise = util.promisify(exec);
           
-          const command = `powershell -ExecutionPolicy Bypass -Command "
-try {
-    \\$outlook = New-Object -ComObject Outlook.Application
-    \\$mail = \\$outlook.CreateItem(0)
-    \\$mail.To = '${toEmail}'
-    \\$mail.Subject = '${subject}'
-    \\$mail.HTMLBody = @'
-${message}
-'@
-    
-    \\$oftPath = '${oftFilePath.replace(/\\/g, '\\\\')}'
-    
-    try {
-        \\$msgPath = \\$oftPath.Replace('.oft', '.msg')
-        \\$mail.SaveAs(\\$msgPath, 3)
-        
-        if (Test-Path \\$msgPath) {
-            Copy-Item \\$msgPath \\$oftPath -Force
-            Remove-Item \\$msgPath -Force
-            Write-Host 'SUCCESS: OFT created via MSG method'
-        }
-    } catch {
-        \\$mail.SaveAs(\\$oftPath, 5)
-        Write-Host 'SUCCESS: OFT created via direct method'
-    }
-    
-    \\$mail = \\$null
-    \\$outlook = \\$null
-    
-    if (Test-Path \\$oftPath) {
-        \\$fileInfo = Get-Item \\$oftPath
-        Write-Host \\\"File created: \\$（\\$fileInfo.Length） bytes\\\"
-    }
-} catch {
-    Write-Host \\\"ERROR: \\$（\\$_.Exception.Message）\\\"
-}
-"`;
+          const command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`;
           
           const result = await execPromise(command);
           console.log(`PowerShell output: ${result.stdout}`);
+          if (result.stderr) {
+            console.log(`PowerShell errors: ${result.stderr}`);
+          }
           
-          // Verify file was created and check size
+          // Clean up temp script file
+          try {
+            fs.unlinkSync(scriptPath);
+          } catch (cleanupErr) {
+            console.log(`Could not clean up temp script: ${cleanupErr.message}`);
+          }
+          
+          // Verify file was created and check size (expecting ~16kb like test script)
           if (fs.existsSync(oftFilePath)) {
             const stats = fs.statSync(oftFilePath);
             console.log(`Created .oft template file: ${oftFilename} (${stats.size} bytes)`);
             
-            if (stats.size > 5000) { // Should be around 11kb for proper OFT files
+            if (stats.size > 10000) { // Should be around 16kb for proper OFT files
               sentCount++;
             } else {
               errors.push(`Created .oft file for ${vendorName} but size is too small (${stats.size} bytes) - may be corrupted`);
