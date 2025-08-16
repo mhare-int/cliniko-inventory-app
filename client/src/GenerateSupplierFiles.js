@@ -1310,6 +1310,12 @@ ${supplierSpecificSignature}
       </div>
       {downloadLinks.length > 0 && (
         <div style={{ marginTop: 28 }}>
+          <h4>
+            {downloadLinks.some(file => file.type === 'placeholder') && emailMode ? 
+              "📧 Email Setup Required" : 
+              "📄 Generated Files"
+            }
+          </h4>
           
           {/* Action Buttons */}
           <div style={{ display: "flex", gap: "12px", marginBottom: 20 }}>

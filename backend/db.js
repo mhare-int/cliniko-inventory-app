@@ -208,75 +208,85 @@ function syncProductsFromCliniko() {
               
               console.log(`Found ${uniqueSuppliers.size} unique suppliers from Cliniko products`);
 
-              // Insert/Update products in local DB
-              let processed = 0;
-              let total = productsToProcess.length;
-              let inserted = 0;
-              let updated = 0;
-              
-              console.log(`Processing ${total} products from Cliniko (after filtering archived and de-duplication)...`);
-              
-              if (total === 0) return resolve({ message: 'No products to sync', products_synced: 0 });
-              
-              productsToProcess.forEach(product => {
-                const cliniko_id = String(product.id);
-                const name = product.name || 'Unknown Product';
-                const stock = product.stock_level || 0;
-                // Check for serial_number first, then barcode, then empty string
-                const barcode = product.serial_number || product.barcode || '';
-                // Use the correct Cliniko field for supplier name
-                const supplier_name = product.product_supplier_name || '';
-                
-                // Use UPSERT to avoid duplicates and correctly update existing rows
-                db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level)
-                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0))
-                        ON CONFLICT(cliniko_id) DO UPDATE SET
-                          name=excluded.name,
-                          barcode=excluded.barcode,
-                          stock=excluded.stock,
-                          supplier_name=excluded.supplier_name,
-                          reorder_level=COALESCE(products.reorder_level, excluded.reorder_level)`,
-                  [cliniko_id, name, barcode, stock, supplier_name, cliniko_id], 
-                  function(err) {
-                    if (err) {
-                      console.error('Error upserting product:', err, 'Product:', product);
-                    } else {
-                      // changes === 1 when insert, 2 when update in SQLite UPSERT
-                      if (this.changes === 1) inserted++;
-                      else if (this.changes === 2) updated++;
+              // First, auto-populate suppliers table with unique supplier names
+              autoPopulateSuppliersFromCliniko(uniqueSuppliers)
+                .then(async (supplierResult) => {
+                  console.log(`Supplier auto-population completed: ${supplierResult.inserted} new suppliers added`);
+                  
+                  // Now process products with proper supplier_id lookup
+                  let processed = 0;
+                  let total = productsToProcess.length;
+                  let inserted = 0;
+                  let updated = 0;
+                  
+                  console.log(`Processing ${total} products from Cliniko (after filtering archived and de-duplication)...`);
+                  
+                  if (total === 0) return resolve({ message: 'No products to sync', products_synced: 0 });
+                  
+                  // Process products one by one to handle async supplier lookup
+                  const processProduct = async (index) => {
+                    if (index >= total) {
+                      console.log(`Product sync completed: ${inserted} inserted, ${updated} updated`);
+                      return resolve({ 
+                        message: 'Products synced from Cliniko', 
+                        products_synced: total,
+                        inserted: inserted,
+                        updated: updated,
+                        suppliers_added: supplierResult.inserted
+                      });
                     }
                     
-                    processed++;
-                    if (processed === total) {
-                      console.log(`Product sync completed: ${inserted} inserted, ${updated} updated`);
-                      
-                      // Auto-populate suppliers table with unique supplier names
-                      autoPopulateSuppliersFromCliniko(uniqueSuppliers)
-                        .then((supplierResult) => {
-                          console.log(`Supplier auto-population completed: ${supplierResult.inserted} new suppliers added`);
-                          resolve({ 
-                            message: 'Products synced from Cliniko', 
-                            products_synced: total,
-                            inserted: inserted,
-                            updated: updated,
-                            suppliers_added: supplierResult.inserted
-                          });
-                        })
-                        .catch((supplierError) => {
-                          console.error('Error auto-populating suppliers:', supplierError);
-                          // Still resolve with product sync success, just log supplier error
-                          resolve({ 
-                            message: 'Products synced from Cliniko (supplier auto-population failed)', 
-                            products_synced: total,
-                            inserted: inserted,
-                            updated: updated,
-                            supplier_error: supplierError.message
-                          });
-                        });
+                    const product = productsToProcess[index];
+                    const cliniko_id = String(product.id);
+                    const name = product.name || 'Unknown Product';
+                    const stock = product.stock_level || 0;
+                    const barcode = product.serial_number || product.barcode || '';
+                    const supplier_name = product.product_supplier_name || '';
+                    
+                    // Look up supplier_id by name
+                    let supplier_id = null;
+                    if (supplier_name.trim() !== '') {
+                      try {
+                        const supplier = await getSupplierByName(supplier_name.trim());
+                        if (supplier && !supplier.error) {
+                          supplier_id = supplier.id;
+                        }
+                      } catch (err) {
+                        console.error('Error looking up supplier:', err);
+                      }
                     }
-                  }
-                );
-              });
+                    
+                    // Use UPSERT with supplier_id
+                    db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_id, reorder_level)
+                            VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0))
+                            ON CONFLICT(cliniko_id) DO UPDATE SET
+                              name=excluded.name,
+                              barcode=excluded.barcode,
+                              stock=excluded.stock,
+                              supplier_id=excluded.supplier_id,
+                              reorder_level=COALESCE(products.reorder_level, excluded.reorder_level)`,
+                      [cliniko_id, name, barcode, stock, supplier_id, cliniko_id], 
+                      function(err) {
+                        if (err) {
+                          console.error('Error upserting product:', err, 'Product:', product);
+                        } else {
+                          // changes === 1 when insert, 2 when update in SQLite UPSERT
+                          if (this.changes === 1) inserted++;
+                          else if (this.changes === 2) updated++;
+                        }
+                        
+                        // Process next product
+                        processProduct(index + 1);
+                      });
+                  };
+                  
+                  // Start processing products
+                  processProduct(0);
+                })
+                .catch((supplierError) => {
+                  console.error('Error auto-populating suppliers:', supplierError);
+                  reject({ error: 'Failed to auto-populate suppliers', details: supplierError });
+                });
             }
           });
         });
@@ -1091,7 +1101,15 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
 // --- Product Options ---
 function getProductOptions(term) {
   return new Promise((resolve, reject) => {
-    db.all('SELECT * FROM products WHERE LOWER(name) LIKE ? LIMIT 20', [`%${(term || '').toLowerCase()}%`], (err, rows) => {
+    db.all(`
+      SELECT 
+        p.*,
+        s.name as supplier_name
+      FROM products p
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      WHERE LOWER(p.name) LIKE ? 
+      LIMIT 20
+    `, [`%${(term || '').toLowerCase()}%`], (err, rows) => {
       if (err) return reject({ error: 'DB error' });
       const results = rows.map(row => ({
         label: row.name,
@@ -2001,7 +2019,13 @@ function setGitHubToken(newToken) {
 // Example: Get all products
 function getAllProducts() {
   return new Promise((resolve, reject) => {
-    db.all('SELECT * FROM products', (err, rows) => {
+    db.all(`
+      SELECT 
+        p.*,
+        s.name as supplier_name
+      FROM products p
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+    `, (err, rows) => {
       if (err) return reject(err);
       resolve(rows);
     });
@@ -2011,7 +2035,14 @@ function getAllProducts() {
 // Get all products with wrapper for error handling
 function getAllProductsWithWrapper() {
   return new Promise((resolve, reject) => {
-    db.all('SELECT * FROM products ORDER BY name', (err, rows) => {
+    db.all(`
+      SELECT 
+        p.*,
+        s.name as supplier_name
+      FROM products p
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      ORDER BY p.name
+    `, (err, rows) => {
       if (err) {
         console.error('Error getting products:', err);
         return reject({ error: 'Failed to get products', details: err.message });
@@ -2856,6 +2887,179 @@ function autoPopulateSuppliersFromCliniko(uniqueSuppliers) {
   });
 }
 
+// --- Advanced Supplier Management Functions ---
+function getInactiveSuppliers() {
+  return new Promise((resolve, reject) => {
+    // Get all suppliers where active = 0
+    db.all('SELECT * FROM suppliers WHERE active = 0 ORDER BY name', [], (err, inactiveSuppliers) => {
+      if (err) return reject(err);
+      
+      // Get product and purchase request counts for each inactive supplier
+      const promises = inactiveSuppliers.map(supplier => {
+        return new Promise((resolve2) => {
+          // Count products
+          db.get('SELECT COUNT(*) as product_count FROM products WHERE supplier_id = ?', 
+            [supplier.id], (err, productResult) => {
+              const productCount = err ? 0 : (productResult?.product_count || 0);
+              
+              // Count purchase request items by supplier name (since purchase_request_items uses supplier_name)
+              db.get('SELECT COUNT(*) as pr_count FROM purchase_request_items WHERE LOWER(supplier_name) = LOWER(?)', 
+                [supplier.name], (err, prResult) => {
+                  const prCount = err ? 0 : (prResult?.pr_count || 0);
+                  
+                  resolve2({
+                    ...supplier,
+                    product_count: productCount,
+                    purchase_request_count: prCount,
+                    source: supplier.source || 'manual' // Use existing source or default to manual
+                  });
+                });
+            });
+        });
+      });
+      
+      Promise.all(promises).then(resolve).catch(reject);
+    });
+  });
+}
+
+function getSupplierUsageSummary() {
+  return new Promise((resolve, reject) => {
+    // Get suppliers grouped by active status
+    db.all('SELECT active, COUNT(*) as count FROM suppliers GROUP BY active', [], (err, statusCounts) => {
+      if (err) return reject(err);
+      
+      let activeCount = 0;
+      let inactiveCount = 0;
+      
+      statusCounts.forEach(row => {
+        if (row.active === 1) {
+          activeCount = row.count;
+        } else if (row.active === 0) {
+          inactiveCount = row.count;
+        }
+      });
+      
+      // Count how many active suppliers have products
+      db.get('SELECT COUNT(DISTINCT s.id) as count FROM suppliers s INNER JOIN products p ON s.id = p.supplier_id WHERE s.active = 1', [], (err, activeWithProductsResult) => {
+        if (err) return reject(err);
+        
+        const activeWithProducts = activeWithProductsResult ? activeWithProductsResult.count : 0;
+        
+        // Count how many inactive suppliers have products
+        db.get('SELECT COUNT(DISTINCT s.id) as count FROM suppliers s INNER JOIN products p ON s.id = p.supplier_id WHERE s.active = 0', [], (err, inactiveWithProductsResult) => {
+          if (err) return reject(err);
+          
+          const inactiveWithProducts = inactiveWithProductsResult ? inactiveWithProductsResult.count : 0;
+          
+          resolve({
+            active: {
+              count: activeCount,
+              with_products: activeWithProducts
+            },
+            inactive: {
+              count: inactiveCount,
+              with_products: inactiveWithProducts
+            }
+          });
+        });
+      });
+    });
+  });
+}
+
+function deleteInactiveSuppliers(forceDelete = false) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Get inactive suppliers first
+      const inactiveSuppliers = await getInactiveSuppliers();
+      
+      if (inactiveSuppliers.length === 0) {
+        return resolve({ message: 'No inactive suppliers found to delete.' });
+      }
+      
+      let deleted = 0;
+      let skipped = 0;
+      const errors = [];
+      
+      for (const supplier of inactiveSuppliers) {
+        // Check if supplier has products or purchase history
+        const hasData = supplier.product_count > 0 || supplier.purchase_request_count > 0;
+        
+        if (hasData && !forceDelete) {
+          skipped++;
+          continue;
+        }
+        
+        // Delete the supplier
+        await new Promise((resolve2, reject2) => {
+          db.run('DELETE FROM suppliers WHERE id = ?', [supplier.id], function(err) {
+            if (err) {
+              errors.push(`Failed to delete ${supplier.name}: ${err.message}`);
+              reject2(err);
+            } else {
+              deleted++;
+              resolve2();
+            }
+          });
+        }).catch(() => {}); // Continue on error
+      }
+      
+      let message = `Deleted ${deleted} inactive suppliers.`;
+      if (skipped > 0) {
+        message += ` Skipped ${skipped} suppliers with products/history.`;
+      }
+      if (errors.length > 0) {
+        message += ` Errors: ${errors.length}`;
+      }
+      
+      resolve({ 
+        message, 
+        deleted, 
+        skipped, 
+        errors: errors.length > 0 ? errors : undefined 
+      });
+      
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function reactivateSupplier(supplierId) {
+  return new Promise((resolve, reject) => {
+    // Set the supplier as active
+    db.run('UPDATE suppliers SET active = 1, updated_at = ? WHERE id = ?', 
+      [new Date().toISOString(), supplierId], 
+      function(err) {
+        if (err) return reject(err);
+        
+        if (this.changes > 0) {
+          resolve({ success: true, message: 'Supplier reactivated successfully' });
+        } else {
+          resolve({ success: false, message: 'Supplier not found' });
+        }
+      });
+  });
+}
+
+function deactivateSupplier(supplierId) {
+  return new Promise((resolve, reject) => {
+    // Mark supplier as inactive
+    db.run('UPDATE suppliers SET active = 0, updated_at = ? WHERE id = ?', 
+      [new Date().toISOString(), supplierId], 
+      function(err) {
+        if (err) return reject(err);
+        
+        if (this.changes > 0) {
+          resolve({ success: true, message: 'Supplier marked as inactive successfully' });
+        } else {
+          resolve({ success: false, message: 'Supplier not found' });
+        }
+      });
+  });
+}
+
 // --- Email Template Functions ---
 function saveEmailTemplate(templateData) {
   return new Promise((resolve, reject) => {
@@ -3178,6 +3382,11 @@ module.exports = {
   deleteSupplier,
   getSupplierByName,
   autoPopulateSuppliersFromCliniko,
+  getInactiveSuppliers,
+  getSupplierUsageSummary,
+  deleteInactiveSuppliers,
+  reactivateSupplier,
+  deactivateSupplier,
   // Email template functions
   saveEmailTemplate,
   getEmailTemplate,

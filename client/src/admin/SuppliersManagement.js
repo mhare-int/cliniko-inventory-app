@@ -326,24 +326,22 @@ function SuppliersManagement() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this supplier?')) {
+    if (!window.confirm('Are you sure you want to delete this supplier? This action cannot be undone.')) {
       return;
     }
-    
-    setError('');
+
     try {
       const result = await window.api.deleteSupplier(id);
       if (result.error) {
-        setError(result.error);
+        setError(`Error: ${result.error}`);
       } else {
-        loadSuppliers();
+        setError(''); // Clear any previous errors
+        await loadSuppliers(); // Refresh the list (this also loads inactive suppliers)
       }
     } catch (err) {
-      setError('Failed to delete supplier');
+      setError(`Error deleting supplier: ${err.message}`);
     }
-  };
-
-  const handleCancel = () => {
+  };  const handleCancel = () => {
     setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '' });
     setEditingSupplier(null);
     setShowAddForm(false);
@@ -939,7 +937,7 @@ function SuppliersManagement() {
                       <button
                         onClick={() => handleDelete(supplier.id)}
                         style={{
-                          background: '#dc2626',
+                          background: '#f44336',
                           color: '#fff',
                           border: 'none',
                           padding: '4px 8px',

@@ -918,6 +918,51 @@ ipcMain.handle('getSupplierByName', async (event, name) => {
   }
 });
 
+ipcMain.handle('getInactiveSuppliers', async () => {
+  try {
+    return await db.getInactiveSuppliers();
+  } catch (err) {
+    logErrorToFile('getInactiveSuppliers error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get inactive suppliers' };
+  }
+});
+
+ipcMain.handle('getSupplierUsageSummary', async () => {
+  try {
+    return await db.getSupplierUsageSummary();
+  } catch (err) {
+    logErrorToFile('getSupplierUsageSummary error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get supplier usage summary' };
+  }
+});
+
+ipcMain.handle('deleteInactiveSuppliers', async (event, forceDelete = false) => {
+  try {
+    return await db.deleteInactiveSuppliers(forceDelete);
+  } catch (err) {
+    logErrorToFile('deleteInactiveSuppliers error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to delete inactive suppliers' };
+  }
+});
+
+ipcMain.handle('reactivateSupplier', async (event, supplierId) => {
+  try {
+    return await db.reactivateSupplier(supplierId);
+  } catch (err) {
+    logErrorToFile('reactivateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to reactivate supplier' };
+  }
+});
+
+ipcMain.handle('deactivateSupplier', async (event, supplierId) => {
+  try {
+    return await db.deactivateSupplier(supplierId);
+  } catch (err) {
+    logErrorToFile('deactivateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to deactivate supplier' };
+  }
+});
+
 // Email Template Management
 ipcMain.handle('saveEmailTemplate', async (event, templateData) => {
   try {
