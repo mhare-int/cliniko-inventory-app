@@ -721,10 +721,20 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
     
     let sentCount = 0;
     const errors = [];
+    const createdOftFiles = []; // Track only files created in this session
 
     for (const email of emailData) {
       try {
         const { vendorName, email: toEmail, subject, message, fallbackMessage, attachmentFile } = email;
+        
+        console.log(`🔍 BACKEND DEBUG: Processing email for vendor: ${vendorName}`);
+        console.log(`🔍 BACKEND DEBUG: Email data received:`, { 
+          vendorName, 
+          toEmail, 
+          subject: subject?.substring(0, 50) + '...', 
+          attachmentFile,
+          hasAttachment: !!attachmentFile
+        });
         
         if (!toEmail || !toEmail.trim()) {
           errors.push(`No email address provided for ${vendorName}`);
@@ -752,6 +762,17 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
           const oftFilePath = path.join(outputFolder, oftFilename);
 
+          // Debug: Log attachment info
+          console.log(`DEBUG: Processing ${vendorName}`);
+          console.log(`DEBUG: attachmentFile = ${attachmentFile}`);
+          if (attachmentFile && fs.existsSync(attachmentFile)) {
+            console.log(`DEBUG: Attachment file exists: ${attachmentFile}`);
+          } else if (attachmentFile) {
+            console.log(`DEBUG: Attachment file NOT found: ${attachmentFile}`);
+          } else {
+            console.log(`DEBUG: No attachment file specified`);
+          }
+
           // Write PowerShell script to temp file - exactly like your working test script
           const tempDir = require('os').tmpdir();
           const scriptPath = path.join(tempDir, `oft_create_${timestamp}.ps1`);
@@ -768,6 +789,15 @@ try {
     $mail.HTMLBody = @"
 ${message}
 "@
+    
+    ${attachmentFile ? `# Add attachment
+    $attachmentPath = "${attachmentFile.replace(/\\/g, '\\\\')}"
+    if (Test-Path $attachmentPath) {
+        $mail.Attachments.Add($attachmentPath)
+        Write-Host "Attachment added: $attachmentPath"
+    } else {
+        Write-Host "WARNING: Attachment file not found: $attachmentPath"
+    }` : '# No attachment specified'}
     
     $oftPath = "${oftFilePath.replace(/\\/g, '\\\\')}"
     
@@ -838,6 +868,16 @@ ${message}
             
             if (stats.size > 10000) { // Should be around 16kb for proper OFT files
               sentCount++;
+              // Add this specific file to our created files list
+              const oftFileObj = {
+                filename: oftFilename,
+                path: oftFilePath,
+                vendor: vendorName,
+                created: stats.birthtime || new Date(),
+                size: stats.size
+              };
+              console.log(`🔍 BACKEND DEBUG: Adding OFT file to createdOftFiles:`, oftFileObj);
+              createdOftFiles.push(oftFileObj);
             } else {
               errors.push(`Created .oft file for ${vendorName} but size is too small (${stats.size} bytes) - may be corrupted`);
             }
@@ -857,31 +897,15 @@ ${message}
     }
 
     if (sentCount > 0) {
-      // Get list of .oft files created
-      const fs = require('fs');
-      const path = require('path');
-      const oftFiles = [];
-      
-      if (outputFolder && fs.existsSync(outputFolder)) {
-        const files = fs.readdirSync(outputFolder);
-        for (const file of files) {
-          if (file.endsWith('.oft')) {
-            oftFiles.push({
-              filename: file,
-              path: path.join(outputFolder, file),
-              created: fs.statSync(path.join(outputFolder, file)).birthtime
-            });
-          }
-        }
-      }
-      
-      return { 
+      const response = { 
         success: true, 
         sentCount, 
         message: `Created ${sentCount} .oft email template file(s)`,
-        oftFiles: oftFiles,
+        oftFiles: createdOftFiles, // Return only files created in this session
         errors: errors.length > 0 ? errors : undefined
       };
+      console.log(`🔍 BACKEND DEBUG: Final response with ${createdOftFiles.length} OFT files:`, response);
+      return response;
     } else {
       return { 
         success: false, 

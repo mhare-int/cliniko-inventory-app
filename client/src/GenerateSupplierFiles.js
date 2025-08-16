@@ -192,84 +192,96 @@ function GenerateSupplierFiles() {
       let files = [];
       
       if (createFiles) {
-        // Check if Excel files already exist for this PR
+        // Check if Excel files already exist for this PR and delete them
         console.log('🔍 Checking for existing Excel files for PR:', pr.id);
         const existingExcelFiles = await window.api.getGeneratedFiles(pr.id, 'excel');
         
         if (existingExcelFiles && existingExcelFiles.length > 0) {
-          console.log('⚠️ Excel files already exist for this PR, skipping creation to avoid duplicates');
-          console.log('📁 Existing Excel files:', existingExcelFiles.map(f => f.filename));
+          console.log('🗑️ Found existing Excel files, deleting them before creating new ones');
+          console.log('📁 Deleting Excel files:', existingExcelFiles.map(f => f.filename));
           
-          // Use existing files instead of creating new ones
-          files = existingExcelFiles.map(f => ({
-            file: f.filename,
-            supplier: f.vendor_name
-          }));
-          
-          alert("Excel files already exist for this Purchase Order. Using existing files.");
-        } else {
-          console.log('✅ No existing Excel files found, creating new ones');
-          
-          // Create the actual files
-          if (!window.api || !window.api.createSupplierOrderFilesForVendors) throw new Error("createSupplierOrderFilesForVendors not available");
-          const vendorItems = pr.items.map(item => ({
-            "PUR Number": purNumber,
-            "Product Name": item["Product Name"] || item.name,
-            "Supplier Name": item["Supplier Name"] || item.supplier_name || "Unknown Supplier",
-            "No. to Order": item["No. to Order"] ?? item.no_to_order ?? 0
-          }));
-          const res = await window.api.createSupplierOrderFilesForVendors(vendorItems, outputFolder);
-          // Accept both array of strings or array of {supplier, file}
-          if (res && Array.isArray(res.files)) {
-            files = res.files.map(f => {
-              if (typeof f === 'string') return { file: f };
-              if (f && typeof f === 'object' && f.file) return f;
-              return { file: String(f) };
-            });
-          }
-          alert("Orders sent to suppliers successfully!");
-          
-          // Track Excel files in the database
-          if (res && Array.isArray(res.files) && res.files.length > 0) {
+          // Delete existing Excel files from database and disk
+          for (const existingFile of existingExcelFiles) {
             try {
-              for (const fileInfo of res.files) {
-                const supplierName = fileInfo.supplier || 'Unknown Supplier';
-                const filename = fileInfo.file || 'Unknown File';
-                const fullPath = `${outputFolder}/${filename}`;
-                
-                // Get file size if possible
-                let fileSize = 0;
+              // Delete from database
+              await window.api.deleteGeneratedFile(pr.id, existingFile.vendor_name, 'excel', existingFile.filename);
+              console.log('✅ Deleted from database:', existingFile.filename);
+              
+              // Delete from disk if file path exists
+              if (existingFile.file_path) {
                 try {
-                  if (window.api.getFileStats) {
-                    const stats = await window.api.getFileStats(fullPath);
-                    fileSize = stats?.size || 0;
-                  }
-                } catch (sizeErr) {
-                  console.warn('Could not get file size for:', fullPath);
+                  await window.api.deleteFileFromDisk(existingFile.file_path);
+                  console.log('✅ Deleted from disk:', existingFile.file_path);
+                } catch (diskErr) {
+                  console.warn('⚠️ Could not delete file from disk:', existingFile.file_path, diskErr);
                 }
-                
-                await window.api.markVendorFilesCreated(pr.id, supplierName, 'excel', filename, fullPath, fileSize);
-                console.log(`✅ Tracked Excel file: ${filename} for ${supplierName}`);
               }
-            } catch (trackErr) {
-              console.error('❌ Failed to track Excel files:', trackErr);
-            }
-          }
-          
-          // Update purchase request status to mark supplier files as created
-          if (pr && pr.id && window.api.updatePurchaseRequestSupplierFilesStatus) {
-            try {
-              await window.api.updatePurchaseRequestSupplierFilesStatus(pr.id, true);
-              console.log('✅ Marked purchase request as having supplier files created');
-            } catch (statusErr) {
-              console.error('❌ Failed to update supplier files status:', statusErr);
+            } catch (deleteErr) {
+              console.error('❌ Error deleting existing file:', existingFile.filename, deleteErr);
             }
           }
         }
+        
+        console.log('✅ Creating new Excel files');
+        
+        // Create the actual files
+        if (!window.api || !window.api.createSupplierOrderFilesForVendors) throw new Error("createSupplierOrderFilesForVendors not available");
+        const vendorItems = pr.items.map(item => ({
+          "PUR Number": purNumber,
+          "Product Name": item["Product Name"] || item.name,
+          "Supplier Name": item["Supplier Name"] || item.supplier_name || "Unknown Supplier",
+          "No. to Order": item["No. to Order"] ?? item.no_to_order ?? 0
+        }));
+        const res = await window.api.createSupplierOrderFilesForVendors(vendorItems, outputFolder);
+        // Accept both array of strings or array of {supplier, file}
+        if (res && Array.isArray(res.files)) {
+          files = res.files.map(f => {
+            if (typeof f === 'string') return { file: f };
+            if (f && typeof f === 'object' && f.file) return f;
+            return { file: String(f) };
+          });
+        }
+        alert("Orders sent to suppliers successfully!");
+        
+        // Track Excel files in the database
+        if (res && Array.isArray(res.files) && res.files.length > 0) {
+          try {
+            for (const fileInfo of res.files) {
+              const supplierName = fileInfo.supplier || 'Unknown Supplier';
+              const filename = fileInfo.file || 'Unknown File';
+              const fullPath = `${outputFolder}/${filename}`;
+              
+              // Get file size if possible
+              let fileSize = 0;
+              try {
+                if (window.api.getFileStats) {
+                  const stats = await window.api.getFileStats(fullPath);
+                  fileSize = stats?.size || 0;
+                }
+              } catch (sizeErr) {
+                console.warn('Could not get file size for:', fullPath);
+              }
+              
+              await window.api.markVendorFilesCreated(pr.id, supplierName, 'excel', filename, fullPath, fileSize);
+              console.log(`✅ Tracked Excel file: ${filename} for ${supplierName}`);
+            }
+          } catch (trackErr) {
+            console.error('❌ Failed to track Excel files:', trackErr);
+          }
+        }
+        
+        // Update purchase request status to mark supplier files as created
+        if (pr && pr.id && window.api.updatePurchaseRequestSupplierFilesStatus) {
+          try {
+            await window.api.updatePurchaseRequestSupplierFilesStatus(pr.id, true);
+            console.log('✅ Marked purchase request as having supplier files created');
+          } catch (statusErr) {
+            console.error('❌ Failed to update supplier files status:', statusErr);
+          }
+        }
       } else {
-        // Don't create virtual file entries when files aren't actually created
+        // Don't create files, just prepare for email templates
         files = [];
-        // Automatically create email templates when not creating CSV files
         alert("Preparing email templates...");
       }
       
@@ -531,13 +543,20 @@ ${supplierSpecificSignature}
       console.log('🗑️ Deleting file:', file);
       
       // Delete from database if we have the necessary info
-      if (file.vendor && file.fileType && selectedPRId) {
-        const success = await window.api.deleteGeneratedFile(selectedPRId, file.vendor, file.fileType, file.file);
+      // Handle both old and new object structures
+      const vendor = file.vendor || file.supplier;
+      const fileType = file.fileType || (file.isOutlookTemplate ? 'oft' : 'excel');
+      
+      if (vendor && fileType && selectedPRId) {
+        console.log('🔍 Deleting from DB with:', { selectedPRId, vendor, fileType, filename: file.file });
+        const success = await window.api.deleteGeneratedFile(selectedPRId, vendor, fileType, file.file);
         if (success) {
           console.log('✅ File deleted from database');
         } else {
           console.warn('⚠️ Could not delete from database');
         }
+      } else {
+        console.warn('⚠️ Missing info for database deletion:', { vendor, fileType, selectedPRId, file });
       }
       
       // Delete from filesystem if path exists
@@ -1005,6 +1024,44 @@ ${supplierSpecificSignature}
         firstEmail: processedEmailData[0]
       });
 
+      // Delete existing .oft files for this PR before creating new ones
+      if (selectedPRId) {
+        console.log('🗑️ Checking for existing .oft files to delete for PR:', selectedPRId);
+        try {
+          const existingOftFiles = await window.api.getGeneratedFiles(selectedPRId, 'oft');
+          
+          if (existingOftFiles && existingOftFiles.length > 0) {
+            console.log('🗑️ Found existing .oft files, deleting them before creating new ones');
+            console.log('📁 Deleting .oft files:', existingOftFiles.map(f => f.filename));
+            
+            // Delete existing .oft files from database and disk
+            for (const existingFile of existingOftFiles) {
+              try {
+                // Delete from database
+                await window.api.deleteGeneratedFile(selectedPRId, existingFile.vendor_name, 'oft', existingFile.filename);
+                console.log('✅ Deleted .oft from database:', existingFile.filename);
+                
+                // Delete from disk if file path exists
+                if (existingFile.file_path) {
+                  try {
+                    await window.api.deleteFileFromDisk(existingFile.file_path);
+                    console.log('✅ Deleted .oft from disk:', existingFile.file_path);
+                  } catch (diskErr) {
+                    console.warn('⚠️ Could not delete .oft file from disk:', existingFile.file_path, diskErr);
+                  }
+                }
+              } catch (deleteErr) {
+                console.error('❌ Error deleting existing .oft file:', existingFile.filename, deleteErr);
+              }
+            }
+          } else {
+            console.log('✅ No existing .oft files found');
+          }
+        } catch (getFilesErr) {
+          console.error('❌ Error checking for existing .oft files:', getFilesErr);
+        }
+      }
+
       const result = await window.api.sendSupplierEmails(processedEmailData, outputFolder);
       
       console.log('📨 API result:', result);
@@ -1028,13 +1085,36 @@ ${supplierSpecificSignature}
         alert(message);
         
         // Mark each vendor as having .oft files created in the database
+        console.log('🔍 DEBUG: emailFiles from backend:', emailFiles);
+        console.log('🔍 DEBUG: processedEmailData:', processedEmailData);
+        
         for (const emailData of processedEmailData) {
           try {
             // Find the corresponding file that was created for this vendor
+            console.log('🔍 DEBUG: Looking for vendor:', emailData.vendorName);
+            console.log('🔍 DEBUG: Available files:', emailFiles.map(f => ({ 
+              vendor: f.vendor, 
+              filename: f.filename,
+              vendorLength: f.vendor ? f.vendor.length : 'null',
+              vendorMatch: f.vendor === emailData.vendorName
+            })));
+            console.log('🔍 DEBUG: Target vendor length:', emailData.vendorName.length);
+            
             const vendorFile = emailFiles.find(file => file.vendor === emailData.vendorName);
+            console.log('🔍 DEBUG: Found vendorFile:', vendorFile);
+            
             const filename = vendorFile ? vendorFile.filename : '';
-            const filePath = vendorFile ? vendorFile.file : '';
+            const filePath = vendorFile ? vendorFile.path : '';  // Changed from file.file to file.path
             const fileSize = vendorFile ? vendorFile.size || 0 : 0;
+            
+            console.log('🔍 DEBUG: Calling markVendorFilesCreated with:', {
+              prId: pr.id || pr._id,
+              vendor: emailData.vendorName,
+              type: 'oft',
+              filename,
+              filePath,
+              fileSize
+            });
             
             await window.api.markVendorFilesCreated(pr.id || pr._id, emailData.vendorName, 'oft', filename, filePath, fileSize);
             console.log('✅ Marked vendor as having .oft files created in database:', emailData.vendorName, 'filename:', filename);
@@ -1056,13 +1136,16 @@ ${supplierSpecificSignature}
         // Update downloadLinks to include template files for display
         const emailLinks = emailFiles.map(file => ({
           file: file.filename,
-          path: file.file,
+          path: file.path,  // Changed from file.file to file.path to match backend
           vendor: file.vendor,
           email: file.email,
           type: 'email',
           isOutlookDraft: file.isOutlookDraft || false,
-          isOutlookTemplate: file.isOutlookTemplate || false
+          isOutlookTemplate: true  // .oft files are always Outlook templates
         }));
+        
+        // After creating .oft files, reload all files from database to show them in UI
+        await loadExistingFiles(pr.id || pr._id, outputFolder);
         
         // Merge new template files with existing ones, avoiding duplicates
         setDownloadLinks(prev => {
