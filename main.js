@@ -731,115 +731,35 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           continue;
         }
 
-        // Handle attachment file (may be null if no attachments)
-        let attachmentPath = null;
-        if (attachmentFile) {
-          // Get full path to attachment file
-          attachmentPath = path.resolve(attachmentFile);
-          
-          // Check if file exists
-          if (!fs.existsSync(attachmentPath)) {
-            errors.push(`Attachment file not found: ${attachmentFile}`);
-            continue;
-          }
-        }
-
-        // Try HTML first, fallback to plain text on failure
-        let emailContent = message; // Start with HTML version
-        let success = false;
-        let lastError = null;
-
-        // Escape special characters for command line
-        const escapedEmail = toEmail.replace(/"/g, '""');
-        const escapedSubject = subject.replace(/"/g, '""');
-        const escapedAttachment = attachmentPath ? attachmentPath.replace(/"/g, '""') : null;
-
-        let command;
+        // Create .oft template file
+        const fs = require('fs');
+        const path = require('path');
         
-        if (process.platform === 'win32') {
-          // Windows - PowerShell with HTML support (Outlook handles HTML well)
-          const escapedMessage = emailContent.replace(/"/g, '""').replace(/\n/g, '\\n');
-          
-          const attachmentScript = attachmentPath ? `$mail.Attachments.Add('${escapedAttachment}')` : '';
-          
-          command = `powershell -Command "
-            try {
-              $outlook = New-Object -ComObject Outlook.Application
-              $mail = $outlook.CreateItem(0)
-              $mail.To = '${escapedEmail}'
-              $mail.Subject = '${escapedSubject}'
-              $mail.HTMLBody = '${escapedMessage.replace(/\n/g, '<br>')}'
-              ${attachmentScript}
-              $mail.Display()
-              Write-Host 'Success'
-            } catch {
-              Write-Host 'Error: Could not create Outlook email. Trying mailto fallback...'
-              # Fallback to simple mailto (without attachment)
-              $subject = '${escapedSubject}'
-              $body = '${escapedMessage}'
-              $mailto = 'mailto:${escapedEmail}?subject=' + [System.Web.HttpUtility]::UrlEncode($subject) + '&body=' + [System.Web.HttpUtility]::UrlEncode($body)
-              Start-Process $mailto
-              Write-Host 'Fallback Success'
-            }
-          "`;
-        } else if (process.platform === 'darwin') {
-          // macOS - Try HTML first, fallback to plain text
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              const currentMessage = attempt === 0 ? emailContent : (fallbackMessage || emailContent);
-              
-              // Escape for AppleScript
-              const appleScriptSubject = subject.replace(/"/g, '\\"').replace(/'/g, "\\'");
-              const appleScriptMessage = currentMessage.replace(/"/g, '\\"').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-              const appleScriptEmail = toEmail.replace(/"/g, '\\"').replace(/'/g, "\\'");
-              
-              const attachmentScript = attachmentPath ? 
-                `make new attachment with properties {file name:POSIX file \\"${escapedAttachment}\\"}` : '';
-              
-              command = `osascript -e "
-                tell application \\"Mail\\"
-                  activate
-                  set newMessage to make new outgoing message with properties {subject:\\"${appleScriptSubject}\\", content:\\"${appleScriptMessage}\\"}
-                  tell newMessage
-                    make new to recipient with properties {address:\\"${appleScriptEmail}\\"}
-                    ${attachmentScript}
-                  end tell
-                  set visible of newMessage to true
-                end tell
-              "`;
-              
-              console.log(`Opening email client for ${vendorName} (${toEmail}) - Attempt ${attempt + 1}: ${attempt === 0 ? 'HTML' : 'Plain Text'}`);
-              await execPromise(command);
-              success = true;
-              break; // Success, exit the retry loop
-              
-            } catch (err) {
-              lastError = err;
-              console.log(`Attempt ${attempt + 1} failed for ${vendorName}:`, err.message);
-              if (attempt === 0) {
-                console.log(`Retrying with plain text fallback for ${vendorName}`);
-              }
-            }
-          }
-          
-          if (!success) {
-            throw lastError;
-          }
-        } else {
-          // Linux - Try different email clients
-          const mailto = `mailto:${encodeURIComponent(toEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailContent)}`;
-          command = `xdg-open "${mailto}"`;
-          
-          console.log(`Opening email client for ${vendorName} (${toEmail})`);
-          await execPromise(command);
-          success = true;
+        if (!outputFolder) {
+          errors.push(`Output folder not provided`);
+          continue;
         }
 
-        if (success) {
-          sentCount++;
-          // Small delay between emails to prevent overwhelming the system
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+        // Clean vendor name for filename
+        const cleanVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
+        const oftFilePath = path.join(outputFolder, oftFilename);
+
+        // Create .oft template file content
+        const oftContent = `MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+Subject: ${subject}
+To: ${toEmail}
+
+${message}`;
+
+        // Write .oft file
+        fs.writeFileSync(oftFilePath, oftContent, 'utf8');
+        
+        sentCount++;
+        console.log(`Created .oft template file: ${oftFilename}`);
         
       } catch (err) {
         console.error(`Failed to open email for ${email.vendorName}:`, err);
@@ -848,16 +768,35 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
     }
 
     if (sentCount > 0) {
+      // Get list of .oft files created
+      const fs = require('fs');
+      const path = require('path');
+      const oftFiles = [];
+      
+      if (outputFolder && fs.existsSync(outputFolder)) {
+        const files = fs.readdirSync(outputFolder);
+        for (const file of files) {
+          if (file.endsWith('.oft')) {
+            oftFiles.push({
+              filename: file,
+              path: path.join(outputFolder, file),
+              created: fs.statSync(path.join(outputFolder, file)).birthtime
+            });
+          }
+        }
+      }
+      
       return { 
         success: true, 
         sentCount, 
-        message: `Opened ${sentCount} email(s) in your default email client`,
+        message: `Created ${sentCount} .oft email template file(s)`,
+        oftFiles: oftFiles,
         errors: errors.length > 0 ? errors : undefined
       };
     } else {
       return { 
         success: false, 
-        error: 'Failed to open any emails', 
+        error: 'Failed to create any .oft files', 
         details: errors 
       };
     }
@@ -866,7 +805,7 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
     logErrorToFile('sendSupplierEmails error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { 
       success: false, 
-      error: 'Failed to open email client', 
+      error: 'Failed to create .oft email template files', 
       details: err.message 
     };
   }
