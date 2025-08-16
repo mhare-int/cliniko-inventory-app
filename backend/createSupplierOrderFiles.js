@@ -40,8 +40,9 @@ async function createSupplierOrderFiles(items, outputFolder) {
     worksheet.columns = columns.map(col => ({ header: col, key: col }));
     // Add data rows
     orders.forEach(order => worksheet.addRow(order));
-    await workbook.xlsx.writeFile(orderPath);
-    createdFiles.push({ supplier, file: path.relative(outputFolder, orderPath) });
+  await workbook.xlsx.writeFile(orderPath);
+  // Return both the relative file (for backward compatibility) and the absolute path
+  createdFiles.push({ supplier, file: path.relative(outputFolder, orderPath), path: orderPath });
   }
   return createdFiles;
 }

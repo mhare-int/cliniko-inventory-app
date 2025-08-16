@@ -406,7 +406,8 @@ function GenerateSupplierFiles() {
             for (const fileInfo of res.files) {
               const supplierName = fileInfo.supplier || 'Unknown Supplier';
               const filename = fileInfo.file || 'Unknown File';
-              const fullPath = `${outputFolder}/${filename}`;
+              // Prefer absolute path returned by backend if provided
+              const fullPath = fileInfo.path || fileInfo.file_path || `${outputFolder}/${filename}`;
               
               // Get file size if possible
               let fileSize = 0;
@@ -1167,10 +1168,19 @@ ${supplierSpecificSignature}
         // Debug attachment logic - look specifically for Excel files, not OFT files
         // Use freshFiles if provided (for automatic workflow), otherwise use downloadLinks (for manual workflow)
         const filesToSearch = freshFiles || downloadLinks;
-        const potentialAttachment = filesToSearch.find(f => f.file.includes(cleanVendorName) && (f.file.endsWith('.xlsx') || f.file.endsWith('.xls') || f.type === 'file'));
-        // Construct the correct path from outputFolder and file.file (which contains the relative path)
-        const attachmentFilePath = includeAttachments && createFiles && potentialAttachment ? 
-          `${outputFolder}\\${potentialAttachment.file}` : null;
+        const potentialAttachment = filesToSearch.find(f => {
+          const fname = (f.file || f.filename || '').toString();
+          return fname.includes(cleanVendorName) && (fname.endsWith('.xlsx') || fname.endsWith('.xls') || f.type === 'file');
+        });
+        // Construct the correct path: prefer absolute path fields if present, otherwise join outputFolder and relative file
+        let attachmentFilePath = null;
+        if (includeAttachments && createFiles && potentialAttachment) {
+          attachmentFilePath = potentialAttachment.path || potentialAttachment.file_path || potentialAttachment.file || '';
+          if (attachmentFilePath && !attachmentFilePath.startsWith('/') && !attachmentFilePath.match(/^[A-Za-z]:\\/)) {
+            // Likely a relative path - prefix with outputFolder
+            attachmentFilePath = `${outputFolder}\\${attachmentFilePath}`;
+          }
+        }
         console.log('Attachment debug for', cleanVendorName, ':', {
           includeAttachments,
           createFiles,

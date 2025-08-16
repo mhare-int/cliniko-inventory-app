@@ -40,7 +40,7 @@ function getActivePURsForBarcode(barcode) {
       });
     });
   });
-  }
+}
 
 // --- Delete User ---
 function deleteUser(userId) {
@@ -251,7 +251,11 @@ function syncProductsFromCliniko() {
                       console.log(`Product sync completed: ${inserted} inserted, ${updated} updated`);
                       
                       // Auto-populate suppliers table with unique supplier names
-                      autoPopulateSuppliersFromCliniko(uniqueSuppliers)
+                      getAutoDeactivateClinikoSuppliers()
+                        .then(setting => {
+                          const opts = { deactivateMissing: setting && setting.enabled === true };
+                          return autoPopulateSuppliersFromCliniko(uniqueSuppliers, opts);
+                        })
                         .then((supplierResult) => {
                           console.log(`Supplier auto-population completed: ${supplierResult.inserted} new suppliers added`);
                           resolve({ 
@@ -259,7 +263,9 @@ function syncProductsFromCliniko() {
                             products_synced: total,
                             inserted: inserted,
                             updated: updated,
-                            suppliers_added: supplierResult.inserted
+                            suppliers_added: supplierResult.inserted,
+                            suppliers_reactivated: supplierResult.reactivated || 0,
+                            suppliers_deactivated: supplierResult.deactivated || 0
                           });
                         })
                         .catch((supplierError) => {
@@ -344,17 +350,43 @@ function updateStockFromCliniko() {
                 'Supplier Name': item.product_supplier_name,
                 'Barcode': item.serial_number || item.barcode || ''
               }));
+
+              // Collect unique supplier names for possible auto-population
+              const uniqueSuppliers = new Set();
+              cliniko_list.forEach(item => {
+                const s = item['Supplier Name'];
+                if (s && String(s).trim() !== '') uniqueSuppliers.add(String(s).trim());
+              });
+
               // Update local DB stock and barcode for each product
               let updated = 0;
               let total = cliniko_list.length;
-              if (total === 0) return resolve({ message: 'No products to update' });
+              if (total === 0) return resolve({ message: 'No products to update', total: 0, suppliers_updated: 0 });
               cliniko_list.forEach(prod => {
                 const cliniko_id = prod['Id'];
                 const stock = prod['Stock'] || 0;
                 const barcode = prod['Barcode'] || '';
                 db.run('UPDATE products SET stock=?, barcode=? WHERE cliniko_id=?', [stock, barcode, cliniko_id], (err2) => {
                   updated++;
-                  if (updated === total) resolve({ message: 'Stock and barcode updated from Cliniko', total });
+                  if (updated === total) {
+                    // After updating all products, attempt to auto-populate suppliers (respect admin setting)
+                    getAutoDeactivateClinikoSuppliers()
+                      .then(setting => {
+                        const opts = { deactivateMissing: setting && setting.enabled === true };
+                        return autoPopulateSuppliersFromCliniko(uniqueSuppliers, opts);
+                      })
+                      .then(supplierResult => {
+                        const inserted = supplierResult && supplierResult.inserted ? supplierResult.inserted : 0;
+                        const reactivated = supplierResult && supplierResult.reactivated ? supplierResult.reactivated : 0;
+                        const deactivated = supplierResult && supplierResult.deactivated ? supplierResult.deactivated : 0;
+                        resolve({ message: 'Stock and barcode updated from Cliniko', total, suppliers_updated: inserted, suppliers_reactivated: reactivated, suppliers_deactivated: deactivated });
+                      })
+                      .catch(supplierErr => {
+                        console.error('Error auto-populating suppliers from updateStockFromCliniko:', supplierErr);
+                        // Still resolve success for stock update but include supplier error
+                        resolve({ message: 'Stock and barcode updated from Cliniko (supplier auto-population failed)', total, supplier_error: supplierErr.message || supplierErr });
+                      });
+                  }
                 });
               });
             }
@@ -1107,11 +1139,34 @@ function getProductOptions(term) {
 const uploadDir = path.join(__dirname, 'uploads');
 function downloadFile(filename) {
   return new Promise((resolve, reject) => {
-    const filePath = path.join(uploadDir, filename);
-    fs.access(filePath, fs.constants.F_OK, (err) => {
-      if (err) return reject({ error: 'File not found' });
-      resolve(filePath);
-    });
+    try {
+      if (!filename) return reject({ error: 'Missing filename' });
+
+      // If an absolute path was provided, check it directly
+      if (path.isAbsolute(filename)) {
+        fs.access(filename, fs.constants.F_OK, (err) => {
+          if (err) return reject({ error: 'File not found', details: err.message || err });
+          return resolve(filename);
+        });
+        return;
+      }
+
+      // Otherwise assume it's a filename located in the uploads directory
+      const filePath = path.join(uploadDir, filename);
+      fs.access(filePath, fs.constants.F_OK, (err) => {
+        if (!err) return resolve(filePath);
+
+        // Try a normalized fallback in case filename contains backslashes or odd separators
+        const normalized = path.normalize(filename);
+        const altPath = path.join(uploadDir, normalized);
+        fs.access(altPath, fs.constants.F_OK, (err2) => {
+          if (!err2) return resolve(altPath);
+          return reject({ error: 'File not found', details: err2 ? err2.message || err2 : err.message || err });
+        });
+      });
+    } catch (e) {
+      return reject({ error: 'Failed to download file', details: e.message || e });
+    }
   });
 }
 
@@ -1198,91 +1253,44 @@ function createPurchaseRequest(data) {
       const pr_count = (row ? row.count : 0) + 1;
       const pr_id = `PUR${String(pr_count).padStart(5, '0')}`;
       const date_created = new Date().toISOString();
-
       db.run('INSERT INTO purchase_requests (pr_id, date_created, received) VALUES (?, ?, ?)', [pr_id, date_created, 0], function (err2) {
         if (err2) return reject(err2);
         const items = data.items || [];
         let pending = items.length;
         if (pending === 0) return resolve({ id: pr_id });
-
         items.forEach(item => {
-          // Normalize incoming fields
-          let product_id = item.Id || item.id || item.product_id || null;
-          if (product_id !== null && product_id !== undefined) product_id = String(product_id).trim();
-          let product_name = item['Product Name'] || item.name || item.product_name || '';
-          product_name = String(product_name || '').trim();
+          const product_id = item.Id || item.id || item.product_id || null;
+          const product_name = item['Product Name'] || item.name || item.product_name || '';
+          const supplier_name = item['Supplier Name'] || item.supplier_name || '';
+          const supplier_id = item['Supplier Id'] || item.supplier_id || item.supplierId || null;
+          const no_to_order = item['No. to Order'] || item.no_to_order || item.qty || item.quantity || 0;
+          const quantity = item.quantity || no_to_order;
 
-          let supplier_name = item['Supplier Name'] || item.supplier_name || '';
-          supplier_name = supplier_name ? String(supplier_name).trim() : '';
-
-          let supplier_id = item['Supplier Id'] || item.supplier_id || item.supplier || null;
-          supplier_id = (supplier_id !== null && supplier_id !== undefined && supplier_id !== '') ? parseInt(supplier_id) : null;
-
-          const no_to_order = Number(item['No. to Order'] || item.no_to_order || item.qty || 0) || 0;
-
-          // Helper to perform the insert with resolved supplier values
-          const doInsert = (resolvedSupplierId, resolvedSupplierName) => {
-            // Ensure supplier name is a string
-            const finalSupplierName = resolvedSupplierName ? String(resolvedSupplierName).trim() : '';
-            const finalSupplierId = (resolvedSupplierId !== null && resolvedSupplierId !== undefined) ? resolvedSupplierId : null;
-            const nowTs = new Date().toISOString();
-
-            db.run(
-              `INSERT INTO purchase_request_items (pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, received, received_so_far, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
-              [pr_id, product_id, product_name, finalSupplierName, finalSupplierId, no_to_order, nowTs],
-              () => {
+          // Try the full insert (newer schemas). If it fails (old DB), fall back to a minimal insert.
+          db.run(
+            `INSERT INTO purchase_request_items (pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity, received, received_so_far, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity],
+            function (insertErr) {
+              if (insertErr) {
+                console.warn('Full insert into purchase_request_items failed, attempting fallback insert. Error:', insertErr.message);
+                // Fallback: insert into minimal columns for older DBs (avoid created_at here)
+                db.run(
+                  `INSERT INTO purchase_request_items (pr_id, product_name, quantity, received)
+                   VALUES (?, ?, ?, 0)`,
+                  [pr_id, product_name, quantity],
+                  (fallbackErr) => {
+                    if (fallbackErr) {
+                      console.error('Fallback insert into purchase_request_items also failed:', fallbackErr.message);
+                    }
+                    if (--pending === 0) resolve({ id: pr_id });
+                  }
+                );
+              } else {
                 if (--pending === 0) resolve({ id: pr_id });
               }
-            );
-          };
-
-          // Resolution order:
-          // 1. If supplier_name provided, prefer it (but try to resolve supplier_id from suppliers table if not provided)
-          // 2. If supplier_id provided, lookup supplier name
-          // 3. If neither provided, try to infer from products table (use cliniko_id or product name) and join to suppliers
-          if (supplier_name) {
-            if (supplier_id) {
-              // We have both, ensure the canonical name from suppliers if available
-              db.get('SELECT name FROM suppliers WHERE id = ?', [supplier_id], (err3, row3) => {
-                if (!err3 && row3 && row3.name) return doInsert(supplier_id, row3.name);
-                return doInsert(supplier_id, supplier_name);
-              });
-            } else {
-              // Name only: try to find supplier id by name
-              db.get('SELECT id, name FROM suppliers WHERE name = ?', [supplier_name], (err3, row3) => {
-                if (!err3 && row3) return doInsert(row3.id, row3.name);
-                return doInsert(null, supplier_name);
-              });
             }
-          } else if (supplier_id) {
-            // ID only: lookup name
-            db.get('SELECT name FROM suppliers WHERE id = ?', [supplier_id], (err3, row3) => {
-              if (!err3 && row3 && row3.name) return doInsert(supplier_id, row3.name);
-              return doInsert(supplier_id, '');
-            });
-          } else if (product_id || product_name) {
-            // Try to resolve from products -> suppliers in a single joined query
-            db.get(
-              `SELECT p.supplier_id as prod_supplier_id, s.name as supplier_name
-               FROM products p
-               LEFT JOIN suppliers s ON p.supplier_id = s.id
-               WHERE p.cliniko_id = ? OR TRIM(p.name) = TRIM(?)
-               LIMIT 1`,
-              [product_id, product_name],
-              (err3, row3) => {
-                if (!err3 && row3) {
-                  const rid = (row3.prod_supplier_id !== null && row3.prod_supplier_id !== undefined) ? row3.prod_supplier_id : null;
-                  const rname = row3.supplier_name || '';
-                  return doInsert(rid, rname);
-                }
-                return doInsert(null, '');
-              }
-            );
-          } else {
-            // No product or supplier info
-            doInsert(null, '');
-          }
+          );
         });
       });
     });
@@ -1813,24 +1821,31 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`);
       
+      // Purchase requests table: pr_id is a string identifier like 'PUR00001'
       db.run(`CREATE TABLE IF NOT EXISTS purchase_requests (
-        pr_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        vendor TEXT,
-        order_total REAL,
-        status TEXT DEFAULT 'pending',
+        pr_id TEXT PRIMARY KEY,
+        date_created TEXT,
+        date_received TEXT,
         received INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`);
-      
+
+      // Purchase request items: include both legacy "quantity" and the app-expected fields
+      // product_id and supplier_name/supplier_id are persisted so vendor grouping works reliably.
       db.run(`CREATE TABLE IF NOT EXISTS purchase_request_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        pr_id INTEGER,
+        pr_id TEXT,
+        product_id TEXT,
         product_name TEXT,
-        quantity INTEGER,
+        supplier_name TEXT,
+        supplier_id INTEGER,
+        no_to_order INTEGER DEFAULT 0,
+        quantity INTEGER DEFAULT 0,
         received INTEGER DEFAULT 0,
+        received_so_far INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (pr_id) REFERENCES purchase_requests(pr_id)
       )`);
       
@@ -1884,6 +1899,41 @@ const db = new sqlite3.Database(dbPath, async (err) => {
               );
             }
           });
+          
+          // Ensure suppliers have an 'active' column (1 = active, 0 = inactive).
+          // Older databases may not have this column; add it and initialize existing rows to active.
+          db.run(`ALTER TABLE suppliers ADD COLUMN active INTEGER DEFAULT 1`, (err) => {
+            // SQLite reports 'duplicate column name' if column already exists - ignore that
+            if (err && !err.message.includes('duplicate column name')) {
+              console.error('Error adding active column to suppliers table:', err);
+            } else {
+              // Set any NULL active fields to 1 to ensure existing suppliers are active by default
+              db.run(`UPDATE suppliers SET active = 1 WHERE active IS NULL`, function (uErr) {
+                if (uErr) {
+                  console.error('Error initializing suppliers.active values:', uErr);
+                } else if (this.changes > 0) {
+                  console.log(`✅ Initialized active flag for ${this.changes} existing suppliers`);
+                }
+              });
+            }
+          });
+
+  // Backwards-compatible schema migrations for purchase_requests and purchase_request_items
+  // Add missing columns if they don't exist (SQLite will error on duplicate columns; ignore those errors)
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN date_created TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding date_created to purchase_requests:', err); });
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN date_received TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding date_received to purchase_requests:', err); });
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN received INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding received to purchase_requests:', err); });
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN updated_at TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding updated_at to purchase_requests:', err); });
+
+  // purchase_request_items additions
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN product_id TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding product_id to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN supplier_name TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding supplier_name to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN supplier_id INTEGER`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding supplier_id to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN no_to_order INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding no_to_order to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN quantity INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding quantity to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN received_so_far INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding received_so_far to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding created_at to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN updated_at TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding updated_at to purchase_request_items:', err); });
         }
       });
       console.log('✅ Database initialization completed');
@@ -1902,6 +1952,28 @@ function getApiKey() {
         return reject(err);
       }
       resolve({ api_key: !!(row && row.value) }); // Do not return actual key for security
+    });
+  });
+}
+
+// Auto-deactivate setting for Cliniko suppliers
+function getAutoDeactivateClinikoSuppliers() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT value FROM settings WHERE key = ?', ['auto_deactivate_cliniko_suppliers'], (err, row) => {
+      if (err) return reject(err);
+      // Default to 'true' if not explicitly set
+      const value = row && row.value ? row.value : 'true';
+      resolve({ enabled: value === 'true' });
+    });
+  });
+}
+
+function setAutoDeactivateClinikoSuppliers(enabled) {
+  return new Promise((resolve, reject) => {
+    const value = enabled ? 'true' : 'false';
+    db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)', ['auto_deactivate_cliniko_suppliers', value], function (err) {
+      if (err) return reject(err);
+      resolve({ success: true, enabled: enabled });
     });
   });
 }
@@ -2772,6 +2844,19 @@ function getAllSuppliers() {
   });
 }
 
+// Return suppliers marked as inactive (active = 0)
+function getInactiveSuppliers() {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM suppliers WHERE active = 0 ORDER BY name ASC', [], (err, rows) => {
+      if (err) {
+        console.error('Error getting inactive suppliers:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      resolve(rows || []);
+    });
+  });
+}
+
 function addSupplier(name, email, contactName, comments, source = 'Manual') {
   return new Promise((resolve, reject) => {
     if (!name || name.trim() === '') {
@@ -2861,56 +2946,180 @@ function getSupplierByName(name) {
   });
 }
 
-function autoPopulateSuppliersFromCliniko(uniqueSuppliers) {
+// Reactivate a supplier (set active = 1)
+function reactivateSupplier(supplierId) {
+  return new Promise((resolve, reject) => {
+    if (!supplierId) return reject({ error: 'Supplier ID is required' });
+    const now = new Date().toISOString();
+    db.run('UPDATE suppliers SET active = 1, updated_at = ? WHERE id = ?', [now, supplierId], function (err) {
+      if (err) {
+        console.error('Error reactivating supplier:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      if (this.changes === 0) {
+        return reject({ error: 'Supplier not found' });
+      }
+      resolve({ success: true });
+    });
+  });
+}
+
+// Deactivate a supplier (set active = 0)
+function deactivateSupplier(supplierId) {
+  return new Promise((resolve, reject) => {
+    if (!supplierId) return reject({ error: 'Supplier ID is required' });
+    const now = new Date().toISOString();
+    db.run('UPDATE suppliers SET active = 0, updated_at = ? WHERE id = ?', [now, supplierId], function (err) {
+      if (err) {
+        console.error('Error deactivating supplier:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      if (this.changes === 0) {
+        return reject({ error: 'Supplier not found' });
+      }
+      resolve({ success: true });
+    });
+  });
+}
+
+function autoPopulateSuppliersFromCliniko(uniqueSuppliers, options = { deactivateMissing: true, dryRun: false }) {
   return new Promise((resolve, reject) => {
     if (!uniqueSuppliers || uniqueSuppliers.size === 0) {
-      return resolve({ inserted: 0, message: 'No suppliers to process' });
+      return resolve({ inserted: 0, reactivated: 0, deactivated: 0, insertedNames: [], reactivatedNames: [], deactivatedNames: [], message: 'No suppliers to process' });
     }
+
+    // Build a normalized map: key = lower(trim(name)) -> original trimmed name
+    // This lets us compare case-insensitively while preserving the original casing for DB writes/logs
+    const normalizedMap = new Map();
+    uniqueSuppliers.forEach(s => {
+      try {
+        const trimmed = String(s).trim();
+        const key = trimmed.toLowerCase();
+        if (trimmed && !normalizedMap.has(key)) normalizedMap.set(key, trimmed);
+      } catch (e) { /* ignore */ }
+    });
 
     let processed = 0;
     let inserted = 0;
-    const total = uniqueSuppliers.size;
+    let reactivated = 0;
+    let deactivated = 0;
+    const insertedNames = [];
+    const reactivatedNames = [];
+    const deactivatedNames = [];
+  const total = normalizedMap.size;
     const now = new Date().toISOString();
 
     console.log(`Auto-populating ${total} unique suppliers from Cliniko...`);
 
-    uniqueSuppliers.forEach(supplierName => {
-      // Check if supplier already exists before inserting
-      db.get('SELECT id FROM suppliers WHERE name = ?', [supplierName], (err, existingRow) => {
+    function performDeactivationIfNeeded() {
+      // If deactivation not requested, resolve immediately
+      if (!options || !options.deactivateMissing) {
+        return resolve({ inserted, reactivated, deactivated: 0, insertedNames, reactivatedNames, deactivatedNames, message: `Suppliers auto-populated: ${inserted} new, ${reactivated} reactivated` });
+      }
+
+      // Get all active Cliniko suppliers and deactivate those not in the current set
+      db.all("SELECT id, name FROM suppliers WHERE source = ? AND active = 1", ['Cliniko'], (err, rows) => {
+        if (err) {
+          console.error('Error querying existing Cliniko suppliers for deactivation:', err);
+          return resolve({ inserted, reactivated, deactivated: 0, insertedNames, reactivatedNames, deactivatedNames, message: `Suppliers auto-populated: ${inserted} new, ${reactivated} reactivated (deactivation failed)` , deactivation_error: err.message || err });
+        }
+
+        // Compare case-insensitively using the normalizedMap keys
+        const toDeactivate = rows.filter(r => {
+          try {
+            const key = String(r.name || '').trim().toLowerCase();
+            return !normalizedMap.has(key);
+          } catch (e) { return true; }
+        });
+
+        if (toDeactivate.length === 0) {
+          return resolve({ inserted, reactivated, deactivated: 0, insertedNames, reactivatedNames, deactivatedNames, message: `Suppliers auto-populated: ${inserted} new, ${reactivated} reactivated, 0 deactivated` });
+        }
+
+        if (options.dryRun) {
+          // Dry-run: return names that would be deactivated without modifying DB
+          const wouldDeactivate = toDeactivate.map(r => r.name);
+          return resolve({ inserted, reactivated, deactivated: 0, insertedNames, reactivatedNames, deactivatedNames: [], would_deactivate: wouldDeactivate, message: `Dry-run: ${wouldDeactivate.length} suppliers would be deactivated` });
+        }
+
+        // Perform deactivation updates
+        let done = 0;
+        toDeactivate.forEach(row => {
+          db.run('UPDATE suppliers SET active = 0, updated_at = ? WHERE id = ?', [now, row.id], function (uErr) {
+            if (!uErr) {
+              deactivated++;
+              deactivatedNames.push(row.name);
+              console.log(`Deactivated supplier: '${row.name}'`);
+            } else {
+              console.error('Error deactivating supplier:', row.name, uErr);
+            }
+            done++;
+            if (done === toDeactivate.length) {
+              return resolve({ inserted, reactivated, deactivated, insertedNames, reactivatedNames, deactivatedNames, message: `Suppliers auto-populated: ${inserted} new, ${reactivated} reactivated, ${deactivated} deactivated` });
+            }
+          });
+        });
+      });
+    }
+
+    // Process each supplier name: insert or reactivate as before
+    // Iterate over normalizedMap values (original trimmed names) but perform case-insensitive lookups
+    Array.from(normalizedMap.values()).forEach(supplierName => {
+      // Use case-insensitive match via COLLATE NOCASE so names differing only by case match
+      db.get('SELECT id, active FROM suppliers WHERE name = ? COLLATE NOCASE', [supplierName], (err, existingRow) => {
         if (err) {
           console.error('Error checking existing supplier:', err);
           processed++;
-          if (processed === total) {
-            resolve({ inserted, message: `Suppliers auto-populated: ${inserted} new suppliers added` });
-          }
+          if (processed === total) performDeactivationIfNeeded();
           return;
         }
 
         if (existingRow) {
-          // Supplier already exists, skip
-          console.log(`Supplier '${supplierName}' already exists, skipping`);
-          processed++;
-          if (processed === total) {
-            resolve({ inserted, message: `Suppliers auto-populated: ${inserted} new suppliers added` });
+          const isActive = existingRow.active === undefined || existingRow.active === null ? 1 : Number(existingRow.active);
+          if (!isActive) {
+            db.run('UPDATE suppliers SET active = 1, updated_at = ? WHERE id = ?', [now, existingRow.id], function (updateErr) {
+              if (updateErr) {
+                console.error('Error reactivating supplier:', updateErr, supplierName);
+              } else {
+                reactivated++;
+                reactivatedNames.push(supplierName);
+                console.log(`Reactivated supplier: '${supplierName}'`);
+              }
+              processed++;
+              if (processed === total) performDeactivationIfNeeded();
+            });
+          } else {
+            processed++;
+            if (processed === total) performDeactivationIfNeeded();
           }
         } else {
-          // Insert new supplier with just the name (email and contact info can be added later via admin)
           db.run(
-            'INSERT INTO suppliers (name, email, contact_name, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO suppliers (name, email, contact_name, special_instructions, source, created_at, updated_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
             [supplierName, '', '', '', 'Cliniko', now, now],
-            function (err) {
-              if (err && !err.message.includes('UNIQUE constraint failed')) {
-                console.error('Error auto-inserting supplier:', err);
-              } else if (!err) {
+            function (insertErr) {
+              if (insertErr && !insertErr.message.includes('UNIQUE constraint failed')) {
+                console.error('Error auto-inserting supplier:', insertErr, supplierName);
+              } else if (!insertErr) {
                 inserted++;
+                insertedNames.push(supplierName);
                 console.log(`Auto-added supplier: '${supplierName}'`);
+              } else if (insertErr && insertErr.message.includes('UNIQUE constraint failed')) {
+                // Race: a supplier was inserted concurrently with different casing - try a case-insensitive lookup
+                db.get('SELECT id, active FROM suppliers WHERE name = ? COLLATE NOCASE', [supplierName], (gErr, row) => {
+                  if (!gErr && row && (row.active === 0 || row.active === '0')) {
+                    db.run('UPDATE suppliers SET active = 1, updated_at = ? WHERE id = ?', [now, row.id], function (uErr) {
+                      if (!uErr) {
+                        reactivated++;
+                        reactivatedNames.push(supplierName);
+                        console.log(`Reactivated supplier after race: '${supplierName}'`);
+                      }
+                    });
+                  }
+                });
               }
-              // If UNIQUE constraint failed, it means another process added it concurrently, which is fine
-              
+
               processed++;
-              if (processed === total) {
-                resolve({ inserted, message: `Suppliers auto-populated: ${inserted} new suppliers added` });
-              }
+              if (processed === total) performDeactivationIfNeeded();
             }
           );
         }
@@ -3052,6 +3261,251 @@ function setSmartPromptsSetting(enabled) {
   });
 }
 
+// --- File Management Functions for Supplier Files ---
+
+/**
+ * Get generated files for a purchase request
+ * @param {string} prId - Purchase request ID
+ * @param {string} fileType - Optional file type filter ('excel', 'oft', etc.)
+ * @returns {Promise<Array>} Array of file records
+ */
+function getGeneratedFiles(prId, fileType = null) {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing purchase request ID' });
+    
+    let sql = 'SELECT * FROM vendor_files WHERE pr_id = ?';
+    let params = [prId];
+    
+    if (fileType) {
+      sql += ' AND file_type = ?';
+      params.push(fileType);
+    }
+    
+    sql += ' ORDER BY created_at DESC';
+    
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        console.error('Error getting generated files:', err);
+        return reject({ error: 'Failed to get generated files', details: err.message });
+      }
+      resolve(rows || []);
+    });
+  });
+}
+
+/**
+ * Delete a generated file record and optionally the file from disk
+ * @param {string} prId - Purchase request ID
+ * @param {string} vendorName - Vendor name
+ * @param {string} fileType - File type ('excel', 'oft', etc.)
+ * @param {string} filename - Filename
+ * @returns {Promise<boolean>} Success status
+ */
+function deleteGeneratedFile(prId, vendorName, fileType, filename) {
+  return new Promise((resolve, reject) => {
+    if (!prId || !vendorName || !fileType || !filename) {
+      return reject({ error: 'Missing required parameters' });
+    }
+    
+    db.run(
+      'DELETE FROM vendor_files WHERE pr_id = ? AND vendor_name = ? AND file_type = ? AND filename = ?',
+      [prId, vendorName, fileType, filename],
+      function(err) {
+        if (err) {
+          console.error('Error deleting generated file:', err);
+          return reject({ error: 'Failed to delete generated file', details: err.message });
+        }
+        resolve(this.changes > 0);
+      }
+    );
+  });
+}
+
+/**
+ * Mark vendor files as created in the database
+ * @param {string} prId - Purchase request ID
+ * @param {string} vendorName - Vendor name
+ * @param {string} fileType - File type ('excel', 'oft', etc.)
+ * @param {string} filename - Filename
+ * @param {string} filePath - Full file path
+ * @param {number} fileSize - File size in bytes
+ * @returns {Promise<boolean>} Success status
+ */
+function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, fileSize = 0) {
+  return new Promise((resolve, reject) => {
+    if (!prId || !vendorName || !fileType || !filename) {
+      return reject({ error: 'Missing required parameters' });
+    }
+    
+    // Ensure vendor_files table exists
+    db.run(`CREATE TABLE IF NOT EXISTS vendor_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pr_id TEXT NOT NULL,
+      vendor_name TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      file_path TEXT,
+      file_size INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, (createErr) => {
+      if (createErr) {
+        console.error('Error creating vendor_files table:', createErr);
+        return reject({ error: 'Failed to create vendor_files table', details: createErr.message });
+      }
+      
+      // Insert or replace the file record
+      db.run(
+        `INSERT OR REPLACE INTO vendor_files 
+         (pr_id, vendor_name, file_type, filename, file_path, file_size, created_at) 
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [prId, vendorName, fileType, filename, filePath, fileSize],
+        function(err) {
+          if (err) {
+            console.error('Error marking vendor files created:', err);
+            return reject({ error: 'Failed to mark vendor files created', details: err.message });
+          }
+          resolve(true);
+        }
+      );
+    });
+  });
+}
+
+/**
+ * Check if vendor files have been created for a purchase request
+ * @param {string} prId - Purchase request ID
+ * @param {string} vendorName - Vendor name
+ * @param {string} fileType - File type ('excel', 'oft', etc.)
+ * @returns {Promise<boolean>} True if files exist
+ */
+function hasVendorFilesCreated(prId, vendorName, fileType) {
+  return new Promise((resolve, reject) => {
+    if (!prId || !vendorName || !fileType) {
+      return reject({ error: 'Missing required parameters' });
+    }
+    
+    db.get(
+      'SELECT COUNT(*) as count FROM vendor_files WHERE pr_id = ? AND vendor_name = ? AND file_type = ?',
+      [prId, vendorName, fileType],
+      (err, row) => {
+        if (err) {
+          console.error('Error checking vendor files:', err);
+          return reject({ error: 'Failed to check vendor files', details: err.message });
+        }
+        resolve((row?.count || 0) > 0);
+      }
+    );
+  });
+}
+
+/**
+ * Update purchase request supplier files status
+ * @param {string} prId - Purchase request ID
+ * @param {boolean} hasFiles - Whether files exist
+ * @returns {Promise<boolean>} Success status
+ */
+function updatePurchaseRequestSupplierFilesStatus(prId, hasFiles) {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing purchase request ID' });
+    
+    db.run(
+      'UPDATE purchase_requests SET supplier_files_created = ? WHERE pr_id = ?',
+      [hasFiles ? 1 : 0, prId],
+      function(err) {
+        if (err) {
+          console.error('Error updating supplier files status:', err);
+          return reject({ error: 'Failed to update supplier files status', details: err.message });
+        }
+        resolve(this.changes > 0);
+      }
+    );
+  });
+}
+
+/**
+ * Update purchase request OFT files status
+ * @param {string} prId - Purchase request ID
+ * @param {boolean} hasFiles - Whether files exist
+ * @returns {Promise<boolean>} Success status
+ */
+function updatePurchaseRequestOftFilesStatus(prId, hasFiles) {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing purchase request ID' });
+    
+    db.run(
+      'UPDATE purchase_requests SET oft_files_created = ? WHERE pr_id = ?',
+      [hasFiles ? 1 : 0, prId],
+      function(err) {
+        if (err) {
+          console.error('Error updating OFT files status:', err);
+          return reject({ error: 'Failed to update OFT files status', details: err.message });
+        }
+        resolve(this.changes > 0);
+      }
+    );
+  });
+}
+
+/**
+ * Check whether a file exists on disk. Accepts absolute paths and normalizes separators.
+ * Returns a Promise<boolean>.
+ */
+function fileExists(filePath) {
+  return new Promise((resolve) => {
+    try {
+      if (!filePath || typeof filePath !== 'string') return resolve(false);
+      const tryPaths = [filePath];
+      // Normalized version
+      tryPaths.push(path.normalize(filePath));
+      // Swap slashes/backslashes
+      tryPaths.push(filePath.replace(/\\/g, '/'));
+      tryPaths.push(filePath.replace(/\//g, '\\'));
+
+      let checked = 0;
+      for (const p of tryPaths) {
+        try {
+          fs.access(p, fs.constants.F_OK, (err) => {
+            checked++;
+            if (!err) return resolve(true);
+            if (checked === tryPaths.length) return resolve(false);
+          });
+        } catch (e) {
+          checked++;
+          if (checked === tryPaths.length) return resolve(false);
+        }
+      }
+    } catch (e) {
+      return resolve(false);
+    }
+  });
+}
+
+/**
+ * Get basic file stats (size, mtime) for a given path. Returns null if not found.
+ */
+function getFileStats(filePath) {
+  return new Promise((resolve) => {
+    try {
+      if (!filePath || typeof filePath !== 'string') return resolve(null);
+      const candidate = path.normalize(filePath);
+      fs.stat(candidate, (err, stats) => {
+        if (err) {
+          // Try alternate separators
+          const alt = filePath.replace(/\\/g, '/');
+          fs.stat(alt, (err2, stats2) => {
+            if (err2) return resolve(null);
+            return resolve({ size: stats2.size, mtime: stats2.mtime });
+          });
+        } else {
+          return resolve({ size: stats.size, mtime: stats.mtime });
+        }
+      });
+    } catch (e) {
+      return resolve(null);
+    }
+  });
+}
+
 module.exports = {
   getAllProducts,
   getAllProductsWithWrapper,
@@ -3102,8 +3556,14 @@ module.exports = {
   getClinikoStockUpdateSetting,
   setClinikoStockUpdateSetting,
   updateClinikoStock,
+  // Auto-deactivate Cliniko suppliers setting
+  getAutoDeactivateClinikoSuppliers,
+  setAutoDeactivateClinikoSuppliers,
   // Supplier management functions
   getAllSuppliers,
+  getInactiveSuppliers,
+  reactivateSupplier,
+  deactivateSupplier,
   addSupplier,
   updateSupplier,
   deleteSupplier,
@@ -3115,6 +3575,13 @@ module.exports = {
   // Smart Prompts setting functions
   getSmartPromptsSetting,
   setSmartPromptsSetting,
+  // File management functions for supplier files
+  getGeneratedFiles,
+  deleteGeneratedFile,
+  markVendorFilesCreated,
+  hasVendorFilesCreated,
+  updatePurchaseRequestSupplierFilesStatus,
+  updatePurchaseRequestOftFilesStatus,
   // First time setup functions
   isFirstTimeSetup,
   createFirstAdminUser,
@@ -3122,3 +3589,7 @@ module.exports = {
   clearDefaultPasswordWarning,
   db // Export db for advanced queries
 };
+
+// Export additional filesystem helpers
+module.exports.fileExists = fileExists;
+module.exports.getFileStats = getFileStats;
