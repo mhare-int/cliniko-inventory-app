@@ -752,51 +752,73 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
           const oftFilePath = path.join(outputFolder, oftFilename);
 
-          // Create .oft file using PowerShell and Outlook COM
-          const escapedEmail = toEmail.replace(/'/g, "''");
-          const escapedSubject = subject.replace(/'/g, "''");
-          const escapedMessage = message.replace(/'/g, "''").replace(/\$/g, '`$');
-          const escapedPath = oftFilePath.replace(/'/g, "''");
-
+          // Create PowerShell script based on your test_comprehensive_oft.ps1
           const powershellScript = `
-            try {
-              $outlook = New-Object -ComObject Outlook.Application
-              $mail = $outlook.CreateItem(0)
-              $mail.To = '${escapedEmail}'
-              $mail.Subject = '${escapedSubject}'
-              $mail.HTMLBody = '${escapedMessage}'
-              
-              # Try saving as MSG first, then rename to OFT
-              $msgPath = '${escapedPath}'.Replace('.oft', '.msg')
-              $mail.SaveAs($msgPath, 3)
-              
-              if (Test-Path $msgPath) {
-                Copy-Item $msgPath '${escapedPath}' -Force
-                Remove-Item $msgPath -Force
-                Write-Host 'SUCCESS'
-              } else {
-                # Fallback: direct OFT save
-                $mail.SaveAs('${escapedPath}', 5)
-                Write-Host 'SUCCESS'
-              }
-              
-              $mail = $null
-              $outlook = $null
-            } catch {
-              Write-Host "ERROR: $($_.Exception.Message)"
-            }
+try {
+    # Create Outlook application
+    $outlook = New-Object -ComObject Outlook.Application
+    
+    # Create mail item and set properties
+    $mail = $outlook.CreateItem(0)  # olMailItem
+    $mail.To = "${toEmail.replace(/"/g, '""')}"
+    $mail.Subject = "${subject.replace(/"/g, '""')}"
+    $mail.HTMLBody = @"
+${message.replace(/"/g, '""')}
+"@
+    
+    $oftPath = "${oftFilePath.replace(/\\/g, '\\\\').replace(/"/g, '""')}"
+    
+    # Try different save format approaches (based on test_comprehensive_oft.ps1)
+    try {
+        # Method 1: Save as MSG first, then copy to OFT
+        $msgPath = $oftPath.Replace('.oft', '.msg')
+        $mail.SaveAs($msgPath, 3)  # olMSG = 3
+        
+        if (Test-Path $msgPath) {
+            # Copy and rename to .oft
+            Copy-Item $msgPath $oftPath -Force
+            Remove-Item $msgPath -Force
+            Write-Host "SUCCESS: OFT created via MSG method"
+        }
+        
+    } catch {
+        # Method 2: Direct OFT save with error handling
+        $mail.SaveAs($oftPath, 5)  # olTemplate = 5
+        Write-Host "SUCCESS: OFT created via direct method"
+    }
+    
+    # Clean up COM objects
+    $mail = $null
+    $outlook = $null
+    
+    # Verify file was created
+    if (Test-Path $oftPath) {
+        Write-Host "VERIFIED: OFT file exists"
+    } else {
+        Write-Host "ERROR: OFT file was not created"
+    }
+    
+} catch {
+    Write-Host "ERROR: $($_.Exception.Message)"
+}
           `;
 
-          const command = `powershell -Command "${powershellScript.replace(/"/g, '\\"')}"`;
+          // Execute PowerShell script
+          const { exec } = require('child_process');
+          const util = require('util');
+          const execPromise = util.promisify(exec);
           
-          await execPromise(command);
+          const command = `powershell -ExecutionPolicy Bypass -Command "${powershellScript.replace(/"/g, '\\"')}"`;
+          
+          const result = await execPromise(command);
+          console.log(`PowerShell output: ${result.stdout}`);
           
           // Verify file was created
           if (fs.existsSync(oftFilePath)) {
             sentCount++;
             console.log(`Created .oft template file: ${oftFilename}`);
           } else {
-            errors.push(`Failed to create .oft file for ${vendorName}`);
+            errors.push(`Failed to create .oft file for ${vendorName} - file not found after PowerShell execution`);
           }
           
         } catch (err) {
