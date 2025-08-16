@@ -713,7 +713,7 @@ ipcMain.handle('setSmartPromptsSetting', async (event, enabled) => {
 });
 
 // Email functionality - opens system default email client
-ipcMain.handle('sendSupplierEmails', async (event, emailData) => {
+ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
   try {
     const { exec } = require('child_process');
     const util = require('util');
