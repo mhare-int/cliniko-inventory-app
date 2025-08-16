@@ -731,7 +731,7 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           continue;
         }
 
-        // Create .oft template file
+        // Create .oft template file using Outlook COM
         const fs = require('fs');
         const path = require('path');
         
@@ -740,26 +740,69 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           continue;
         }
 
-        // Clean vendor name for filename
-        const cleanVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
-        const oftFilePath = path.join(outputFolder, oftFilename);
+        if (process.platform !== 'win32') {
+          errors.push(`OFT file creation only supported on Windows`);
+          continue;
+        }
 
-        // Create .oft template file content
-        const oftContent = `MIME-Version: 1.0
-Content-Type: text/html; charset="utf-8"
-Content-Transfer-Encoding: quoted-printable
-Subject: ${subject}
-To: ${toEmail}
+        try {
+          // Clean vendor name for filename
+          const cleanVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
+          const oftFilePath = path.join(outputFolder, oftFilename);
 
-${message}`;
+          // Create .oft file using PowerShell and Outlook COM
+          const escapedEmail = toEmail.replace(/'/g, "''");
+          const escapedSubject = subject.replace(/'/g, "''");
+          const escapedMessage = message.replace(/'/g, "''").replace(/\$/g, '`$');
+          const escapedPath = oftFilePath.replace(/'/g, "''");
 
-        // Write .oft file
-        fs.writeFileSync(oftFilePath, oftContent, 'utf8');
-        
-        sentCount++;
-        console.log(`Created .oft template file: ${oftFilename}`);
+          const powershellScript = `
+            try {
+              $outlook = New-Object -ComObject Outlook.Application
+              $mail = $outlook.CreateItem(0)
+              $mail.To = '${escapedEmail}'
+              $mail.Subject = '${escapedSubject}'
+              $mail.HTMLBody = '${escapedMessage}'
+              
+              # Try saving as MSG first, then rename to OFT
+              $msgPath = '${escapedPath}'.Replace('.oft', '.msg')
+              $mail.SaveAs($msgPath, 3)
+              
+              if (Test-Path $msgPath) {
+                Copy-Item $msgPath '${escapedPath}' -Force
+                Remove-Item $msgPath -Force
+                Write-Host 'SUCCESS'
+              } else {
+                # Fallback: direct OFT save
+                $mail.SaveAs('${escapedPath}', 5)
+                Write-Host 'SUCCESS'
+              }
+              
+              $mail = $null
+              $outlook = $null
+            } catch {
+              Write-Host "ERROR: $($_.Exception.Message)"
+            }
+          `;
+
+          const command = `powershell -Command "${powershellScript.replace(/"/g, '\\"')}"`;
+          
+          await execPromise(command);
+          
+          // Verify file was created
+          if (fs.existsSync(oftFilePath)) {
+            sentCount++;
+            console.log(`Created .oft template file: ${oftFilename}`);
+          } else {
+            errors.push(`Failed to create .oft file for ${vendorName}`);
+          }
+          
+        } catch (err) {
+          console.error(`Failed to create .oft file for ${vendorName}:`, err);
+          errors.push(`Failed to create .oft file for ${vendorName}: ${err.message}`);
+        }
         
       } catch (err) {
         console.error(`Failed to open email for ${email.vendorName}:`, err);
