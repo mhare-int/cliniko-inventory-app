@@ -1,6 +1,7 @@
 {
   "name": "client",
   "version": "2.0.5",
+  "proxy": "http://localhost:5000",
   "private": true,
   "homepage": ".",
   "dependencies": {
@@ -20,14 +21,9 @@
   },
   "scripts": {
     "start": "node -e \"process.env.REACT_APP_VERSION=require('../package.json').version; require('react-scripts/scripts/start');\"",
-    "dev": "cross-env REACT_APP_VERSION=$npm_package_version react-scripts start",
     "build": "node -e \"process.env.REACT_APP_VERSION=require('../package.json').version; require('react-scripts/scripts/build');\"",
-    "build:prod": "cross-env REACT_APP_VERSION=$npm_package_version react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
-  },
-  "devDependencies": {
-    "cross-env": "^7.0.3"
   },
   "eslintConfig": {
     "extends": [

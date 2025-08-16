@@ -5,6 +5,7 @@ function GenerateSupplierFiles() {
   const navigate = useNavigate();
   const [activePRs, setActivePRs] = useState([]);
   const [selectedPRId, setSelectedPRId] = useState("");
+  const [prSearch, setPrSearch] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
   const [downloadLinks, setDownloadLinks] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -26,6 +27,7 @@ function GenerateSupplierFiles() {
   const [oftOpen, setOftOpen] = useState(true);
   const [vendorSearch, setVendorSearch] = useState('');
   const [suppliersMap, setSuppliersMap] = useState({});
+  const [vendorOptions, setVendorOptions] = useState([]);
 
   // Fetch API key status
   useEffect(() => {
@@ -57,17 +59,28 @@ function GenerateSupplierFiles() {
     if (!window.api || !window.api.getPurchaseRequests) return;
     window.api.getPurchaseRequests(true, undefined)
       .then(res => {
-        setActivePRs(res);
-        // Auto-select the highest PUR number (most recent)
-        if (res && res.length > 0) {
-          // Sort by ID to find the highest (assuming ID format like PUR00001, PUR00002, etc.)
-          const sortedPRs = [...res].sort((a, b) => {
-            const idA = (a.id || a._id || '').toString();
-            const idB = (b.id || b._id || '').toString();
-            return idB.localeCompare(idA);
-          });
+        // Sort PRs so the biggest PO number appears first in the select.
+        // We try to extract a numeric portion from pr.pr_id / pr.name / pr.id and sort by that.
+        const extractNum = (pr) => {
+          const s = String(pr.pr_id || pr.name || pr.id || pr._id || '');
+          const m = s.match(/(\d+)/);
+          if (m) return parseInt(m[1], 10);
+          const n = Number(s);
+          return Number.isFinite(n) ? n : 0;
+        };
+
+        const sortedPRs = (res || []).slice().sort((a, b) => {
+          return extractNum(b) - extractNum(a);
+        });
+
+        setActivePRs(sortedPRs);
+
+        // Auto-select the highest PR if none selected and populate search text
+        if (sortedPRs && sortedPRs.length > 0) {
           const highestPR = sortedPRs[0];
-          setSelectedPRId((highestPR.id || highestPR._id).toString());
+          const label = highestPR.name ? highestPR.name : `PO #${highestPR.id || highestPR._id}`;
+          setSelectedPRId((highestPR.id || highestPR._id || '').toString());
+          setPrSearch(label);
         }
       })
       .catch(() => setActivePRs([]));
@@ -171,6 +184,46 @@ function GenerateSupplierFiles() {
       setEmailMode(false);
     }
   }, [selectedPRId, activePRs]);
+
+  // Compute vendor suggestion options for the vendor search datalist
+  useEffect(() => {
+    try {
+      const set = new Set();
+      // From email settings (explicit vendor list)
+      Object.keys(emailSettings.vendorEmails || {}).forEach(v => { if (v) set.add(v); });
+
+      // From generated/download links (vendors + parsed filenames)
+      (downloadLinks || []).forEach(f => {
+        if (!f) return;
+        if (f.vendor) set.add(f.vendor);
+        const fname = (f.file || f.filename || '').toString();
+        if (fname) {
+          const vendorFromFile = fname.split('_')[0] || fname.split('.')[0];
+          if (vendorFromFile) set.add(vendorFromFile);
+        }
+      });
+
+      // From active PR items for the selected PR
+      try {
+        const pr = activePRs && activePRs.find(pr => (pr.id || pr._id).toString() === selectedPRId);
+        if (pr && pr.items) {
+          pr.items.forEach(item => {
+            const name = getSupplierName(item);
+            if (name) set.add(name);
+          });
+        }
+      } catch (e) { /* ignore */ }
+
+      // From suppliersMap values
+      Object.values(suppliersMap || {}).forEach(v => { if (v) set.add(v); });
+
+      const arr = Array.from(set).filter(Boolean).sort((a, b) => a.toString().localeCompare(b.toString()));
+      setVendorOptions(arr);
+    } catch (e) {
+      console.warn('Failed to compute vendor options', e);
+      setVendorOptions([]);
+    }
+  }, [emailSettings, downloadLinks, activePRs, selectedPRId, suppliersMap]);
 
   // Helper to get supplier display name from item (prefer supplier_id lookup)
   const getSupplierName = (item) => {
@@ -1564,6 +1617,15 @@ Website: www.goodlifeclinic.com`
 
   return (
     <div className="center-card">
+      {/* Hide native browser clear/cancel buttons for the vendor search input */}
+      <style>{`
+        /* WebKit clear button */
+        #gsf-vendor-search::-webkit-search-cancel-button { display: none; }
+        #gsf-vendor-search::-webkit-search-decoration { display: none; }
+        /* IE/Edge clear/reveal buttons */
+        #gsf-vendor-search::-ms-clear { display: none; }
+        #gsf-vendor-search::-ms-reveal { display: none; }
+      `}</style>
   {/* UI cleaned: debug panel removed */}
       <button
         type="button"
@@ -1702,14 +1764,21 @@ Website: www.goodlifeclinic.com`
           {/* Vendor search (single plain input) */}
           <div data-gsf-filter-area style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginBottom: 12 }}>
             <span style={{ height: 48, display: 'flex', alignItems: 'center', paddingLeft: 12, paddingRight: 12, boxSizing: 'border-box', fontWeight: 600 }}>Filter:</span>
-            <input
-              id="gsf-vendor-search"
-              type="text"
-              placeholder="Vendor name or filename"
-              value={vendorSearch}
-              onChange={e => setVendorSearch(e.target.value)}
-              style={{ height: 40, padding: '0 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box', width: '100%', maxWidth: 640 }}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: 640 }}>
+              <input
+                id="gsf-vendor-search"
+                list="vendor-options"
+                type="text"
+                placeholder="Vendor name or filename"
+                value={vendorSearch}
+                onChange={e => setVendorSearch(e.target.value)}
+                style={{ height: 40, padding: '0 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box', width: '100%' }}
+              />
+              <datalist id="vendor-options">
+                {vendorOptions.map((v, i) => <option key={i} value={v} />)}
+              </datalist>
+              {/* Clear button removed to avoid duplicate/extra cancel control next to the input */}
+            </div>
           </div>
 
           {/* Excel group */}
