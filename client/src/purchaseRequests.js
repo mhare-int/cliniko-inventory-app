@@ -270,7 +270,7 @@ function PurchaseRequests() {
   const getReceiveType = (pr) => {
     const receivedArr = getReceivedArr(pr);
     const allMatch = pr.items.every(
-      (item, idx) => Number(receivedArr[idx]) === (
+      (item, idx) => Number(receivedArr[idx]) >= (
         typeof item["outstanding"] !== "undefined"
           ? item["outstanding"]
           : ((item["No. to Order"] ?? item.no_to_order ?? 0) - (item["received_so_far"] ?? item.received_so_far ?? 0))
@@ -283,7 +283,7 @@ function PurchaseRequests() {
   const getButtonColor = (pr) => {
     const receivedArr = getReceivedArr(pr);
     const allMatch = pr.items.every(
-      (item, idx) => Number(receivedArr[idx]) === (
+      (item, idx) => Number(receivedArr[idx]) >= (
         typeof item["outstanding"] !== "undefined"
           ? item["outstanding"]
           : ((item["No. to Order"] ?? item.no_to_order ?? 0) - (item["received_so_far"] ?? item.received_so_far ?? 0))
@@ -773,7 +773,6 @@ function PurchaseRequests() {
                                       <input
                                         type="number"
                                         min={0}
-                                        max={maxQty}
                                         value={val}
                                         onChange={e => handleLineChange(pr.id, idx, e.target.value)}
                                         style={{
@@ -1007,7 +1006,6 @@ function PurchaseRequests() {
                                 <input
                                   type="number"
                                   min={0}
-                                  max={outstanding}
                                   value={val}
                                   onChange={e => handleVendorLineChange(vendor, idx, e.target.value)}
                                   style={{
