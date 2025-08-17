@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import SuppliersManagement from './SuppliersManagement';
 import EmailTemplateManagement from './EmailTemplateManagement';
+import PoTemplates from './PoTemplates';
 
 function EmailSupplierManagement(props) {
   const [activeSubTab, setActiveSubTab] = useState('suppliers');
 
   const subTabs = [
-    { id: 'suppliers', label: 'Suppliers', component: SuppliersManagement },
-    { id: 'email', label: 'Email Templates', component: EmailTemplateManagement }
+  { id: 'suppliers', label: 'Suppliers', component: SuppliersManagement },
+  { id: 'email', label: 'Email Templates', component: EmailTemplateManagement },
+  { id: 'po_templates', label: 'PO Templates', component: PoTemplates }
   ];
 
   const renderSubTabContent = () => {

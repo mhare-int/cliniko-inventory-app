@@ -65,24 +65,159 @@ const createSupplierOrderFiles = require('./createSupplierOrderFiles');
  * @param {string} outputFolder - Absolute path to the folder where supplier subfolders/files will be created
  * @returns {Promise<{message: string, files: string[]}>}
  */
-function createSupplierOrderFilesForVendors(items, outputFolder) {
+function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format: 'html' }) {
   return new Promise(async (resolve, reject) => {
     if (!Array.isArray(items) || items.length === 0) {
       return reject({ error: 'No items provided' });
     }
-    if (!outputFolder || typeof outputFolder !== 'string') {
-      return reject({ error: 'No output folder specified' });
+    // Allow preview-only mode where no output folder is required
+    const isPreview = opts && opts.previewOnly === true;
+    if (!isPreview) {
+      if (!outputFolder || typeof outputFolder !== 'string') {
+        return reject({ error: 'No output folder specified' });
+      }
     }
     try {
+  // Log invocation for debugging
+  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] createSupplierOrderFilesForVendors called with items=${items.length}, outputFolder=${outputFolder}, opts=${JSON.stringify(opts)}\n`); } catch (e) {}
       // Ensure output folder exists
-      if (!fs.existsSync(outputFolder)) {
-        fs.mkdirSync(outputFolder, { recursive: true });
+      if (!isPreview) {
+        if (!fs.existsSync(outputFolder)) {
+          fs.mkdirSync(outputFolder, { recursive: true });
+        }
       }
+
+      // If we have a PR identifier (either explicitly in opts.prId or embedded in the incoming items
+      // as a 'PUR Number' field), prefer to load the authoritative item rows from the DB so we
+      // include fields like unit_cost and line_total that the renderer may not have passed through.
+      try {
+        let prIdCandidate = null;
+        if (opts && opts.prId) prIdCandidate = String(opts.prId);
+        else if (Array.isArray(items) && items.length > 0) {
+          const first = items[0];
+          if (first && (first['PUR Number'] || first.pr_id || first.prId || first.PRNumber)) {
+            prIdCandidate = String(first['PUR Number'] || first.pr_id || first.prId || first.PRNumber);
+          }
+        }
+
+        if (prIdCandidate) {
+          try {
+            // load purchase_request_items for this PR and map them into the shape expected by the generator
+            const dbItems = await new Promise((res, rej) => {
+              db.all('SELECT * FROM purchase_request_items WHERE pr_id = ? ORDER BY id', [prIdCandidate], (err, rows) => {
+                if (err) return rej(err);
+                return res(rows || []);
+              });
+            });
+            if (Array.isArray(dbItems) && dbItems.length > 0) {
+              // map DB rows to generator-friendly objects
+              items = dbItems.map(r => ({
+                'PUR Number': prIdCandidate,
+                'Product Name': r.product_name || r.productName || r.name || '',
+                'Supplier Name': r.supplier_name || r.supplierName || r.vendor || '',
+                'No. to Order': r.no_to_order ?? r.quantity ?? r.qty ?? 0,
+                'Quantity': r.quantity ?? r.no_to_order ?? r.qty ?? 0,
+                'unit_cost': r.unit_cost ?? r.unitprice ?? r.unit_price ?? r.unitPrice ?? 0,
+                'line_total': r.line_total ?? r.lineTotal ?? r.total ?? 0,
+                // preserve any original fields where useful
+                original_row: r
+              }));
+              try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Loaded ${items.length} items for prId=${prIdCandidate} from DB before generating files\n`); } catch (e) {}
+            }
+          } catch (e) {
+            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Could not load PR items for ${prIdCandidate}: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+          }
+        }
+      } catch (e) {
+        // swallow - we'll attempt generation with whatever items we have
+      }
+
       // Call the utility (assumed to return a Promise)
-      const files = await createSupplierOrderFiles(items, outputFolder);
-      resolve({ message: 'Supplier order files created', files });
+      // createSupplierOrderFiles should support previewOnly and return a string/html when previewOnly=true
+  const result = await createSupplierOrderFiles(items, outputFolder, opts);
+      if (isPreview) {
+        // In preview mode, return whatever the generator returns directly
+        return resolve(result);
+      }
+  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] createSupplierOrderFiles generated ${Array.isArray(result)?result.length:'?'} files\n`); } catch (e) {}
+
+      // If a purchase request ID (prId) was provided by the caller and this is not a preview run,
+      // automatically mark the generated files in the vendor_files table so dev-server (non-Electron)
+      // workflows still have their generated files recorded.
+      try {
+        if (opts && opts.prId && !isPreview) {
+          const prId = String(opts.prId);
+          const createdArray = Array.isArray(result) ? result : (result && Array.isArray(result.files) ? result.files : []);
+          if (createdArray.length > 0) {
+            for (const entry of createdArray) {
+              try {
+                // entry may be an object like { supplier, path, file, pdfPath } or a string path
+                const rawCandidate = (entry && (entry.path || entry.pdfPath || entry.file || entry.filename)) || (typeof entry === 'string' ? entry : null);
+                // Resolve relative paths against the outputFolder so we get an absolute path when possible
+                let absPath = null;
+                if (rawCandidate) {
+                  try {
+                    if (path.isAbsolute(rawCandidate)) {
+                      absPath = path.normalize(rawCandidate);
+                    } else if (outputFolder) {
+                      absPath = path.normalize(path.join(outputFolder, rawCandidate));
+                    } else {
+                      absPath = path.normalize(rawCandidate);
+                    }
+                  } catch (e) {
+                    absPath = path.normalize(String(rawCandidate));
+                  }
+                }
+
+                // Prefer supplier explicitly returned by generator; fall back to vendor/vendorName or derive from filename
+                const rawSupplier = (entry && (entry.supplier || entry.vendor || entry.vendorName || entry.supplierName)) || null;
+                let supplierName = rawSupplier ? String(rawSupplier).trim() : null;
+
+                const filename = absPath ? path.basename(absPath) : (entry && (entry.file || entry.filename)) || (typeof entry === 'string' ? path.basename(entry) : null) || null;
+                if (!supplierName) {
+                  if (filename && filename.indexOf('_') !== -1) {
+                    supplierName = filename.split('_')[0];
+                  } else {
+                    supplierName = 'Unknown Supplier';
+                  }
+                }
+                const ext = (filename && path.extname(filename).toLowerCase()) || '';
+                let fileType = 'other';
+                if (ext === '.pdf') fileType = 'pdf';
+                else if (ext === '.html' || ext === '.htm') fileType = 'html';
+                else if (ext === '.oft') fileType = 'oft';
+                else if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') fileType = 'excel';
+
+                // Try to get file size if possible
+                let size = 0;
+                try {
+                  const stats = absPath ? await getFileStats(absPath) : null;
+                  if (stats && stats.size) size = stats.size;
+                } catch (e) {
+                  // ignore stat errors
+                }
+
+                // Mark in DB (uses existing helper)
+                try {
+                  await markVendorFilesCreated(prId, supplierName, fileType, filename, absPath, size);
+                  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-marked vendor file for prId=${prId}, vendor=${supplierName}, filename=${filename}\n`); } catch (e) {}
+                } catch (e) {
+                  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark vendor file ERROR: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+                }
+              } catch (e) {
+                try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark inner loop ERROR: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+              }
+            }
+          }
+        }
+      } catch (e) {
+        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark vendor files batch error: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+      }
+
+  resolve({ message: 'Supplier order files created', files: result });
     } catch (err) {
-      reject({ error: 'Failed to create supplier order files', details: err.message || err });
+  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] createSupplierOrderFilesForVendors ERROR: ${err && err.message ? err.message : err}\n`); } catch (e) {}
+  reject({ error: 'Failed to create supplier order files', details: err.message || err });
     }
   });
 }
@@ -137,6 +272,112 @@ function setSessionTimeout(hours) {
     });
   });
 }
+
+// --- Generic App Settings ---
+function getAppSetting(key) {
+  return new Promise((resolve, reject) => {
+    if (!key) return reject({ error: 'Missing key' });
+    db.get('SELECT value FROM settings WHERE key = ?', [key], (err, row) => {
+      if (err) return reject({ error: 'DB error', details: err.message || err });
+      resolve({ key, value: row ? row.value : null });
+    });
+  });
+}
+
+function setAppSetting(key, value) {
+  return new Promise((resolve, reject) => {
+    if (!key) return reject({ error: 'Missing key' });
+    try {
+      const ts = new Date().toISOString();
+      db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [key, String(value), ts], function (err) {
+        if (err) return reject({ error: 'DB error', details: err.message || err });
+        resolve({ success: true, key });
+      });
+    } catch (e) {
+      reject({ error: 'Failed to set setting', details: e.message });
+    }
+  });
+}
+
+// Gather PO template options: company profile and saved PO/email template
+function gatherPoTemplateOptions() {
+  return new Promise(async (resolve) => {
+    try {
+  const keys = ['company.name','company.address','company.phone','company.email','company.logo','company.special_instructions'];
+      const results = {};
+      for (const k of keys) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const r = await getAppSetting(k);
+          results[k] = r && r.value ? r.value : null;
+        } catch (e) {
+          results[k] = null;
+        }
+      }
+      // Get saved template (if any). Prefer an explicit active template saved in settings (po.activeTemplate)
+      let template = null;
+      try {
+        const activeTpl = await getAppSetting('po.activeTemplate');
+        if (activeTpl && activeTpl.value) {
+          try {
+            template = JSON.parse(activeTpl.value);
+          } catch (e) {
+            template = null;
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+          // Prefer a dedicated PO template stored in the DB
+          if (!template) {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              template = await getPoTemplate();
+            } catch (e) {
+              template = null;
+            }
+          }
+
+          // Fallback to generic email template (for backward compatibility)
+          if (!template) {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              template = await getEmailTemplate();
+            } catch (e) {
+              template = null;
+            }
+          }
+
+          // Ignore known placeholder templates that came from older versions or accidental saves
+          try {
+            if (template && (typeof template.body === 'string')) {
+              const b = template.body.trim();
+              if (b === '...PO body...' || b === '...PO body...\n' || b.length === 0) {
+                template = null;
+              }
+            }
+            // Also ignore when the template HTML field contains the placeholder
+            if (template && template.html && typeof template.html === 'string' && template.html.indexOf('...PO body...') !== -1) {
+              template = null;
+            }
+          } catch (e) {
+            // ignore any issues while sanitizing template
+            template = template;
+          }
+
+      resolve({ company: {
+        name: results['company.name'] || null,
+        address: results['company.address'] || null,
+        phone: results['company.phone'] || null,
+        email: results['company.email'] || null,
+        logo: results['company.logo'] || null,
+        special_instructions: results['company.special_instructions'] || null
+      }, template });
+    } catch (e) {
+      resolve({ company: {}, template: null });
+    }
+  });
+}
 // --- Update stock from Cliniko API ---
 const https = require('https');
 const { URL } = require('url');
@@ -154,9 +395,9 @@ function syncProductsFromCliniko() {
       // Format as Basic Auth: 'Basic ' + base64(token + ':')
       const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
       const headers = {
-        'Authorization': authHeader,
-        'Accept': 'application/json',
-        'User-Agent': 'MyAPP (mitch.hare34@gmail.com)'
+          'Authorization': authHeader,
+          'Accept': 'application/json',
+          'User-Agent': 'StockProcurementApp'
       };
 
       function fetchPage(url) {
@@ -226,17 +467,21 @@ function syncProductsFromCliniko() {
                 const barcode = product.serial_number || product.barcode || '';
                 // Use the correct Cliniko field for supplier name
                 const supplier_name = product.product_supplier_name || '';
-                
-                // Use UPSERT to avoid duplicates and correctly update existing rows
-                db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level)
-                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0))
+
+                // Derive unit price from likely Cliniko fields (prefer cost_price)
+                const unit_price = (product.cost_price || product.sell_price || product.price || product.unit_price || product.standard_price || 0);
+
+                // Use UPSERT to avoid duplicates and correctly update existing rows (including unit_price)
+                db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level, unit_price)
+                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0), ?)
                         ON CONFLICT(cliniko_id) DO UPDATE SET
                           name=excluded.name,
                           barcode=excluded.barcode,
                           stock=excluded.stock,
                           supplier_name=excluded.supplier_name,
-                          reorder_level=COALESCE(products.reorder_level, excluded.reorder_level)`,
-                  [cliniko_id, name, barcode, stock, supplier_name, cliniko_id], 
+                          reorder_level=COALESCE(products.reorder_level, excluded.reorder_level),
+                          unit_price=excluded.unit_price`,
+                  [cliniko_id, name, barcode, stock, supplier_name, cliniko_id, unit_price], 
                   function(err) {
                     if (err) {
                       console.error('Error upserting product:', err, 'Product:', product);
@@ -358,7 +603,7 @@ function updateStockFromCliniko() {
                 if (s && String(s).trim() !== '') uniqueSuppliers.add(String(s).trim());
               });
 
-              // Update local DB stock and barcode for each product
+              // Update local DB stock, barcode and unit_price for each product
               let updated = 0;
               let total = cliniko_list.length;
               if (total === 0) return resolve({ message: 'No products to update', total: 0, suppliers_updated: 0 });
@@ -366,7 +611,16 @@ function updateStockFromCliniko() {
                 const cliniko_id = prod['Id'];
                 const stock = prod['Stock'] || 0;
                 const barcode = prod['Barcode'] || '';
-                db.run('UPDATE products SET stock=?, barcode=? WHERE cliniko_id=?', [stock, barcode, cliniko_id], (err2) => {
+                // Attempt to find unit price from the original allProducts array by id
+                let unit_price = 0;
+                try {
+                  const orig = allProducts.find(p => String(p.id) === String(cliniko_id));
+                  if (orig) unit_price = (orig.cost_price || orig.sell_price || orig.price || orig.unit_price || orig.standard_price || 0);
+                } catch (e) {
+                  unit_price = 0;
+                }
+
+                db.run('UPDATE products SET stock=?, barcode=?, unit_price=? WHERE cliniko_id=?', [stock, barcode, unit_price, cliniko_id], (err2) => {
                   updated++;
                   if (updated === total) {
                     // After updating all products, attempt to auto-populate suppliers (respect admin setting)
@@ -1262,42 +1516,93 @@ function createPurchaseRequest(data) {
       db.run('INSERT INTO purchase_requests (pr_id, date_created, received) VALUES (?, ?, ?)', [pr_id, date_created, 0], function (err2) {
         if (err2) return reject(err2);
         const items = data.items || [];
-        let pending = items.length;
-        if (pending === 0) return resolve({ id: pr_id });
-        items.forEach(item => {
-          const product_id = item.Id || item.id || item.product_id || null;
-          const product_name = item['Product Name'] || item.name || item.product_name || '';
-          const supplier_name = item['Supplier Name'] || item.supplier_name || '';
-          const supplier_id = item['Supplier Id'] || item.supplier_id || item.supplierId || null;
-          const no_to_order = item['No. to Order'] || item.no_to_order || item.qty || item.quantity || 0;
-          const quantity = item.quantity || no_to_order;
+        if (!items || items.length === 0) return resolve({ id: pr_id });
 
-          // Try the full insert (newer schemas). If it fails (old DB), fall back to a minimal insert.
-          db.run(
-            `INSERT INTO purchase_request_items (pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity, received, received_so_far, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-            [pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity],
-            function (insertErr) {
-              if (insertErr) {
-                console.warn('Full insert into purchase_request_items failed, attempting fallback insert. Error:', insertErr.message);
-                // Fallback: insert into minimal columns for older DBs (avoid created_at here)
-                db.run(
-                  `INSERT INTO purchase_request_items (pr_id, product_name, quantity, received)
-                   VALUES (?, ?, ?, 0)`,
-                  [pr_id, product_name, quantity],
-                  (fallbackErr) => {
-                    if (fallbackErr) {
-                      console.error('Fallback insert into purchase_request_items also failed:', fallbackErr.message);
-                    }
-                    if (--pending === 0) resolve({ id: pr_id });
-                  }
-                );
-              } else {
-                if (--pending === 0) resolve({ id: pr_id });
-              }
+        // Prepare list of product IDs to prefetch unit_price
+        const productIds = Array.from(new Set(items.map(it => (it.Id || it.id || it.product_id)).filter(Boolean)));
+
+        const finalizeInsertions = (priceMap) => {
+          let pending = items.length;
+          let prTotal = 0;
+
+          items.forEach(item => {
+            const product_id = item.Id || item.id || item.product_id || null;
+            const product_name = item['Product Name'] || item.name || item.product_name || '';
+            const supplier_name = item['Supplier Name'] || item.supplier_name || '';
+            const supplier_id = item['Supplier Id'] || item.supplier_id || item.supplierId || null;
+            const no_to_order = item['No. to Order'] || item.no_to_order || item.qty || item.quantity || 0;
+            const quantity = item.quantity || no_to_order;
+
+            // Determine unit cost: prefer explicit item cost fields (including item.unit_cost), fallback to prefetched products.unit_price
+            let unit_cost = Number(item.unit_cost ?? item.unitCost ?? item.cost_price ?? item.unit_price ?? item.cost ?? 0) || 0;
+            if (!unit_cost && product_id && priceMap && priceMap[product_id]) {
+              unit_cost = Number(priceMap[product_id]) || unit_cost;
             }
-          );
-        });
+            const line_total = Number((unit_cost || 0) * (quantity || 0)) || 0;
+            prTotal += line_total;
+
+            // Try full insert; if DB lacks new columns, fallback to minimal insert
+            db.run(
+              `INSERT INTO purchase_request_items (pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity, unit_cost, line_total, received, received_so_far, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity, unit_cost, line_total],
+              function (insertErr) {
+                if (insertErr) {
+                  // Insert failed — likely older DB missing unit_cost/line_total columns.
+                  // Try adding the missing columns and retry the full insert once before falling back.
+                  db.run(`ALTER TABLE purchase_request_items ADD COLUMN unit_cost REAL DEFAULT 0`, (alterErr1) => {
+                    // ignore duplicate column error
+                    db.run(`ALTER TABLE purchase_request_items ADD COLUMN line_total REAL DEFAULT 0`, (alterErr2) => {
+                      // Retry the full insert
+                      db.run(
+                        `INSERT INTO purchase_request_items (pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity, unit_cost, line_total, received, received_so_far, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                        [pr_id, product_id, product_name, supplier_name, supplier_id, no_to_order, quantity, unit_cost, line_total],
+                        function (retryErr) {
+                          if (retryErr) {
+                            // Still failing — fallback to minimal insert to preserve PR creation
+                            db.run(
+                              `INSERT INTO purchase_request_items (pr_id, product_name, quantity, received)
+                               VALUES (?, ?, ?, 0)`,
+                              [pr_id, product_name, quantity],
+                              (fallbackErr) => {
+                                if (fallbackErr) {
+                                  console.error('Fallback insert into purchase_request_items failed:', fallbackErr.message);
+                                }
+                                if (--pending === 0) {
+                                  db.run('UPDATE purchase_requests SET total_cost=? WHERE pr_id=?', [prTotal, pr_id], () => resolve({ id: pr_id, total_cost: prTotal }));
+                                }
+                              }
+                            );
+                          } else {
+                            if (--pending === 0) {
+                              db.run('UPDATE purchase_requests SET total_cost=? WHERE pr_id=?', [prTotal, pr_id], () => resolve({ id: pr_id, total_cost: prTotal }));
+                            }
+                          }
+                        }
+                      );
+                    });
+                  });
+                } else {
+                  if (--pending === 0) {
+                    db.run('UPDATE purchase_requests SET total_cost=? WHERE pr_id=?', [prTotal, pr_id], () => resolve({ id: pr_id, total_cost: prTotal }));
+                  }
+                }
+              }
+            );
+          });
+        };
+
+        if (productIds.length === 0) {
+          finalizeInsertions({});
+        } else {
+          const placeholders = productIds.map(() => '?').join(',');
+          db.all(`SELECT cliniko_id, unit_price FROM products WHERE cliniko_id IN (${placeholders})`, productIds, (errMap, rows) => {
+            const priceMap = {};
+            if (!errMap && Array.isArray(rows)) rows.forEach(r => { priceMap[String(r.cliniko_id)] = r.unit_price; });
+            finalizeInsertions(priceMap);
+          });
+        }
       });
     });
   });
@@ -1320,6 +1625,14 @@ function getPurchaseRequests(active_only, group_by) {
               'No. to Order': row.no_to_order,
               'received': row.received,
               'received_so_far': row.received_so_far,
+              'Unit Cost': row.unit_cost,
+              'Line Total': row.line_total,
+              // also expose snake_case keys for renderer convenience
+              unit_cost: row.unit_cost,
+              line_total: row.line_total,
+              no_to_order: row.no_to_order,
+              quantity: row.quantity,
+              product_id: row.product_id,
               'pr_id': pr.pr_id,
               'date_created': pr.date_created,
               'date_received': pr.date_received
@@ -1329,6 +1642,7 @@ function getPurchaseRequests(active_only, group_by) {
               date_created: pr.date_created,
               date_received: pr.date_received,
               received: pr.received,
+              total_cost: pr.total_cost || 0,
               items
             });
           });
@@ -1374,6 +1688,14 @@ function getPurchaseRequests(active_only, group_by) {
                 'No. to Order': row.no_to_order,
                 'received': row.received,
                 'received_so_far': row.received_so_far,
+                'Unit Cost': row.unit_cost,
+                'Line Total': row.line_total,
+                // snake_case aliases
+                unit_cost: row.unit_cost,
+                line_total: row.line_total,
+                no_to_order: row.no_to_order,
+                quantity: row.quantity,
+                product_id: row.product_id,
                 'pr_id': pr.pr_id,
                 'date_created': pr.date_created,
                 'date_received': pr.date_received
@@ -1384,6 +1706,7 @@ function getPurchaseRequests(active_only, group_by) {
               date_created: pr.date_created,
               date_received: pr.date_received,
               received: pr.received,
+              total_cost: pr.total_cost || 0,
               items
             });
             if (--pending === 0) {
@@ -1827,6 +2150,7 @@ const db = new sqlite3.Database(dbPath, async (err) => {
   -- Backwards-compatible columns: 'stock' and 'supplier_name' may be used by newer code
   stock INTEGER DEFAULT 0,
   supplier_name TEXT,
+  unit_price REAL DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`);
       
@@ -1836,8 +2160,9 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         date_created TEXT,
         date_received TEXT,
         received INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  total_cost REAL DEFAULT 0
       )`);
 
       // Purchase request items: include both legacy "quantity" and the app-expected fields
@@ -1851,6 +2176,8 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         supplier_id INTEGER,
         no_to_order INTEGER DEFAULT 0,
         quantity INTEGER DEFAULT 0,
+  unit_cost REAL DEFAULT 0,
+  line_total REAL DEFAULT 0,
         received INTEGER DEFAULT 0,
         received_so_far INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -1944,6 +2271,7 @@ const db = new sqlite3.Database(dbPath, async (err) => {
   // Flags for generated files on PRs
   db.run(`ALTER TABLE purchase_requests ADD COLUMN supplier_files_created INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding supplier_files_created to purchase_requests:', err); });
   db.run(`ALTER TABLE purchase_requests ADD COLUMN oft_files_created INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding oft_files_created to purchase_requests:', err); });
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN total_cost REAL DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding total_cost to purchase_requests:', err); });
 
   // purchase_request_items additions
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN product_id TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding product_id to purchase_request_items:', err); });
@@ -1951,6 +2279,8 @@ const db = new sqlite3.Database(dbPath, async (err) => {
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN supplier_id INTEGER`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding supplier_id to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN no_to_order INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding no_to_order to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN quantity INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding quantity to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN unit_cost REAL DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding unit_cost to purchase_request_items:', err); });
+  db.run(`ALTER TABLE purchase_request_items ADD COLUMN line_total REAL DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding line_total to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN received_so_far INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding received_so_far to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding created_at to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN updated_at TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding updated_at to purchase_request_items:', err); });
@@ -3245,6 +3575,59 @@ function getEmailTemplate() {
   });
 }
 
+// --- PO Template Functions (separate from email templates) ---
+function savePoTemplate(templateData) {
+  return new Promise((resolve, reject) => {
+    const { name = 'default', html, subject } = templateData || {};
+    // Create po_templates table
+    db.run(`CREATE TABLE IF NOT EXISTS po_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE,
+      html TEXT,
+      subject TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, (err) => {
+      if (err) return reject({ error: 'Failed to create po_templates table', details: err.message });
+
+      // Upsert by name
+      db.get('SELECT id FROM po_templates WHERE name = ?', [name], (err, row) => {
+        if (err) return reject({ error: 'DB error', details: err.message });
+        if (row) {
+          db.run('UPDATE po_templates SET html = ?, subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [html, subject, row.id], function (uErr) {
+            if (uErr) return reject({ error: 'Failed to update PO template', details: uErr.message });
+            resolve({ success: true, message: 'PO template updated' });
+          });
+        } else {
+          db.run('INSERT INTO po_templates (name, html, subject) VALUES (?, ?, ?)', [name, html, subject], function (iErr) {
+            if (iErr) return reject({ error: 'Failed to save PO template', details: iErr.message });
+            resolve({ success: true, message: 'PO template saved' });
+          });
+        }
+      });
+    });
+  });
+}
+
+function getPoTemplate(name = 'default') {
+  return new Promise((resolve, reject) => {
+    db.run(`CREATE TABLE IF NOT EXISTS po_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE,
+      html TEXT,
+      subject TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, (err) => {
+      if (err) return reject({ error: 'Failed to create po_templates table', details: err.message });
+      db.get('SELECT * FROM po_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1', [name], (err2, row) => {
+        if (err2) return reject({ error: 'Failed to fetch PO template', details: err2.message });
+        resolve(row || null);
+      });
+    });
+  });
+}
+
 // --- Smart Prompts Setting Functions ---
 function getSmartPromptsSetting() {
   return new Promise((resolve, reject) => {
@@ -3367,6 +3750,7 @@ function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, 
     if (!prId || !vendorName || !fileType || !filename) {
       return reject({ error: 'Missing required parameters' });
     }
+  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated called with prId=${prId}, vendor=${vendorName}, fileType=${fileType}, filename=${filename}, filePath=${filePath}\n`); } catch (e) {}
     
     // Ensure vendor_files table exists
     db.run(`CREATE TABLE IF NOT EXISTS vendor_files (
@@ -3392,9 +3776,11 @@ function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, 
         [prId, vendorName, fileType, filename, filePath, fileSize],
         function(err) {
           if (err) {
+            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated ERROR: ${err && err.message ? err.message : err}\n`); } catch (e) {}
             console.error('Error marking vendor files created:', err);
             return reject({ error: 'Failed to mark vendor files created', details: err.message });
           }
+          try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated success for prId=${prId}, vendor=${vendorName}, filename=${filename}\n`); } catch (e) {}
           resolve(true);
         }
       );
@@ -3538,6 +3924,7 @@ function getFileStats(filePath) {
 }
 
 module.exports = {
+  gatherPoTemplateOptions,
   getAllProducts,
   getAllProductsWithWrapper,
   addUser,
@@ -3603,6 +3990,12 @@ module.exports = {
   // Email template functions
   saveEmailTemplate,
   getEmailTemplate,
+  // PO template functions
+  savePoTemplate,
+  getPoTemplate,
+  // App settings
+  getAppSetting,
+  setAppSetting,
   // Smart Prompts setting functions
   getSmartPromptsSetting,
   setSmartPromptsSetting,

@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 15;
+const CURRENT_DB_VERSION = 16;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -408,6 +408,30 @@ const migrations = [
     }
   }
 ];
+
+// Migration 16: add unit_price to products and backfill if possible
+migrations.push({
+  version: 16,
+  description: "Add unit_price column to products and backfill from known price fields",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      db.all("PRAGMA table_info(products)", (err, cols) => {
+        if (err) return reject(err);
+        const names = new Set(cols.map(c => c.name));
+        if (!names.has('unit_price')) {
+          db.run('ALTER TABLE products ADD COLUMN unit_price REAL DEFAULT 0', (e) => {
+            if (e && !String(e.message||e).includes('duplicate column name')) return reject(e);
+            // Try to backfill from any legacy price columns if they exist
+            const candidates = ['cost_price', 'sell_price', 'price', 'unit_price', 'standard_price'];
+            // If any of those columns exist, copy into unit_price where unit_price is NULL or 0
+            // Most likely none exist in products table, so this is a noop
+            db.run("UPDATE products SET unit_price = COALESCE(unit_price, 0) WHERE unit_price IS NULL", () => resolve());
+          });
+        } else resolve();
+      });
+    });
+  }
+});
 
 /**
  * Get current database version

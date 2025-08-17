@@ -53,8 +53,10 @@ contextBridge.exposeInMainWorld('api', {
   },
   // Folder picker for output directory
   pickFolder: () => ipcRenderer.invoke('pickFolder'),
-  // Expose createSupplierOrderFilesForVendors to frontend
-  createSupplierOrderFilesForVendors: (items, outputFolder) => ipcRenderer.invoke('createSupplierOrderFilesForVendors', items, outputFolder),
+  // Expose createSupplierOrderFilesForVendors to frontend (accepts optional client options as 3rd arg)
+  createSupplierOrderFilesForVendors: (items, outputFolder, clientOpts) => ipcRenderer.invoke('createSupplierOrderFilesForVendors', items, outputFolder, clientOpts),
+  // Render PO preview using backend renderer (returns { success, html } )
+  renderPoPreview: (items, opts) => ipcRenderer.invoke('renderPoPreview', items, opts),
   // Send supplier emails using system default email client
   sendSupplierEmails: (emailData, outputFolder) => ipcRenderer.invoke('sendSupplierEmails', emailData, outputFolder),
   // Get active PURs for a barcode
@@ -104,6 +106,14 @@ contextBridge.exposeInMainWorld('api', {
   // Email template management APIs
   saveEmailTemplate: (templateData) => ipcRenderer.invoke('saveEmailTemplate', templateData),
   getEmailTemplate: () => ipcRenderer.invoke('getEmailTemplate'),
+  // PO template management APIs (separate)
+  savePoTemplate: (templateData) => ipcRenderer.invoke('savePoTemplate', templateData),
+  getPoTemplate: (name) => ipcRenderer.invoke('getPoTemplate', name),
+  // App settings and uploads
+  getAppSetting: (key) => ipcRenderer.invoke('getAppSetting', key),
+  setAppSetting: (key, value) => ipcRenderer.invoke('setAppSetting', key, value),
+  uploadFile: (fileObj) => ipcRenderer.invoke('uploadFile', fileObj),
+  listUploads: () => ipcRenderer.invoke('listUploads'),
   
   // Auto-updater APIs
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

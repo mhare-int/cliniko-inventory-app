@@ -1,14 +1,44 @@
 // --- Electron/Node.js requires at the very top ---
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
-const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 
-// Set up database path for production
-if (app.isPackaged) {
+// Try to load Electron APIs; if not running under Electron, provide safe stubs
+let app, BrowserWindow, ipcMain, dialog, Menu;
+let isElectron = false;
+try {
+  const _electron = require('electron');
+  // Ensure the required module actually exposes the properties we need
+  if (_electron && _electron.app && _electron.ipcMain) {
+    ({ app, BrowserWindow, ipcMain, dialog, Menu } = _electron);
+    isElectron = true;
+  } else {
+    throw new Error('Electron module present but missing expected properties');
+  }
+} catch (e) {
+  // not running under Electron - provide minimal stubs so requiring main.js in plain Node doesn't crash
+  app = {
+    isPackaged: false,
+    on: () => {},
+    getPath: () => process.cwd(),
+    getVersion: () => '0.0.0'
+  };
+  BrowserWindow = class {
+    constructor() { }
+    static fromId() { return null; }
+  };
+  ipcMain = { handle: (...args) => { /* no-op for plain Node requires */ } };
+  dialog = { showMessageBox: async () => {}, showErrorBox: () => {} };
+  Menu = { buildFromTemplate: () => ({}), setApplicationMenu: () => {} };
+}
+
+// electron-updater is required lazily inside initializeAutoUpdater (see below)
+let autoUpdater = null;
+
+// Set up database path for production when running under Electron packaged app
+if (isElectron && app && app.isPackaged) {
   const userDataPath = app.getPath('userData');
   const userDbPath = path.join(userDataPath, 'appdata.db');
-  
+
   // Copy initial database if it doesn't exist
   if (!fs.existsSync(userDbPath)) {
     // Copy from bundled version
@@ -24,9 +54,12 @@ if (app.isPackaged) {
       console.error('Bundled database not found at:', bundledDbPath);
     }
   }
-  
+
   // Set the environment variable for the backend
   process.env.DB_PATH = userDbPath;
+} else {
+  // Default DB path for non-packaged / plain Node runs
+  if (!process.env.DB_PATH) process.env.DB_PATH = path.join(__dirname, 'backend', 'appdata.db');
 }
 
 // Import backend logic (after setting DB_PATH)
@@ -38,13 +71,17 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Promise Rejection:', reason);
 });
 
-// Helper to log errors to a file in the user data directory
+// Helper to log errors to a file in the user data directory (safe when not running under Electron)
 function logErrorToFile(message) {
   try {
-    const logPath = path.join(app.getPath('userData'), 'backend-error.log');
-    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`);
+    if (isElectron && app && typeof app.getPath === 'function') {
+      const logPath = path.join(app.getPath('userData'), 'backend-error.log');
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`);
+    } else {
+      const logPath = path.join(process.cwd(), 'backend-error.log');
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`);
+    }
   } catch (e) {
-    // Fallback: console error
     console.error('Failed to write to backend-error.log:', e);
   }
 }
@@ -68,8 +105,8 @@ async function createWindow() {
     const htmlPath = path.join(__dirname, 'client', 'build', 'index.html');
     console.log('[Electron] Loading HTML from:', htmlPath);
     
-    // In development, try to connect to React dev server first
-    if (!app.isPackaged) {
+  // In development, try to connect to React dev server first
+  if (!app || !app.isPackaged) {
       try {
         console.log('[Electron] Development mode - attempting to connect to React dev server at http://localhost:3000');
         await mainWindow.loadURL('http://localhost:3000');
@@ -83,8 +120,8 @@ async function createWindow() {
       mainWindow.loadFile(htmlPath);
     }
     
-    // Open Developer Tools for debugging (only in development)
-    if (!app.isPackaged) {
+  // Open Developer Tools for debugging (only in development)
+  if (!app || !app.isPackaged) {
       mainWindow.webContents.openDevTools();
     }
     
@@ -190,12 +227,49 @@ ipcMain.handle('getActivePURsForBarcode', async (event, barcode) => {
 });
 
 // --- Supplier Order File Creation ---
-ipcMain.handle('createSupplierOrderFilesForVendors', async (event, items, outputFolder) => {
+ipcMain.handle('createSupplierOrderFilesForVendors', async (event, items, outputFolder, clientOpts) => {
   try {
-    return await db.createSupplierOrderFilesForVendors(items, outputFolder);
+    // Gather company/profile and template settings to pass into the generator
+    let opts = {};
+    try {
+      opts = await db.gatherPoTemplateOptions();
+    } catch (e) {
+      console.warn('Could not gather PO template options:', e && e.message ? e.message : e);
+    }
+  // Merge client-provided options (e.g. { format: 'pdf' }) with persisted options
+  const mergedOpts = Object.assign({}, opts, clientOpts || {});
+  return await db.createSupplierOrderFilesForVendors(items, outputFolder, mergedOpts);
   } catch (err) {
     logErrorToFile('createSupplierOrderFilesForVendors error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to create supplier order files', details: err.details || err.message || err };
+  }
+});
+
+// --- Render PO preview (returns rendered HTML string) ---
+// Log registration so we can confirm handler exists in running main process
+try { console.log('[IPC] Registering handler: renderPoPreview'); } catch(e) {}
+ipcMain.handle('renderPoPreview', async (event, items = [], opts = {}) => {
+  try {
+    // Gather persisted company/template options if available and merge with provided opts
+    let gathered = {};
+    try {
+      gathered = await db.gatherPoTemplateOptions();
+    } catch (e) {
+      console.warn('Could not gather PO template options for preview:', e && e.message ? e.message : e);
+    }
+
+    const mergedOpts = Object.assign({}, gathered, opts, { previewOnly: true });
+
+    const result = await db.createSupplierOrderFilesForVendors(items, null, mergedOpts);
+
+    // The generator returns the rendered HTML when previewOnly is true (string) or an object containing html
+    if (!result) return { success: false, error: 'No preview generated' };
+    if (typeof result === 'string') return { success: true, html: result };
+    if (result.html) return { success: true, html: result.html };
+    return { success: true, html: String(result) };
+  } catch (err) {
+    logErrorToFile('renderPoPreview error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { success: false, error: err && err.message ? err.message : JSON.stringify(err) };
   }
 });
 
@@ -263,8 +337,12 @@ async function initializeAutoUpdater() {
   }
 
   console.log('[Auto-Updater] Initializing auto-updater in production mode...');
-  
+
   try {
+    // Require electron-updater lazily so that requiring main.js in plain Node doesn't crash
+    const { autoUpdater: _autoUpdater } = require('electron-updater');
+    autoUpdater = _autoUpdater;
+
     const updateConfig = {
       provider: 'github',
       owner: 'mhare-int',
@@ -274,7 +352,7 @@ async function initializeAutoUpdater() {
 
     // Add GitHub token if available (required for private repos)
     let githubToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-    
+
     // If no environment token, try to get from database/settings
     if (!githubToken) {
       try {
@@ -291,7 +369,7 @@ async function initializeAutoUpdater() {
         logErrorToFile('Auto-updater token retrieval error: ' + err.message);
       }
     }
-    
+
     if (githubToken) {
       updateConfig.token = githubToken;
       console.log('[Auto-Updater] ✅ Using GitHub token for private repository access (length:', githubToken.length, ')');
@@ -376,9 +454,9 @@ app.on('ready', async () => {
   
   // Initialize auto-updater after app is ready and database is available
   await initializeAutoUpdater();
-  
+
   // Check for updates after initialization (in production only)
-  if (app.isPackaged) {
+  if (app && app.isPackaged) {
     setTimeout(() => {
       console.log('[Auto-Updater] Performing initial update check...');
       autoUpdater.checkForUpdatesAndNotify();
@@ -709,6 +787,55 @@ ipcMain.handle('getSmartPromptsSetting', async () => {
   }
 });
 
+// App settings handlers (company profile, logo path, etc.)
+ipcMain.handle('getAppSetting', async (event, key) => {
+  try {
+    return await db.getAppSetting(key);
+  } catch (err) {
+    logErrorToFile('getAppSetting error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get app setting' };
+  }
+});
+
+ipcMain.handle('setAppSetting', async (event, key, value) => {
+  try {
+    return await db.setAppSetting(key, value);
+  } catch (err) {
+    logErrorToFile('setAppSetting error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to set app setting' };
+  }
+});
+
+// Upload logo (base64 or binary buffer) - save under backend/uploads
+ipcMain.handle('uploadFile', async (event, fileObj) => {
+  try {
+    // fileObj: { name, content } where content is a base64 string
+    if (!fileObj || !fileObj.name || !fileObj.content) return { error: 'Invalid file data' };
+    const uploadsDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    const safeName = fileObj.name.replace(/[<>:\\/?%*|\"']/g, '_');
+    const filePath = path.join(uploadsDir, safeName);
+    const buffer = Buffer.isBuffer(fileObj.content) ? fileObj.content : Buffer.from(fileObj.content, 'base64');
+    fs.writeFileSync(filePath, buffer);
+    return { success: true, filename: safeName, path: filePath };
+  } catch (err) {
+    logErrorToFile('uploadFile error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to upload file' };
+  }
+});
+
+ipcMain.handle('listUploads', async () => {
+  try {
+    const uploadsDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadsDir)) return { files: [] };
+    const names = fs.readdirSync(uploadsDir).filter(n => fs.statSync(path.join(uploadsDir, n)).isFile());
+    return { files: names };
+  } catch (err) {
+    logErrorToFile('listUploads error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to list uploads' };
+  }
+});
+
 ipcMain.handle('setSmartPromptsSetting', async (event, enabled) => {
   try {
     return await db.setSmartPromptsSetting(enabled);
@@ -721,6 +848,30 @@ ipcMain.handle('setSmartPromptsSetting', async (event, enabled) => {
 // Email functionality - opens system default email client
 ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
   try {
+    // Persistent invocation log for debugging when sendSupplierEmails is called
+    try {
+      const logPath = path.join(__dirname, 'backend.log');
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] sendSupplierEmails called - emailCount=${Array.isArray(emailData)?emailData.length:0}, outputFolder=${outputFolder}\n`);
+    } catch (e) {
+      console.error('Could not write to backend.log:', e && e.message ? e.message : e);
+    }
+
+    // Also write a start marker into the outputFolder/oft-debug directory so we can see attempts
+    try {
+      if (outputFolder && typeof outputFolder === 'string') {
+        const debugDir = path.join(outputFolder, 'oft-debug');
+        if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+        const startFile = path.join(debugDir, `sendSupplierEmails_start_${new Date().toISOString().replace(/[:.]/g,'-')}.json`);
+        const sample = {
+          timestamp: new Date().toISOString(),
+          emailCount: Array.isArray(emailData) ? emailData.length : 0,
+          sampleEmails: Array.isArray(emailData) ? emailData.slice(0,3).map(e => ({ vendorName: e.vendorName, email: e.email })) : []
+        };
+        fs.writeFileSync(startFile, JSON.stringify(sample, null, 2), 'utf8');
+      }
+    } catch (e) {
+      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] sendSupplierEmails failed to write start marker: ${e && e.message ? e.message : e}\n`); } catch (ee) {}
+    }
     const { exec } = require('child_process');
     const util = require('util');
     const execPromise = util.promisify(exec);
@@ -766,7 +917,17 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
           const cleanVendorName = vendorName.replace(/[<>:"/\\|?*]/g, '_');
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
           const oftFilename = `${cleanVendorName}_Email_${timestamp}.oft`;
-          const oftFilePath = path.join(outputFolder, oftFilename);
+          // Prefer saving .oft files into the supplier-specific folder (same place POs are written)
+          let supplierFolder = path.join(outputFolder, cleanVendorName);
+          let useFolder = supplierFolder;
+          try {
+            if (!fs.existsSync(supplierFolder)) fs.mkdirSync(supplierFolder, { recursive: true });
+            console.log('DEBUG: Ensured supplier folder exists for OFT:', supplierFolder);
+          } catch (mkdirErr) {
+            console.log('WARNING: Could not create supplier folder for OFT, falling back to outputFolder:', mkdirErr && mkdirErr.message ? mkdirErr.message : mkdirErr);
+            useFolder = outputFolder;
+          }
+          const oftFilePath = path.join(useFolder, oftFilename);
 
           // Debug: Log attachment info
           console.log(`DEBUG: Processing ${vendorName}`);
@@ -779,73 +940,86 @@ ipcMain.handle('sendSupplierEmails', async (event, emailData, outputFolder) => {
             console.log(`DEBUG: No attachment file specified`);
           }
 
-          // Write PowerShell script to temp file - exactly like your working test script
-          const tempDir = require('os').tmpdir();
-          const scriptPath = path.join(tempDir, `oft_create_${timestamp}.ps1`);
-          
-          const powershellScript = `
+      // Write PowerShell script to temp file - exactly like your working test script
+      const tempDir = require('os').tmpdir();
+      const scriptPath = path.join(tempDir, `oft_create_${timestamp}.ps1`);
+
+      // Safer approach: write the email HTML to a temporary .html file and have PowerShell read it
+      const messageHtmlPath = path.join(tempDir, `oft_message_${timestamp}.html`);
+      try {
+      fs.writeFileSync(messageHtmlPath, message, 'utf8');
+      console.log('DEBUG: Wrote temporary message HTML to', messageHtmlPath);
+      } catch (writeErr) {
+      console.error('Failed to write temporary message HTML file:', writeErr);
+      }
+
+      // Escape backslashes for embedding into PowerShell script
+      const escapedMessageHtmlPath = (messageHtmlPath || '').replace(/\\/g, '\\\\');
+      const escapedAttachmentPath = attachmentFile ? (attachmentFile.replace(/\\/g, '\\\\')) : null;
+      const escapedOftPath = oftFilePath.replace(/\\/g, '\\\\');
+
+      const powershellScript = `
 try {
-    # Create Outlook application
-    $outlook = New-Object -ComObject Outlook.Application
+  # Create Outlook application
+  $outlook = New-Object -ComObject Outlook.Application
     
-    # Create mail item and set properties
-    $mail = $outlook.CreateItem(0)  # olMailItem
-    $mail.To = "${toEmail}"
-    $mail.Subject = "${subject}"
-    $mail.HTMLBody = @"
-${message}
-"@
+  # Create mail item and set properties
+  $mail = $outlook.CreateItem(0)  # olMailItem
+  $mail.To = "${toEmail}"
+  $mail.Subject = "${subject}"
+  # Read HTML body from temporary file to avoid here-string quoting issues
+  $mail.HTMLBody = Get-Content -Raw -Encoding UTF8 "${escapedMessageHtmlPath}"
     
-    ${attachmentFile ? `# Add attachment
-    $attachmentPath = "${attachmentFile.replace(/\\/g, '\\\\')}"
-    if (Test-Path $attachmentPath) {
-        $mail.Attachments.Add($attachmentPath)
-        Write-Host "Attachment added: $attachmentPath"
-    } else {
-        Write-Host "WARNING: Attachment file not found: $attachmentPath"
-    }` : '# No attachment specified'}
+  ${attachmentFile ? `# Add attachment
+  $attachmentPath = "${escapedAttachmentPath}"
+  if (Test-Path $attachmentPath) {
+    $mail.Attachments.Add($attachmentPath)
+    Write-Host "Attachment added: $attachmentPath"
+  } else {
+    Write-Host "WARNING: Attachment file not found: $attachmentPath"
+  }` : '# No attachment specified'}
     
-    $oftPath = "${oftFilePath.replace(/\\/g, '\\\\')}"
+  $oftPath = "${escapedOftPath}"
     
-    # Try different save format approaches (exactly like test_comprehensive_oft.ps1)
-    try {
-        # Method 1: Save as MSG first, then copy to OFT
-        $msgPath = $oftPath.Replace('.oft', '.msg')
-        $mail.SaveAs($msgPath, 3)  # olMSG = 3
+  # Try different save format approaches (exactly like test_comprehensive_oft.ps1)
+  try {
+    # Method 1: Save as MSG first, then copy to OFT
+    $msgPath = $oftPath.Replace('.oft', '.msg')
+    $mail.SaveAs($msgPath, 3)  # olMSG = 3
         
-        if (Test-Path $msgPath) {
-            # Copy and rename to .oft
-            Copy-Item $msgPath $oftPath -Force
-            Remove-Item $msgPath -Force
-            Write-Host "SUCCESS: OFT created via MSG method"
-        }
+    if (Test-Path $msgPath) {
+      # Copy and rename to .oft
+      Copy-Item $msgPath $oftPath -Force
+      Remove-Item $msgPath -Force
+      Write-Host "SUCCESS: OFT created via MSG method"
+    }
         
-    } catch {
-        # Method 2: Direct OFT save with error handling
-        Write-Host "MSG method failed, trying direct OFT save..."
-        $mail.SaveAs($oftPath, 5)  # olTemplate = 5
-        Write-Host "SUCCESS: OFT created via direct method"
-    }
+  } catch {
+    # Method 2: Direct OFT save with error handling
+    Write-Host "MSG method failed, trying direct OFT save..."
+    $mail.SaveAs($oftPath, 5)  # olTemplate = 5
+    Write-Host "SUCCESS: OFT created via direct method"
+  }
     
-    # Clean up COM objects
-    $mail = $null
-    $outlook = $null
+  # Clean up COM objects
+  $mail = $null
+  $outlook = $null
     
-    # Verify file was created and report size
-    if (Test-Path $oftPath) {
-        $fileInfo = Get-Item $oftPath
-        Write-Host "VERIFIED: OFT file exists - Size: $($fileInfo.Length) bytes"
-    } else {
-        Write-Host "ERROR: OFT file was not created"
-    }
+  # Verify file was created and report size
+  if (Test-Path $oftPath) {
+    $fileInfo = Get-Item $oftPath
+    Write-Host "VERIFIED: OFT file exists - Size: $($fileInfo.Length) bytes"
+  } else {
+    Write-Host "ERROR: OFT file was not created"
+  }
     
 } catch {
-    Write-Host "ERROR: $($_.Exception.Message)"
+  Write-Host "ERROR: $($_.Exception.Message)"
 }
 `;
 
-          // Write script to temp file
-          fs.writeFileSync(scriptPath, powershellScript, 'utf8');
+      // Write script to temp file
+      fs.writeFileSync(scriptPath, powershellScript, 'utf8');
           
           // Execute PowerShell script from file (like your test script)
           const { exec } = require('child_process');
@@ -859,12 +1033,48 @@ ${message}
           if (result.stderr) {
             console.log(`PowerShell errors: ${result.stderr}`);
           }
-          
-          // Clean up temp script file
+
+          // Write debug log into outputFolder (if available) so we can inspect PS output later
           try {
-            fs.unlinkSync(scriptPath);
+            const debugLogDir = outputFolder && typeof outputFolder === 'string' ? path.join(outputFolder, 'oft-debug') : require('os').tmpdir();
+            if (!fs.existsSync(debugLogDir)) fs.mkdirSync(debugLogDir, { recursive: true });
+            const debugLogPath = path.join(debugLogDir, `oft_debug_${cleanVendorName}_${timestamp}.log`);
+            const debugContents = [];
+            debugContents.push(`COMMAND: ${command}`);
+            debugContents.push(`--- POWERSHELL STDOUT ---\n`);
+            debugContents.push(result.stdout || '');
+            debugContents.push(`\n--- POWERSHELL STDERR ---\n`);
+            debugContents.push(result.stderr || '');
+            try {
+              fs.writeFileSync(debugLogPath, debugContents.join('\n'), 'utf8');
+              console.log(`DEBUG: Wrote PowerShell debug log: ${debugLogPath}`);
+            } catch (writeLogErr) {
+              console.log('Could not write debug log:', writeLogErr && writeLogErr.message ? writeLogErr.message : writeLogErr);
+            }
+          } catch (e) {
+            console.log('Failed to write PS debug log:', e && e.message ? e.message : e);
+          }
+
+          // Clean up temp script file and temp message HTML unless developer requested to keep them
+          try {
+            if (!process.env.KEEP_OFT_SCRIPTS || process.env.KEEP_OFT_SCRIPTS === '0') {
+              fs.unlinkSync(scriptPath);
+            } else {
+              console.log('DEBUG: Preserving temp PowerShell script because KEEP_OFT_SCRIPTS is set. Script path:', scriptPath);
+            }
           } catch (cleanupErr) {
             console.log(`Could not clean up temp script: ${cleanupErr.message}`);
+          }
+          try {
+            if (typeof messageHtmlPath !== 'undefined' && fs.existsSync(messageHtmlPath)) {
+              if (!process.env.KEEP_OFT_SCRIPTS || process.env.KEEP_OFT_SCRIPTS === '0') {
+                fs.unlinkSync(messageHtmlPath);
+              } else {
+                console.log('DEBUG: Preserving temp message HTML because KEEP_OFT_SCRIPTS is set. Path:', messageHtmlPath);
+              }
+            }
+          } catch (cleanupHtmlErr) {
+            console.log(`Could not clean up temp message HTML: ${cleanupHtmlErr.message}`);
           }
           
           // Verify file was created and check size (expecting ~16kb like test script)
@@ -878,6 +1088,7 @@ ${message}
               const oftFileObj = {
                 filename: oftFilename,
                 path: oftFilePath,
+                file: outputFolder ? path.relative(outputFolder, oftFilePath) : oftFilePath,
                 vendor: vendorName,
                 created: stats.birthtime || new Date(),
                 size: stats.size
@@ -910,9 +1121,11 @@ ${message}
         oftFiles: createdOftFiles, // Return only files created in this session
         errors: errors.length > 0 ? errors : undefined
       };
+      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] sendSupplierEmails SUCCESS - sentCount=${sentCount}, created=${createdOftFiles.length}\n`); } catch (e) {}
       console.log(`🔍 BACKEND DEBUG: Final response with ${createdOftFiles.length} OFT files:`, response);
       return response;
     } else {
+      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] sendSupplierEmails FAILURE - errors=${JSON.stringify(errors)}\n`); } catch (e) {}
       return { 
         success: false, 
         error: 'Failed to create any .oft files', 

@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Purchase Order - Medical Supplies Co</title>
+  <style>
+    body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 30px; color:#222 }
+    .top { display:flex; justify-content:space-between; align-items:flex-start }
+    .company-block { font-weight:700; font-size:18px }
+    .company-meta { margin-top:6px; font-size:0.95em }
+    .po-box { border:1px solid #2a7ae2; padding:12px; border-radius:6px; background:linear-gradient(180deg,#fff,#f7fbff) }
+    .po-title { color:#2a7ae2; font-size:20px; font-weight:700 }
+    .supplier-block { margin-top:18px; display:flex; justify-content:space-between }
+    .supplier-details { border:1px solid #e6e6e6; padding:12px; width:48% }
+    table.po-table { width:100%; border-collapse:collapse; margin-top:18px }
+    table.po-table th, table.po-table td { border:1px solid #ddd; padding:10px; }
+    table.po-table th { background:#f0f4fb; text-align:left }
+    .totals { margin-top:12px; float:right; width:320px; }
+    .totals table { width:100%; border-collapse:collapse }
+    .totals td { padding:6px }
+    .notes { clear:both; margin-top:36px; font-size:0.95em }
+    @media print { .no-print { display:none } }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div style="display:flex; align-items:flex-start; gap:14px">
+      
+      <div>
+        <div class="company-block">Good Life Clinic</div>
+        <div class="company-meta">123 Wellness Way<br/>Melbourne VIC 3000<br/>Phone: <br/>Email: </div>
+      </div>
+    </div>
+    <div class="po-box">
+      <div class="po-title">PURCHASE ORDER</div>
+      <div style="margin-top:6px">PO Number: <strong>PO1001</strong></div>
+      <div>Date: <strong>17/08/2025</strong></div>
+    </div>
+  </div>
+
+  <div class="supplier-block">
+    <div class="supplier-details">
+      <div style="font-weight:700">Supplier</div>
+      <div style="margin-top:6px">Medical Supplies Co</div>
+      <div style="margin-top:6px">Account Number: <strong>MSC-77</strong></div>
+    </div>
+    <div class="supplier-details">
+      <div style="font-weight:700">Delivery / Billing</div>
+      <div style="margin-top:6px">Good Life Clinic</div>
+      <div>123 Wellness Way<br/>Melbourne VIC 3000</div>
+    </div>
+  </div>
+
+  <table class="po-table">
+    <thead>
+      <tr>
+        <th style="width:6%">Line</th>
+        <th style="width:8%">Qty</th>
+        <th style="width:12%">Unit</th>
+        <th>Description</th>
+        <th style="width:14%">Unit Price</th>
+        <th style="width:14%">Line Total</th>
+      </tr>
+    </thead>
+    <tbody>
+<tr><td>1</td><td>50</td><td></td><td>Gloves Nitrile Medium</td><td style="text-align:right"></td><td style="text-align:right"></td></tr><tr><td>2</td><td>100</td><td></td><td>Surgical Mask</td><td style="text-align:right"></td><td style="text-align:right"></td></tr>
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <table>
+      <tr><td>Subtotal:</td><td style="text-align:right">0.00</td></tr>
+      <tr><td>GST:</td><td style="text-align:right">0.00</td></tr>
+      <tr><td style="font-weight:700">Total:</td><td style="text-align:right;font-weight:700">0.00</td></tr>
+    </table>
+  </div>
+
+  <div class="notes">
+    <strong>Special Instructions / Notes:</strong>
+    <div></div>
+    <div style="margin-top:12px">Please deliver to the address above. This purchase order is subject to our standard terms.</div>
+  </div>
+
+</body>
+</html>
