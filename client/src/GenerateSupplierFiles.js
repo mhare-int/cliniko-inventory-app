@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 function GenerateSupplierFiles() {
@@ -28,6 +28,8 @@ function GenerateSupplierFiles() {
   const [vendorSearch, setVendorSearch] = useState('');
   const [suppliersMap, setSuppliersMap] = useState({});
   const [vendorOptions, setVendorOptions] = useState([]);
+  // One-time debug guard to avoid spamming the console
+  const debugSupplierLoggedRef = useRef(false);
 
   // Fetch API key status
   useEffect(() => {
@@ -116,16 +118,40 @@ function GenerateSupplierFiles() {
         // Try to get email from suppliers database using the exact vendor name from the items
         try {
           const supplier = await window.api.getSupplierByName(vendorName);
+          // One-time debug: print the supplier object so we can inspect field names (account number etc.)
+          try {
+            if (!debugSupplierLoggedRef.current) {
+              console.log('DEBUG supplier object for', vendorName, supplier);
+              debugSupplierLoggedRef.current = true;
+            }
+          } catch (e) { /* ignore */ }
           const supplierEmail = (supplier && supplier.email) ? supplier.email : "";
           const contactName = (supplier && supplier.contact_name) ? supplier.contact_name : "";
           const specialInstructions = (supplier && supplier.special_instructions) ? supplier.special_instructions : "";
           
-          vendorEmailsObj[vendorName] = {
+          // Include account number (several possible field names in DB)
+          const accountNumber = supplier?.account_number || supplier?.customer_account_number || supplier?.customer_account || supplier?.account || '';
+          const infoObj = {
             email: supplierEmail,
             contactName: contactName,
             special_instructions: specialInstructions,
-            comments: supplier?.comments || ""
+            comments: supplier?.comments || "",
+            // provide both snake_case and camelCase keys so callers can access either
+            account_number: accountNumber,
+            accountNumber: accountNumber
           };
+          // Store under the original vendor name
+          vendorEmailsObj[vendorName] = infoObj;
+          // Also store under a cleaned vendor name (remove backslashes and trim) so lookups using cleaned names succeed
+          try {
+            const cleaned = (vendorName || '').toString().split('\\')[0].trim();
+            if (cleaned && cleaned !== vendorName) {
+              // Only set if not already present to avoid overwriting explicit entries
+              if (!vendorEmailsObj[cleaned]) vendorEmailsObj[cleaned] = infoObj;
+            }
+          } catch (e) {
+            // ignore
+          }
         } catch (err) {
           console.error(`Error getting supplier details for ${vendorName}:`, err);
           vendorEmailsObj[vendorName] = { email: "", contactName: "", special_instructions: "", comments: "" }; // Empty if supplier not found
@@ -332,6 +358,8 @@ function GenerateSupplierFiles() {
       const pr = activePRs.find(pr => (pr.id || pr._id).toString() === selectedPRId);
       if (!pr || !pr.items || pr.items.length === 0) throw new Error("Selected PR has no items.");
       
+  // We'll defer deletion of any existing generated files until we know new files were created.
+
       // Define purNumber at the top so it's available throughout the function
       const purNumber = pr.name || pr.number || pr.id || pr._id || "";
       
@@ -349,39 +377,16 @@ function GenerateSupplierFiles() {
       
       // Step 1: Create Excel files if requested
       if (createFiles) {
-        // Check if Excel files already exist for this PR and delete them
+        // Check if Excel files already exist for this PR (we will only delete them after new files are created)
         console.log('🔍 Checking for existing Excel files for PR:', pr.id);
         const existingExcelFiles = await window.api.getGeneratedFiles(pr.id, 'excel');
-        
         if (existingExcelFiles && existingExcelFiles.length > 0) {
-          console.log('🗑️ Found existing Excel files, deleting them before creating new ones');
-          console.log('📁 Deleting Excel files:', existingExcelFiles.map(f => f.filename));
-          
-          // Delete existing Excel files from database and disk
-          for (const existingFile of existingExcelFiles) {
-            try {
-              // Delete from database
-              await window.api.deleteGeneratedFile(pr.id, existingFile.vendor_name, 'excel', existingFile.filename);
-              console.log('✅ Deleted from database:', existingFile.filename);
-              
-              // Delete from disk if file path exists
-              if (existingFile.file_path) {
-                try {
-                  await window.api.deleteFileFromDisk(existingFile.file_path);
-                  console.log('✅ Deleted from disk:', existingFile.file_path);
-                } catch (diskErr) {
-                  console.warn('⚠️ Could not delete file from disk:', existingFile.file_path, diskErr);
-                }
-              }
-            } catch (deleteErr) {
-              console.error('❌ Error deleting existing file:', existingFile.filename, deleteErr);
-            }
-          }
+          console.log('ℹ️ Found existing Excel files; will delete them only after new files are successfully created:', existingExcelFiles.map(f => f.filename));
         }
         
         console.log('✅ Creating new Excel files');
         
-        // Create the actual files
+  // Create the actual files
         if (!window.api || !window.api.createSupplierOrderFilesForVendors) throw new Error("createSupplierOrderFilesForVendors not available");
         const vendorItems = pr.items.map(item => ({
           "PUR Number": purNumber,
@@ -399,6 +404,29 @@ function GenerateSupplierFiles() {
         });
         }
         alert("Orders sent to suppliers successfully!");
+
+        // If we previously found existing Excel files, delete them now that new files were created successfully
+        if (existingExcelFiles && existingExcelFiles.length > 0) {
+          console.log('\u26a0\ufe0f Deleting previous Excel files now that new ones were created:', existingExcelFiles.map(f => f.filename));
+          for (const existingFile of existingExcelFiles) {
+            try {
+              // Delete from database
+              await window.api.deleteGeneratedFile(pr.id, existingFile.vendor_name, 'excel', existingFile.filename);
+              console.log('\u2705 Deleted old Excel DB record:', existingFile.filename);
+            } catch (deleteErr) {
+              console.warn('\u26a0\ufe0f Could not delete old Excel DB record:', existingFile.filename, deleteErr);
+            }
+            // Delete from disk if file path exists
+            if (existingFile.file_path) {
+              try {
+                await window.api.deleteFileFromDisk(existingFile.file_path);
+                console.log('\u2705 Deleted old Excel from disk:', existingFile.file_path);
+              } catch (diskErr) {
+                console.warn('\u26a0\ufe0f Could not delete old Excel file from disk:', existingFile.file_path, diskErr);
+              }
+            }
+          }
+        }
         
         // Track Excel files in the database
         if (res && Array.isArray(res.files) && res.files.length > 0) {
@@ -549,6 +577,7 @@ The Good Life Clinic`;
                 .replace(/\{\{supplierEmail\}\}/g, vendorInfo.email || '')
                 .replace(/\{\{supplierContactName\}\}/g, vendorInfo.contactName || '')
                 .replace(/\{\{supplierInstructions\}\}/g, vendorInfo.special_instructions || vendorInfo.comments || '')
+                .replace(/\{\{supplierAccountNumber\}\}/g, vendorInfo.account_number || vendorInfo.accountNumber || '')
                 .replace(/\{\{orderTable\}\}/g, orderTableContent)
                 .replace(/\{\{currentDate\}\}/g, new Date().toLocaleDateString())
                 .replace(/\{\{companyName\}\}/g, 'The Good Life Clinic')
@@ -979,9 +1008,11 @@ Website: www.goodlifeclinic.com`
         // Check if this vendor has already had .oft files created for this purchase request
         try {
           const hasOftFiles = await window.api.hasVendorFilesCreated(pr.id || pr._id, cleanVendorName, 'oft');
-          if (hasOftFiles) {
+          // If we are in a recreate run (there are existing downloadLinks), allow overwrite
+          const isRecreate = Array.isArray(downloadLinks) && downloadLinks.some(f => f && f.type !== 'placeholder');
+          if (hasOftFiles && !isRecreate) {
             console.log('⚠️ Vendor already has .oft files created, skipping to avoid duplicates:', cleanVendorName);
-            continue; // Skip this vendor
+            continue; // Skip this vendor only if NOT recreating
           }
         } catch (error) {
           console.error('Error checking vendor .oft files status:', error);
@@ -1074,6 +1105,7 @@ Website: www.goodlifeclinic.com`
             .replace(/\{\{supplierEmail\}\}/g, actualVendorInfo.email || '')
             .replace(/\{\{supplierContactName\}\}/g, actualVendorInfo.contactName || '')
             .replace(/\{\{supplierInstructions\}\}/g, actualVendorInfo.special_instructions || actualVendorInfo.comments || '')
+            .replace(/\{\{supplierAccountNumber\}\}/g, actualVendorInfo.account_number || actualVendorInfo.accountNumber || '')
             .replace(/\{\{orderTable\}\}/g, orderTableContent)
             .replace(/\{\{currentDate\}\}/g, new Date().toLocaleDateString())
             .replace(/\{\{companyName\}\}/g, 'The Good Life Clinic')
@@ -1237,43 +1269,7 @@ ${supplierSpecificSignature}
         firstEmail: processedEmailData[0]
       });
 
-      // Delete existing .oft files for this PR before creating new ones
-      if (selectedPRId) {
-        console.log('🗑️ Checking for existing .oft files to delete for PR:', selectedPRId);
-        try {
-          const existingOftFiles = await window.api.getGeneratedFiles(selectedPRId, 'oft');
-          
-          if (existingOftFiles && existingOftFiles.length > 0) {
-            console.log('🗑️ Found existing .oft files, deleting them before creating new ones');
-            console.log('📁 Deleting .oft files:', existingOftFiles.map(f => f.filename));
-            
-            // Delete existing .oft files from database and disk
-            for (const existingFile of existingOftFiles) {
-              try {
-                // Delete from database
-                await window.api.deleteGeneratedFile(selectedPRId, existingFile.vendor_name, 'oft', existingFile.filename);
-                console.log('✅ Deleted .oft from database:', existingFile.filename);
-                
-                // Delete from disk if file path exists
-                if (existingFile.file_path) {
-                  try {
-                    await window.api.deleteFileFromDisk(existingFile.file_path);
-                    console.log('✅ Deleted .oft from disk:', existingFile.file_path);
-                  } catch (diskErr) {
-                    console.warn('⚠️ Could not delete .oft file from disk:', existingFile.file_path, diskErr);
-                  }
-                }
-              } catch (deleteErr) {
-                console.error('❌ Error deleting existing .oft file:', existingFile.filename, deleteErr);
-              }
-            }
-          } else {
-            console.log('✅ No existing .oft files found');
-          }
-        } catch (getFilesErr) {
-          console.error('❌ Error checking for existing .oft files:', getFilesErr);
-        }
-      }
+  // Defer deletion of existing .oft files until we confirm new .oft files were created successfully.
 
       const result = await window.api.sendSupplierEmails(processedEmailData, outputFolder);
       
@@ -1300,8 +1296,39 @@ ${supplierSpecificSignature}
         // Mark each vendor as having .oft files created in the database
         console.log('🔍 DEBUG: emailFiles from backend:', emailFiles);
         console.log('🔍 DEBUG: processedEmailData:', processedEmailData);
-        
-        for (const emailData of processedEmailData) {
+          // Before marking new files, delete any existing .oft files for these vendors so they are replaced cleanly
+          try {
+            const existingOftFiles = await window.api.getGeneratedFiles(pr.id || pr._id, 'oft');
+            if (existingOftFiles && existingOftFiles.length > 0) {
+              for (const emailData of processedEmailData) {
+                const vendorName = emailData.vendorName;
+                const matches = existingOftFiles.filter(f => f.vendor_name === vendorName || f.vendor === vendorName);
+                if (matches && matches.length > 0) {
+                  console.log('\u26a0\ufe0f Deleting previous .oft files for vendor before marking new ones:', vendorName, matches.map(m => m.filename));
+                  for (const m of matches) {
+                    try {
+                      await window.api.deleteGeneratedFile(pr.id || pr._id, m.vendor_name || m.vendor || vendorName, 'oft', m.filename);
+                      console.log('\u2705 Deleted old .oft DB record:', m.filename);
+                    } catch (delErr) {
+                      console.warn('Could not delete old .oft DB record:', m, delErr);
+                    }
+                    if (m.file_path) {
+                      try {
+                        await window.api.deleteFileFromDisk(m.file_path);
+                        console.log('\u2705 Deleted old .oft from disk:', m.file_path);
+                      } catch (diskErr) {
+                        console.warn('Could not delete old .oft file from disk:', m.file_path, diskErr);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch (cleanupErr) {
+            console.warn('Failed to clean up existing .oft files before marking new ones:', cleanupErr);
+          }
+
+          for (const emailData of processedEmailData) {
           try {
             // Find the corresponding file that was created for this vendor
             console.log('🔍 DEBUG: Looking for vendor:', emailData.vendorName);
@@ -1452,8 +1479,9 @@ Website: www.goodlifeclinic.com`
         .replace(/\{\{orderNumber\}\}/g, purNumber)
         .replace(/\{\{supplierName\}\}/g, supplierName)
         .replace(/\{\{supplierEmail\}\}/g, vendorEmailsObj[supplierName]?.email || '')
-        .replace(/\{\{supplierContactName\}\}/g, vendorEmailsObj[supplierName]?.contactName || '')
-        .replace(/\{\{supplierInstructions\}\}/g, vendorEmailsObj[supplierName]?.special_instructions || vendorEmailsObj[supplierName]?.comments || '')
+  .replace(/\{\{supplierContactName\}\}/g, vendorEmailsObj[supplierName]?.contactName || '')
+  .replace(/\{\{supplierInstructions\}\}/g, vendorEmailsObj[supplierName]?.special_instructions || vendorEmailsObj[supplierName]?.comments || '')
+  .replace(/\{\{supplierAccountNumber\}\}/g, vendorEmailsObj[supplierName]?.account_number || vendorEmailsObj[supplierName]?.accountNumber || '')
         .replace(/\{\{orderTable\}\}/g, orderTableContent)
         .replace(/\{\{currentDate\}\}/g, new Date().toLocaleDateString())
         .replace(/\{\{companyName\}\}/g, 'The Good Life Clinic')

@@ -1855,6 +1855,7 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         name TEXT UNIQUE NOT NULL,
         email TEXT,
         contact_name TEXT,
+        account_number TEXT,
         special_instructions TEXT,
         source TEXT DEFAULT 'Manual',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -1917,6 +1918,13 @@ const db = new sqlite3.Database(dbPath, async (err) => {
               });
             }
           });
+
+            // Ensure suppliers have an 'account_number' column
+            db.run(`ALTER TABLE suppliers ADD COLUMN account_number TEXT`, (err) => {
+              if (err && !err.message.includes('duplicate column name')) {
+                console.error('Error adding account_number column to suppliers table:', err);
+              }
+            });
 
   // Backwards-compatible schema migrations for purchase_requests and purchase_request_items
   // Add missing columns if they don't exist (SQLite will error on duplicate columns; ignore those errors)
@@ -2857,7 +2865,7 @@ function getInactiveSuppliers() {
   });
 }
 
-function addSupplier(name, email, contactName, comments, source = 'Manual') {
+function addSupplier(name, email, contactName, comments, accountNumber = '', source = 'Manual') {
   return new Promise((resolve, reject) => {
     if (!name || name.trim() === '') {
       return reject({ error: 'Supplier name is required' });
@@ -2865,8 +2873,8 @@ function addSupplier(name, email, contactName, comments, source = 'Manual') {
     
     const now = new Date().toISOString();
     db.run(
-      'INSERT INTO suppliers (name, email, contact_name, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name.trim(), email || '', contactName || '', comments || '', source, now, now],
+  'INSERT INTO suppliers (name, email, contact_name, account_number, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  [name.trim(), email || '', contactName || '', accountNumber || '', comments || '', source, now, now],
       function (err) {
         if (err) {
           if (err.message && err.message.includes('UNIQUE constraint failed')) {
@@ -2881,7 +2889,7 @@ function addSupplier(name, email, contactName, comments, source = 'Manual') {
   });
 }
 
-function updateSupplier(id, name, email, contactName, comments) {
+function updateSupplier(id, name, email, contactName, comments, accountNumber = '') {
   return new Promise((resolve, reject) => {
     if (!id) {
       return reject({ error: 'Supplier ID is required' });
@@ -2892,8 +2900,8 @@ function updateSupplier(id, name, email, contactName, comments) {
     
     const now = new Date().toISOString();
     db.run(
-      'UPDATE suppliers SET name = ?, email = ?, contact_name = ?, special_instructions = ?, updated_at = ? WHERE id = ?',
-      [name.trim(), email || '', contactName || '', comments || '', now, id],
+  'UPDATE suppliers SET name = ?, email = ?, contact_name = ?, account_number = ?, special_instructions = ?, updated_at = ? WHERE id = ?',
+  [name.trim(), email || '', contactName || '', accountNumber || '', comments || '', now, id],
       function (err) {
         if (err) {
           if (err.message && err.message.includes('UNIQUE constraint failed')) {

@@ -93,8 +93,8 @@ contextBridge.exposeInMainWorld('api', {
   
   // Supplier management APIs
   getAllSuppliers: () => ipcRenderer.invoke('getAllSuppliers'),
-  addSupplier: (name, email, contactName, comments) => ipcRenderer.invoke('addSupplier', name, email, contactName, comments),
-  updateSupplier: (id, name, email, contactName, comments) => ipcRenderer.invoke('updateSupplier', id, name, email, contactName, comments),
+  addSupplier: (name, email, contactName, comments, accountNumber = '') => ipcRenderer.invoke('addSupplier', name, email, contactName, comments, accountNumber),
+  updateSupplier: (id, name, email, contactName, comments, accountNumber = '') => ipcRenderer.invoke('updateSupplier', id, name, email, contactName, comments, accountNumber),
   deleteSupplier: (id) => ipcRenderer.invoke('deleteSupplier', id),
   getSupplierByName: (name) => ipcRenderer.invoke('getSupplierByName', name),
   getInactiveSuppliers: () => ipcRenderer.invoke('getInactiveSuppliers'),

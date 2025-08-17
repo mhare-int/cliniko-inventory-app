@@ -988,18 +988,18 @@ ipcMain.handle('getAllSuppliers', async () => {
   }
 });
 
-ipcMain.handle('addSupplier', async (event, name, email, contactName, comments) => {
+ipcMain.handle('addSupplier', async (event, name, email, contactName, comments, accountNumber = '') => {
   try {
-    return await db.addSupplier(name, email, contactName, comments);
+    return await db.addSupplier(name, email, contactName, comments, accountNumber);
   } catch (err) {
     logErrorToFile('addSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err.error || 'Failed to add supplier' };
   }
 });
 
-ipcMain.handle('updateSupplier', async (event, id, name, email, contactName, comments) => {
+ipcMain.handle('updateSupplier', async (event, id, name, email, contactName, comments, accountNumber = '') => {
   try {
-    return await db.updateSupplier(id, name, email, contactName, comments);
+    return await db.updateSupplier(id, name, email, contactName, comments, accountNumber);
   } catch (err) {
     logErrorToFile('updateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err.error || 'Failed to update supplier' };

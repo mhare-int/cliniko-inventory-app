@@ -316,24 +316,33 @@ function SuppliersManagement() {
     
     try {
       let result;
+      const payload = {
+        name: formData.name,
+        email: formData.email,
+        contactName: formData.contactName,
+        specialInstructions: formData.specialInstructions,
+        accountNumber: formData.accountNumber
+      };
+      console.debug('[SuppliersManagement] saving supplier, editing:', !!editingSupplier, 'payload:', payload);
       if (editingSupplier) {
         result = await window.api.updateSupplier(
           editingSupplier.id,
-          formData.name,
-          formData.email,
-          formData.contactName,
-          formData.specialInstructions,
-          formData.accountNumber
+          payload.name,
+          payload.email,
+          payload.contactName,
+          payload.specialInstructions,
+          payload.accountNumber
         );
       } else {
         result = await window.api.addSupplier(
-          formData.name,
-          formData.email,
-          formData.contactName,
-          formData.specialInstructions,
-          formData.accountNumber
+          payload.name,
+          payload.email,
+          payload.contactName,
+          payload.specialInstructions,
+          payload.accountNumber
         );
       }
+      console.debug('[SuppliersManagement] save supplier result:', result);
       
       if (result.error) {
         setError(result.error);
