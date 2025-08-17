@@ -478,6 +478,9 @@ function GenerateSupplierFiles() {
           }
         }
         
+        // Reload existing files after Excel creation to show them in UI
+        await loadExistingFiles(pr.id, outputFolder);
+        
         alert("Excel files created successfully!");
       }
       
@@ -514,20 +517,13 @@ function GenerateSupplierFiles() {
           alert("Email templates created successfully!");
         } catch (emailError) {
           console.error('❌ Error creating email templates:', emailError);
-          // Still show the files that were created, but with an error for email templates
-          setDownloadLinks([
-            ...files,
-            { 
-              vendor: 'Email Creation Failed', 
-              type: 'error',
-              filename: `Error: ${emailError.message || emailError}` 
-            }
-          ]);
+          // Reload all files from database to show Excel files that were created
+          await loadExistingFiles(pr.id, outputFolder);
           setError("Email templates creation failed: " + (emailError.message || emailError));
         }
       } else {
-        // If no email setup available, just show the created files
-        setDownloadLinks(files);
+        // If no email setup available, reload files from database to show all created files
+        await loadExistingFiles(pr.id, outputFolder);
         alert("Files created successfully! Email templates require vendor email addresses to be configured.");
       }
       
@@ -1399,24 +1395,6 @@ ${supplierSpecificSignature}
         // After creating .oft files, reload all files from database to show them in UI
         await loadExistingFiles(pr.id || pr._id, outputFolder);
         
-        // Merge new template files with existing ones, avoiding duplicates
-        setDownloadLinks(prev => {
-          console.log('Current downloadLinks:', prev);
-          console.log('Adding emailLinks:', emailLinks);
-          
-          // Remove placeholder entries
-          const nonPlaceholderLinks = prev.filter(link => link.type !== 'placeholder');
-          
-          // Create a set of existing vendor names to avoid duplicates
-          const existingVendors = new Set(nonPlaceholderLinks.map(link => link.vendor));
-          
-          // Only add new email links for vendors that don't already have files
-          const newEmailLinks = emailLinks.filter(link => !existingVendors.has(link.vendor));
-          
-          const newLinks = [...nonPlaceholderLinks, ...newEmailLinks];
-          console.log('New downloadLinks (merged):', newLinks);
-          return newLinks;
-        });
         setEmailMode(false);
       } else {
         throw new Error(result.error || "Failed to create template files");
