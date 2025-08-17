@@ -114,7 +114,7 @@ function MasterStockList() {
   const fetchProducts = async () => {
     setLoading(true);
     try {
-      // Fetch products and purchase requests in parallel
+  // Fetch products and purchase orders in parallel
       const [productsRes, pursRes, suppliersRes] = await Promise.all([
         window.api.getAllProducts(),
         window.api.getPurchaseRequests(true, false), // active only
@@ -349,7 +349,7 @@ function MasterStockList() {
 
   const handleCreatePurchaseRequest = () => {
     if (selectedIds.length === 0) {
-      alert("Please select at least one product to create a purchase request.");
+  alert("Please select at least one product to create a purchase order.");
       return;
     }
 
@@ -366,7 +366,7 @@ function MasterStockList() {
         };
       });
 
-    // Navigate to Create Purchase Request with pre-selected items
+  // Navigate to Create Purchase Order with pre-selected items
     navigate("/create-pr", { 
       state: { 
         preSelectedItems: selectedProducts,
@@ -857,7 +857,7 @@ function MasterStockList() {
         </tbody>
       </table>
       
-      {/* Floating Create Purchase Request Button */}
+  {/* Floating Create Purchase Order Button */}
       <div
         style={{
           position: "fixed",
@@ -900,7 +900,7 @@ function MasterStockList() {
           }}
         >
           <span style={{ fontSize: "18px" }}>📝</span>
-          Create Purchase Request ({selectedIds.length})
+          Create Purchase Order ({selectedIds.length})
         </button>
       </div>
       

@@ -21,7 +21,29 @@ const KnowledgeBase = () => {
           'View sales data and trends',
           'Manage user accounts and permissions'
         ],
-        workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase requests for needed items → Generate supplier files → Send to suppliers → Receive and log deliveries'
+  workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase orders for needed items → Generate supplier files → Send to suppliers → Receive and log deliveries'
+      }
+    },
+    {
+      id: 'first-time-setup',
+      title: '🚀 First-Time Setup',
+      icon: '🚀',
+      content: {
+        title: 'Complete your initial setup in three quick steps',
+        description: 'On first run, the app guides you through creating an admin, saving your Cliniko API key, and importing data.',
+        features: [
+          'Step 1: Create your administrator account and log in',
+          'Step 2: Enter your Cliniko API key (stored securely)',
+          'Step 3: Sync products and suppliers now; sales data continues syncing in the background',
+          'Preview the number of invoices and estimated time before running sales sync',
+          'Time estimate uses ~3 seconds per sale record for planning only'
+        ],
+        tips: [
+          'After products are synced, you can start using the app right away',
+          'Background sales sync will keep running while you work; progress is shown in a small notification',
+          'You can revisit Admin → Sales Data Sync to preview or run a sync anytime'
+        ],
+        workflow: 'Open app → Create admin → Save API key → Sync products & suppliers now → Sales sync continues in background'
       }
     },
     {
@@ -30,18 +52,19 @@ const KnowledgeBase = () => {
       icon: '📊',
       content: {
         title: 'Starting Point for Daily Tasks',
-        description: 'This is where you land when you first open the app. Use the buttons here to quickly jump to common tasks.',
+        description: 'This is where you land when you first open the app. Use the buttons here to quickly jump to common tasks. When the app starts, you may see a small popup showing background sync progress (stock and sales).',
         features: [
           'Good Life company logo at the top',
           'Welcome message confirms you\'re in the right place',
-          'Blue "Create Purchase Requests" button - click to start ordering',
+          'Blue "Create Purchase Orders" button - click to start ordering',
           'Green "Generate Supplier Files" button - click after making requests',
           'Navigation tabs at the top take you to other sections'
         ],
         tips: [
           'Start here each day to access main functions',
           'Use the big buttons instead of hunting through menus',
-          'The navigation tabs at the top are always available'
+          'The navigation tabs at the top are always available',
+          'Background sync runs automatically after login and shows a brief notification'
         ]
       }
     },
@@ -68,12 +91,12 @@ const KnowledgeBase = () => {
           'Focus on setting good reorder points rather than manually selecting items',
           'Use bulk upload for initial setup of many reorder levels'
         ],
-        workflow: 'Open page → Use filters to find products → Set reorder points → Save changes → Use Create Purchase Requests for actual ordering'
+  workflow: 'Open page → Use filters to find products → Set reorder points → Save changes → Use Create Purchase Orders for actual ordering'
       }
     },
     {
       id: 'create-pr',
-      title: '📝 Create Purchase Requests',
+  title: '📝 Create Purchase Orders',
       icon: '✏️',
       content: {
         title: 'How to Order More Stock',
@@ -96,11 +119,11 @@ const KnowledgeBase = () => {
     },
     {
       id: 'purchase-requests',
-      title: '📋 Active Purchase Requests',
+  title: '📋 Active Purchase Orders',
       icon: '⏳',
       content: {
         title: 'Checking Your Current Orders',
-        description: 'This shows you all the purchase requests you\'ve made that haven\'t been completed yet.',
+  description: 'This shows you all the purchase orders you\'ve made that haven\'t been completed yet.',
         features: [
           'See all orders you\'ve submitted but not finished',
           'Check which supplier each order goes to',
@@ -123,7 +146,7 @@ const KnowledgeBase = () => {
       icon: '🗄️',
       content: {
         title: 'Historical Records',
-        description: 'Access completed purchase requests and historical ordering data.',
+  description: 'Access completed purchase orders and historical ordering data.',
         features: [
           'Complete order history',
           'Search by date, supplier, or product',
@@ -147,21 +170,23 @@ const KnowledgeBase = () => {
       icon: '📄',
       content: {
         title: 'How to Send Orders to Your Suppliers',
-        description: 'After creating purchase requests, use this page to turn them into Excel files you can email to suppliers.',
+  description: 'After creating purchase orders, use this page to turn them into Excel files you can email to suppliers.',
         features: [
-          'Creates Excel files from your purchase requests',
+          'Creates Excel files from your purchase orders',
           'Makes separate files for each supplier automatically',
           'Download links appear after files are generated',
           'Files are formatted professionally for suppliers',
-          'Keeps your requests organized by supplier'
+          'Keeps your requests organized by supplier',
+          'Supports email templates with variables like {{supplierAccountNumber}} in subject/body'
         ],
         tips: [
-          'Only use this after you\'ve created purchase requests',
+          'Only use this after you\'ve created purchase orders',
           'Download files immediately after generating them',
           'Each supplier gets their own separate file',
-          'Email these files directly to your suppliers'
+          'Set supplier account numbers in Admin → Suppliers Management so {{supplierAccountNumber}} fills in your emails',
+          'On Windows, the app can prepare Outlook .oft emails with your template and attachment'
         ],
-        workflow: 'Create purchase requests first → Come to this page → Generate files → Download files → Email to suppliers'
+  workflow: 'Create purchase orders first → Come to this page → Generate files → Download files → Email to suppliers'
       }
     },
     {
@@ -217,30 +242,23 @@ const KnowledgeBase = () => {
       title: '⚙️ Admin Panel',
       icon: '👥',
       content: {
-        title: 'Managing Users and Viewing App Usage',
-        description: 'Admin section with two tabs: one for managing user accounts, one for seeing how the app is being used.',
+        title: 'Administration & Settings',
+        description: 'Manage users, suppliers, templates, and system settings. Use these tools to keep your data clean and your workflows smooth.',
         features: [
-          'Two tabs at the top: "User Management" and "User Analytics"',
-          'User Management tab: add new users, edit existing accounts',
-          'User Analytics tab: see who uses what features and when',
-          'View detailed behavior patterns and usage statistics',
-          'Track user engagement and identify training needs'
-        ],
-        tabs: [
-          {
-            name: 'User Management',
-            description: 'Add new users, edit passwords, set admin permissions'
-          },
-          {
-            name: 'User Analytics', 
-            description: 'See usage statistics, behavior patterns, and user activity'
-          }
+          'User Management: add users, change passwords, grant admin rights',
+          'User Analytics: see feature usage and activity patterns',
+          'Suppliers Management: add/edit suppliers, including Customer Account Number; restore inactive suppliers',
+          'Email Template Management: edit supplier email templates; supports variables like {{supplierAccountNumber}}',
+          'Email Supplier Management: generate and send supplier emails with attachments',
+          'Sales Data Sync: preview invoices and run sales sync; shows estimated time (~3s per sale)',
+          'Session Timeout: configure how long a login stays valid',
+          'Settings: toggle features like Cliniko stock updates and Smart Prompts; set GitHub token for updates',
+          'Supplier Cleanup: tools to reactivate or tidy supplier records'
         ],
         tips: [
-          'Click between tabs at the top to switch sections',
-          'Use User Management to control who can access what',
-          'Check User Analytics to see if people need training',
-          'Analytics show real data from actual app usage'
+          'Set supplier account numbers here so your email templates can include them',
+          'Use Sales Data Sync to preview before running a large import',
+          'If stock updates to Cliniko aren\'t desired, disable them in Settings'
         ]
       }
     }
@@ -354,13 +372,13 @@ const KnowledgeBase = () => {
               <div className="content-section getting-started">
                 <h3>🚀 Getting Started</h3>
                 <p>
-                  {activeSection === 'overview' && "If you're new: Start with Master Stock List to understand your product database and set reorder points, then use Create Purchase Requests when you need to order items. The Knowledge Base explains each page in detail."}
+                  {activeSection === 'overview' && "If you're new: Start with Master Stock List to understand your product database and set reorder points, then use Create Purchase Orders when you need to order items. The Knowledge Base explains each page in detail."}
                   {activeSection === 'home' && "This page opens automatically when you log in. Click the blue button to start ordering or use the tabs at the top to explore other sections."}
                   {activeSection === 'master-list' && "Start by browsing your products and their current stock levels. Set reorder points for items you regularly stock. Use search filters to find specific products quickly."}
                   {activeSection === 'create-pr' && "First time? Try searching for a product you know you need. Check the 'Include Negative' box to see everything. Practice with a small order first."}
                   {activeSection === 'purchase-requests' && "This page will be empty until you create some requests. Once you do, check back here regularly to track progress and update statuses."}
                   {activeSection === 'archived' && "This shows completed orders from the past. Use the search to find specific old orders. Good for checking what you ordered last time."}
-                  {activeSection === 'generate-files' && "Don't use this page until you've created purchase requests first. Once you have requests, come here to make Excel files for suppliers."}
+                  {activeSection === 'generate-files' && "Don't use this page until you've created purchase orders first. Once you have orders, come here to make Excel files for suppliers."}
                   {activeSection === 'receive-items' && "Use this when deliveries arrive. Scan or enter items as you receive them to keep stock levels accurate."}
                   {activeSection === 'sales-insights' && "Check this weekly or monthly to see which products sell best. Use the date controls to look at different time periods."}
                   {activeSection === 'admin' && "Only administrators see this. Use User Management to add people, then check Analytics to see how the app is being used."}

@@ -379,12 +379,18 @@ function updateStockFromCliniko() {
                         const inserted = supplierResult && supplierResult.inserted ? supplierResult.inserted : 0;
                         const reactivated = supplierResult && supplierResult.reactivated ? supplierResult.reactivated : 0;
                         const deactivated = supplierResult && supplierResult.deactivated ? supplierResult.deactivated : 0;
-                        resolve({ message: 'Stock and barcode updated from Cliniko', total, suppliers_updated: inserted, suppliers_reactivated: reactivated, suppliers_deactivated: deactivated });
+                        // Count both newly inserted and reactivated suppliers as 'suppliers_updated'
+                        const suppliersUpdatedTotal = inserted + reactivated;
+                        resolve({ message: 'Stock and barcode updated from Cliniko', total, suppliers_updated: suppliersUpdatedTotal, suppliers_inserted: inserted, suppliers_reactivated: reactivated, suppliers_deactivated: deactivated });
                       })
                       .catch(supplierErr => {
                         console.error('Error auto-populating suppliers from updateStockFromCliniko:', supplierErr);
-                        // Still resolve success for stock update but include supplier error
-                        resolve({ message: 'Stock and barcode updated from Cliniko (supplier auto-population failed)', total, supplier_error: supplierErr.message || supplierErr });
+                        // If the supplierErr contains counts, try to surface them; otherwise default to 0
+                        const insertedFromErr = supplierErr && (supplierErr.inserted || supplierErr.inserted === 0) ? supplierErr.inserted : 0;
+                        const reactivatedFromErr = supplierErr && (supplierErr.reactivated || supplierErr.reactivated === 0) ? supplierErr.reactivated : 0;
+                        const suppliersUpdatedFromErr = insertedFromErr + reactivatedFromErr;
+                        // Still resolve success for stock update but include supplier error and counts if available
+                        resolve({ message: 'Stock and barcode updated from Cliniko (supplier auto-population failed)', total, suppliers_updated: suppliersUpdatedFromErr, suppliers_inserted: insertedFromErr, suppliers_reactivated: reactivatedFromErr, supplier_error: supplierErr.message || supplierErr });
                       });
                   }
                 });
@@ -482,16 +488,17 @@ function previewSalesDataCount(startDate = null, endDate = null, providedApiKey 
             
             console.log(`Preview found ${totalEntries} total invoices in date range`);
             
-            // Calculate estimated sync time based on rate limits
-            const invoicesPerPage = 100; // From sync function
-            const delayBetweenPages = 2; // seconds
-            const estimatedPages = Math.ceil(totalEntries / invoicesPerPage);
-            const estimatedTimeSeconds = estimatedPages * delayBetweenPages;
+            // Calculate estimated number of sales records and total time.
+            // We estimate ~3 sales records per invoice by default (line items),
+            // and approximate 3 seconds per sale record to input.
+            const estimatedSalesRecords = totalEntries * 3; // rough average
+            const secondsPerSale = 3; // seconds per sale record (user-specified)
+            const estimatedTimeSeconds = Math.round(estimatedSalesRecords * secondsPerSale);
             const estimatedTimeMinutes = Math.round(estimatedTimeSeconds / 60 * 10) / 10; // Round to 1 decimal
-            
+
             // Format time estimate
             let timeEstimate = '';
-            if (estimatedTimeMinutes < 1) {
+            if (estimatedTimeSeconds < 60) {
               timeEstimate = `${estimatedTimeSeconds} seconds`;
             } else if (estimatedTimeMinutes < 60) {
               timeEstimate = `${estimatedTimeMinutes} minutes`;
@@ -500,14 +507,13 @@ function previewSalesDataCount(startDate = null, endDate = null, providedApiKey 
               const minutes = Math.round(estimatedTimeMinutes % 60);
               timeEstimate = `${hours} hour${hours > 1 ? 's' : ''} ${minutes} minutes`;
             }
-            
-            console.log(`Estimated sync time: ${timeEstimate} (${estimatedPages} pages with ${delayBetweenPages}s delays)`);
-            
+
+            console.log(`Estimated sync time: ${timeEstimate} (approx ${secondsPerSale}s per sale record, ${estimatedSalesRecords} estimated sales)`);
+
             resolve({
               success: true,
               totalInvoices: totalEntries,
-              estimatedSalesRecords: totalEntries * 3, // Rough estimate: 3 line items per invoice on average
-              estimatedPages: estimatedPages,
+              estimatedSalesRecords: estimatedSalesRecords,
               estimatedTimeSeconds: estimatedTimeSeconds,
               estimatedTimeMinutes: estimatedTimeMinutes,
               estimatedTimeFormatted: timeEstimate,
@@ -1817,7 +1823,10 @@ const db = new sqlite3.Database(dbPath, async (err) => {
         barcode TEXT,
         cliniko_id TEXT,
         reorder_level INTEGER DEFAULT 0,
-        current_stock INTEGER DEFAULT 0,
+  current_stock INTEGER DEFAULT 0,
+  -- Backwards-compatible columns: 'stock' and 'supplier_name' may be used by newer code
+  stock INTEGER DEFAULT 0,
+  supplier_name TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`);
       
@@ -1932,6 +1941,9 @@ const db = new sqlite3.Database(dbPath, async (err) => {
   db.run(`ALTER TABLE purchase_requests ADD COLUMN date_received TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding date_received to purchase_requests:', err); });
   db.run(`ALTER TABLE purchase_requests ADD COLUMN received INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding received to purchase_requests:', err); });
   db.run(`ALTER TABLE purchase_requests ADD COLUMN updated_at TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding updated_at to purchase_requests:', err); });
+  // Flags for generated files on PRs
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN supplier_files_created INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding supplier_files_created to purchase_requests:', err); });
+  db.run(`ALTER TABLE purchase_requests ADD COLUMN oft_files_created INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding oft_files_created to purchase_requests:', err); });
 
   // purchase_request_items additions
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN product_id TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding product_id to purchase_request_items:', err); });
@@ -1942,6 +1954,17 @@ const db = new sqlite3.Database(dbPath, async (err) => {
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN received_so_far INTEGER DEFAULT 0`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding received_so_far to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding created_at to purchase_request_items:', err); });
   db.run(`ALTER TABLE purchase_request_items ADD COLUMN updated_at TEXT`, (err) => { if (err && !err.message.includes('duplicate column name')) console.error('Error adding updated_at to purchase_request_items:', err); });
+  // Ensure products table has columns expected by newer sync code
+  db.run(`ALTER TABLE products ADD COLUMN stock INTEGER DEFAULT 0`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+      console.error('Error adding stock column to products table:', err);
+    }
+  });
+  db.run(`ALTER TABLE products ADD COLUMN supplier_name TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+      console.error('Error adding supplier_name column to products table:', err);
+    }
+  });
         }
       });
       console.log('✅ Database initialization completed');

@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 5;
+const CURRENT_DB_VERSION = 15;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -234,6 +234,179 @@ const migrations = [
   //     });
   //   }
   // }
+  ,
+  {
+    version: 14,
+    description: "Ensure suppliers/pr tables have required columns; create vendor_files and email_templates; add product_sales unique index",
+    up: (db) => {
+      return new Promise((resolve, reject) => {
+        const tasks = [];
+
+        // 1) Suppliers columns: source, special_instructions, active, account_number
+        tasks.push(new Promise((res, rej) => {
+          db.all("PRAGMA table_info(suppliers)", (err, cols) => {
+            if (err) return rej(err);
+            const names = new Set(cols.map(c => c.name));
+            const alters = [];
+            if (!names.has('source')) alters.push(["ALTER TABLE suppliers ADD COLUMN source TEXT DEFAULT 'Manual'"]);
+            if (!names.has('special_instructions')) alters.push(["ALTER TABLE suppliers ADD COLUMN special_instructions TEXT"]);
+            if (!names.has('active')) alters.push(["ALTER TABLE suppliers ADD COLUMN active INTEGER DEFAULT 1"]);
+            if (!names.has('account_number')) alters.push(["ALTER TABLE suppliers ADD COLUMN account_number TEXT"]);
+
+            // Execute ALTERs sequentially to avoid locked DB
+            const runNext = () => {
+              const next = alters.shift();
+              if (!next) {
+                // Post-alter fixups
+                // Initialize active if NULL
+                db.run("UPDATE suppliers SET active = 1 WHERE active IS NULL", () => {
+                  // If a legacy 'comments' column exists, migrate to special_instructions
+                  if (names.has('comments')) {
+                    db.run("UPDATE suppliers SET special_instructions = comments WHERE comments IS NOT NULL AND comments != ''", () => res());
+                  } else {
+                    res();
+                  }
+                });
+                return;
+              }
+              db.run(next[0], (e) => {
+                // Ignore duplicate column errors to be idempotent
+                if (e && !String(e.message || e).includes('duplicate column name')) return rej(e);
+                runNext();
+              });
+            };
+            runNext();
+          });
+        }));
+
+        // 2) Purchase Requests: supplier_files_created, oft_files_created
+        tasks.push(new Promise((res, rej) => {
+          db.all("PRAGMA table_info(purchase_requests)", (err, cols) => {
+            if (err) return rej(err);
+            const names = new Set(cols.map(c => c.name));
+            const alters = [];
+            if (!names.has('supplier_files_created')) alters.push(["ALTER TABLE purchase_requests ADD COLUMN supplier_files_created INTEGER DEFAULT 0"]);
+            if (!names.has('oft_files_created')) alters.push(["ALTER TABLE purchase_requests ADD COLUMN oft_files_created INTEGER DEFAULT 0"]);
+            const runNext = () => {
+              const next = alters.shift();
+              if (!next) return res();
+              db.run(next[0], (e) => {
+                if (e && !String(e.message || e).includes('duplicate column name')) return rej(e);
+                runNext();
+              });
+            };
+            runNext();
+          });
+        }));
+
+        // 3) Create vendor_files table if missing
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS vendor_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pr_id TEXT NOT NULL,
+            vendor_name TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            file_path TEXT,
+            file_size INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`, (err) => err ? rej(err) : res());
+        }));
+
+        // 4) Create email_templates table if missing
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS email_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            subject TEXT,
+            body TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`, (err) => err ? rej(err) : res());
+        }));
+
+        // 5) Ensure unique index on product_sales(invoice_id, product_id)
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_product_sales_invoice_product ON product_sales (invoice_id, product_id)`, (err) => err ? rej(err) : res());
+        }));
+
+        Promise.all(tasks).then(() => resolve()).catch(reject);
+      });
+    }
+  }
+  ,
+  {
+    version: 15,
+    description: "Backfill created_at columns and ensure email_templates.name exists with unique index",
+    up: (db) => {
+      return new Promise((resolve, reject) => {
+        const tasks = [];
+
+        // products.created_at
+        tasks.push(new Promise((res, rej) => {
+          db.all("PRAGMA table_info(products)", (err, cols) => {
+            if (err) return rej(err);
+            const names = new Set(cols.map(c => c.name));
+            if (!names.has('created_at')) {
+              db.run("ALTER TABLE products ADD COLUMN created_at TEXT", (e) => {
+                if (e && !String(e.message||e).includes('duplicate column name')) return rej(e);
+                // Backfill now
+                db.run("UPDATE products SET created_at = COALESCE(created_at, datetime('now')) WHERE created_at IS NULL OR created_at = ''", () => res());
+              });
+            } else res();
+          });
+        }));
+
+        // purchase_requests.created_at
+        tasks.push(new Promise((res, rej) => {
+          db.all("PRAGMA table_info(purchase_requests)", (err, cols) => {
+            if (err) return rej(err);
+            const names = new Set(cols.map(c => c.name));
+            if (!names.has('created_at')) {
+              db.run("ALTER TABLE purchase_requests ADD COLUMN created_at TEXT", (e) => {
+                if (e && !String(e.message||e).includes('duplicate column name')) return rej(e);
+                db.run("UPDATE purchase_requests SET created_at = COALESCE(created_at, datetime('now')) WHERE created_at IS NULL OR created_at = ''", () => res());
+              });
+            } else res();
+          });
+        }));
+
+        // email_templates table and name column
+        tasks.push(new Promise((res, rej) => {
+          // Ensure table exists
+          db.run(`CREATE TABLE IF NOT EXISTS email_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            subject TEXT,
+            body TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`, (err) => {
+            if (err) return rej(err);
+            // Ensure name column exists
+            db.all("PRAGMA table_info(email_templates)", (e2, cols) => {
+              if (e2) return rej(e2);
+              const names = new Set(cols.map(c => c.name));
+              if (!names.has('name')) {
+                db.run("ALTER TABLE email_templates ADD COLUMN name TEXT", (e3) => {
+                  if (e3 && !String(e3.message||e3).includes('duplicate column name')) return rej(e3);
+                  // Backfill a default name if missing
+                  db.run("UPDATE email_templates SET name = COALESCE(name, 'Default') WHERE name IS NULL OR name = ''", () => {
+                    // Create unique index if not exists
+                    db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_email_templates_name ON email_templates(name)", () => res());
+                  });
+                });
+              } else {
+                db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_email_templates_name ON email_templates(name)", () => res());
+              }
+            });
+          });
+        }));
+
+        Promise.all(tasks).then(() => resolve()).catch(reject);
+      });
+    }
+  }
 ];
 
 /**

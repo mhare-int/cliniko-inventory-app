@@ -79,7 +79,7 @@ function CreatePurchaseRequests() {
   };
 
   React.useEffect(() => {
-    // Load purchase requests on mount to populate onOrderMap
+  // Load purchase orders on mount to populate onOrderMap
     if (!window.api || !window.api.getPurchaseRequests) {
       setOnOrderMap({});
       return;
@@ -178,10 +178,10 @@ function CreatePurchaseRequests() {
 
   // No handleSubmit needed for PR creation only
 
-  // Create Purchase Request for selected items
+  // Create Purchase Order for selected items
   const handleCreatePR = async () => {
     if (selectedRows.length === 0) {
-      alert("Please select at least one item to create a purchase request.");
+  alert("Please select at least one item to create a purchase order.");
       return;
     }
     setLoading(true);
@@ -218,7 +218,7 @@ function CreatePurchaseRequests() {
       });
 
       await window.api.createPurchaseRequest({ items: normalizedPrItems });
-      alert("Purchase Request created successfully!");
+  alert("Purchase Order created successfully!");
       // Optionally refresh PR map after creation
       if (window.api.getPurchaseRequests) {
         const res = await window.api.getPurchaseRequests(true, undefined);
@@ -234,7 +234,7 @@ function CreatePurchaseRequests() {
       }
       navigate("/generate-supplier-files");
     } catch (err) {
-      setError("Failed to create purchase request.");
+  setError("Failed to create purchase order.");
     }
     setLoading(false);
   };
@@ -361,7 +361,7 @@ function CreatePurchaseRequests() {
         />
         <div style={{ marginBottom: 38 }}>
           <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
-            Create Purchase Requests
+            Create Purchase Orders
           </h2>
           {location.state?.fromMasterList ? (
             <p
@@ -399,7 +399,7 @@ function CreatePurchaseRequests() {
             </h4>
             <div style={{ color: "#4b5563" }}>
               <p style={{ margin: "0 0 8px 0" }}>
-                <strong>📦 Start New Purchase Request:</strong> Create any ad-hoc orders by manually selecting products
+                <strong>📦 Start New Purchase Order:</strong> Create any ad-hoc orders by manually selecting products
               </p>
               <p style={{ margin: "0" }}>
                 <strong>📊 Run Stock Comparison:</strong> Automatically finds all items below reorder level (you can still add extra products after)
@@ -462,7 +462,7 @@ function CreatePurchaseRequests() {
                     e.target.style.background = "#28a745";
                   }}
                 >
-                  Start New Purchase Request
+                  Start New Purchase Order
                 </button>
                 <button
                   type="button"
@@ -909,7 +909,7 @@ function CreatePurchaseRequests() {
               </div>
             )}
 
-            {/* Floating Create Purchase Request Button */}
+            {/* Floating Create Purchase Order Button */}
             <div
               style={{
                 position: "fixed",
@@ -953,7 +953,7 @@ function CreatePurchaseRequests() {
                   }
                 }}
               >
-                Create Purchase Request
+                Create Purchase Order
               </button>
             </div>
           </>

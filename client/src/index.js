@@ -233,6 +233,18 @@ function MainApp() {
     }
   };
 
+  // Listen for explicit API key updates (fired from FirstTimeSetup after setApiKey)
+  useEffect(() => {
+    const handler = (e) => {
+      const hasApiKey = e && e.detail ? !!e.detail.hasApiKey : true;
+      setApiKeySet(hasApiKey);
+      if (!hasApiKey) setShowApiKeyModal(true);
+      else setShowApiKeyModal(false);
+    };
+    window.addEventListener('clinikoApiKeyUpdated', handler);
+    return () => window.removeEventListener('clinikoApiKeyUpdated', handler);
+  }, []);
+
   useEffect(() => {
     if (isAuthed && !justCompletedSetup && !isFirstTime && !isInSetupProcess) {
       checkApiKey();

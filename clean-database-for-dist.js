@@ -67,6 +67,17 @@ const TABLES_TO_CLEAR = [
   'item_receipt_log'
 ];
 
+// Additional tables created by the app that should be cleared for a distribution build
+const ADDITIONAL_TABLES_TO_CLEAR = [
+  'email_templates',
+  'vendor_oft_files',
+  'generated_files',
+  'vendor_files'
+];
+
+// Merge the lists for processing
+const ALL_TABLES_TO_CLEAR = TABLES_TO_CLEAR.concat(ADDITIONAL_TABLES_TO_CLEAR);
+
 // Settings keys to remove (keep only essential system settings)
 // NOTE: Do NOT remove GITHUB_TOKEN so the auto-updater keeps working post-clean.
 const SETTINGS_TO_REMOVE = keepApiKey ? [
@@ -123,48 +134,44 @@ function cleanDatabase() {
 
 function clearUserDataTables() {
   console.log('\n🗑️  Clearing user data tables...');
-  
-  let tablesCleared = 0;
-  let errorOccurred = false;
-  
-  TABLES_TO_CLEAR.forEach(tableName => {
-    // First check if table exists
-    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name= ?", [tableName], (err, row) => {
-      if (err) {
-        console.error(`❌ Error checking table ${tableName}:`, err.message);
-        errorOccurred = true;
-      } else if (!row) {
-        console.log(`ℹ️  Table ${tableName} doesn't exist (skipping)`);
-      } else {
-        // Table exists, clear it
-        db.run(`DELETE FROM ${tableName}`,(err) => {
-          if (err) {
-            console.error(`❌ Error clearing table ${tableName}:`, err.message);
-            errorOccurred = true;
-          } else {
-            console.log(`✅ Cleared table: ${tableName}`);
-          }
-          
-          tablesCleared++;
-          if (tablesCleared === TABLES_TO_CLEAR.length) {
-            if (errorOccurred) {
-              rollbackTransaction();
-            } else {
-              cleanSettings();
-            }
-          }
-        });
-      }
-      
-      tablesCleared++;
-      if (tablesCleared === TABLES_TO_CLEAR.length && !row) {
-        if (errorOccurred) {
-          rollbackTransaction();
-        } else {
-          cleanSettings();
+  // Build promises for each table clear operation so we can wait for them all
+  const clearPromises = ALL_TABLES_TO_CLEAR.map(tableName => {
+    return new Promise(resolve => {
+      // Check if table exists
+      db.get("SELECT name FROM sqlite_master WHERE type='table' AND name= ?", [tableName], (err, row) => {
+        if (err) {
+          console.error(`❌ Error checking table ${tableName}:`, err.message);
+          return resolve({ table: tableName, error: err.message });
         }
-      }
+        if (!row) {
+          console.log(`ℹ️  Table ${tableName} doesn't exist (skipping)`);
+          return resolve({ table: tableName, skipped: true });
+        }
+
+        // Table exists, delete rows
+        db.run(`DELETE FROM ${tableName}`, (delErr) => {
+          if (delErr) {
+            console.error(`❌ Error clearing table ${tableName}:`, delErr.message);
+            return resolve({ table: tableName, error: delErr.message });
+          }
+          console.log(`✅ Cleared table: ${tableName}`);
+          return resolve({ table: tableName, cleared: true });
+        });
+      });
     });
+  });
+
+  Promise.all(clearPromises).then(results => {
+    const hadError = results.some(r => r && r.error);
+    if (hadError) {
+      console.error('❌ One or more table clear operations failed. Rolling back.');
+      return rollbackTransaction();
+    }
+    // Proceed to cleaning settings only after all clear operations finished
+    cleanSettings();
+  }).catch(e => {
+    console.error('❌ Unexpected error while clearing tables:', e);
+    rollbackTransaction();
   });
 }
 
@@ -225,7 +232,7 @@ function resetAutoIncrementCounters() {
   console.log('\n🔄 Resetting auto-increment counters...');
   
   // Reset sqlite_sequence for all cleared tables
-  const sequenceResets = TABLES_TO_CLEAR.map(tableName => 
+  const sequenceResets = ALL_TABLES_TO_CLEAR.map(tableName => 
     new Promise((resolve, reject) => {
       db.run("DELETE FROM sqlite_sequence WHERE name = ?", [tableName], (err) => {
         if (err && !err.message.includes('no such table')) {

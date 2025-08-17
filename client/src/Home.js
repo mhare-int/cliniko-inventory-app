@@ -16,7 +16,7 @@ function Home() {
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch active purchase requests
+  // Fetch active purchase orders
       const pursResponse = await window.api.getPurchaseRequests(true, false);
       
       // Fetch all products to check reorder points
@@ -143,7 +143,7 @@ function Home() {
                 {dashboardData.activePURs}
               </div>
               <div style={{ color: "#64748b", fontSize: "0.9em", fontWeight: 500 }}>
-                Active Purchase Requests
+                Active Purchase Orders
               </div>
             </div>
             
@@ -233,7 +233,7 @@ function Home() {
             e.target.style.transform = "translateY(0)";
             e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
           }}>
-            Create Purchase Requests
+            Create Purchase Orders
           </button>
         </Link>
         <Link to="/generate-supplier-files" style={{ textDecoration: "none" }}>

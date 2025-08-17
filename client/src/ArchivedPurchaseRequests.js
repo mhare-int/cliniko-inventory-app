@@ -148,7 +148,7 @@ function ArchivedPurchaseRequests() {
 
   return (
     <div className="center-card">
-      <h2 style={{ textAlign: "center", color: "#999", fontWeight: 700 }}>Archived Purchase Orders</h2>
+  <h2 style={{ textAlign: "center", color: "#999", fontWeight: 700 }}>Archived Purchase Orders</h2>
       {/* Tab Navigation */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}>
         <button

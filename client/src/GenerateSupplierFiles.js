@@ -28,8 +28,7 @@ function GenerateSupplierFiles() {
   const [vendorSearch, setVendorSearch] = useState('');
   const [suppliersMap, setSuppliersMap] = useState({});
   const [vendorOptions, setVendorOptions] = useState([]);
-  // One-time debug guard to avoid spamming the console
-  const debugSupplierLoggedRef = useRef(false);
+  // ...existing code...
 
   // Fetch API key status
   useEffect(() => {
@@ -88,7 +87,7 @@ function GenerateSupplierFiles() {
       .catch(() => setActivePRs([]));
   }, []);
 
-  // Load vendor emails for the selected Purchase Request
+  // Load vendor emails for the selected Purchase Order
   const loadVendorEmails = async (prId) => {
     try {
       const pr = activePRs.find(pr => (pr.id || pr._id).toString() === prId);
@@ -118,13 +117,7 @@ function GenerateSupplierFiles() {
         // Try to get email from suppliers database using the exact vendor name from the items
         try {
           const supplier = await window.api.getSupplierByName(vendorName);
-          // One-time debug: print the supplier object so we can inspect field names (account number etc.)
-          try {
-            if (!debugSupplierLoggedRef.current) {
-              console.log('DEBUG supplier object for', vendorName, supplier);
-              debugSupplierLoggedRef.current = true;
-            }
-          } catch (e) { /* ignore */ }
+          // ...existing code...
           const supplierEmail = (supplier && supplier.email) ? supplier.email : "";
           const contactName = (supplier && supplier.contact_name) ? supplier.contact_name : "";
           const specialInstructions = (supplier && supplier.special_instructions) ? supplier.special_instructions : "";
@@ -274,7 +267,7 @@ function GenerateSupplierFiles() {
     }
   };
 
-  // Load existing files for the selected purchase request
+  // Load existing files for the selected purchase order
   const loadExistingFiles = async (prId) => {
     if (!prId || !outputFolder) {
       console.log('🔍 loadExistingFiles called but missing prId or outputFolder:', { prId, outputFolder });
@@ -456,11 +449,11 @@ function GenerateSupplierFiles() {
           }
         }
         
-        // Update purchase request status to mark supplier files as created
+  // Update purchase order status to mark supplier files as created
         if (pr && pr.id && window.api.updatePurchaseRequestSupplierFilesStatus) {
           try {
             await window.api.updatePurchaseRequestSupplierFilesStatus(pr.id, true);
-            console.log('✅ Marked purchase request as having supplier files created');
+            console.log('✅ Marked purchase order as having supplier files created');
           } catch (statusErr) {
             console.error('❌ Failed to update supplier files status:', statusErr);
           }
@@ -476,7 +469,7 @@ function GenerateSupplierFiles() {
       if (Object.keys(emailSettings.vendorEmails || {}).length > 0) {
         console.log('🔄 Starting automatic email template creation...');
         try {
-          // Get vendor groups from purchase request (use getSupplierName)
+          // Get vendor groups from purchase order (use getSupplierName)
           const vendorGroups = {};
           pr?.items?.forEach(item => {
             const vendorName = getSupplierName(item);
@@ -865,7 +858,7 @@ Website: www.goodlifeclinic.com`
       const pr = activePRs.find(pr => (pr.id || pr._id).toString() === selectedPRId);
       const purNumber = pr?.name || pr?.number || pr?.id || pr?._id || "";
 
-      console.log('🔍 Purchase Request Details:');
+  console.log('🔍 Purchase Order Details:');
       console.log('  - PR:', pr);
       console.log('  - purNumber:', purNumber);
       console.log('  - Items count:', pr?.items?.length || 0);
@@ -982,15 +975,15 @@ Website: www.goodlifeclinic.com`
       
       // Process each vendor's email data and check database for existing .oft files
       
-      // DEBUG: Show actual purchase request items and their supplier names
-      console.log('🔍 DEBUGGING: Purchase request items and their suppliers:');
+  // DEBUG: Show actual purchase order items and their supplier names
+  console.log('🔍 DEBUGGING: Purchase order items and their suppliers:');
       if (pr?.items) {
         pr.items.forEach((item, index) => {
           console.log(`   Item ${index}: "${item["Product Name"] || item.name}" - Supplier: "${getSupplierName(item)}"`);
           console.log(`   Item ${index} full object:`, item);
         });
       } else {
-        console.log('   No purchase request items found!');
+  console.log('   No purchase order items found!');
       }
 
       // Process each vendor's email data and check database for existing .oft files
@@ -1005,7 +998,7 @@ Website: www.goodlifeclinic.com`
         console.log('🔍 Processing vendor (RAW):', JSON.stringify(vendorName));
         console.log('🧹 Cleaned vendor name:', JSON.stringify(cleanVendorName));
         
-        // Check if this vendor has already had .oft files created for this purchase request
+  // Check if this vendor has already had .oft files created for this purchase order
         try {
           const hasOftFiles = await window.api.hasVendorFilesCreated(pr.id || pr._id, cleanVendorName, 'oft');
           // If we are in a recreate run (there are existing downloadLinks), allow overwrite
@@ -1363,11 +1356,11 @@ ${supplierSpecificSignature}
           }
         }
         
-        // Update purchase request status to mark .oft files as created
+  // Update purchase order status to mark .oft files as created
         if (pr && pr.id && window.api.updatePurchaseRequestOftFilesStatus) {
           try {
             await window.api.updatePurchaseRequestOftFilesStatus(pr.id, true);
-            console.log('✅ Marked purchase request as having .oft files created');
+            console.log('✅ Marked purchase order as having .oft files created');
           } catch (statusErr) {
             console.error('❌ Failed to update .oft files status:', statusErr);
           }

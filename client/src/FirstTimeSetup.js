@@ -111,6 +111,21 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
       const result = await window.api.setApiKey(apiKey.trim());
       if (result && !result.error) {
         setCurrentStep(3); // Move to product sync step
+
+        // Notify the main application that the API key has been set so it
+        // doesn't show the API key modal prematurely. Attempt to verify
+        // via backend and dispatch an event the main app listens for.
+        try {
+          if (window.api && window.api.getApiKey) {
+            const getRes = await window.api.getApiKey();
+            window.dispatchEvent(new CustomEvent('clinikoApiKeyUpdated', { detail: { hasApiKey: !!(getRes && getRes.api_key) } }));
+          } else {
+            window.dispatchEvent(new CustomEvent('clinikoApiKeyUpdated', { detail: { hasApiKey: true } }));
+          }
+        } catch (evtErr) {
+          // Best-effort notify - main app will re-check if needed
+          window.dispatchEvent(new CustomEvent('clinikoApiKeyUpdated', { detail: { hasApiKey: true } }));
+        }
       } else {
         setError(result.error || 'Failed to save API key');
       }
@@ -663,14 +678,14 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
                 📊 Preview Results
               </div>
               <div style={{ color: '#2b6cb0', marginBottom: 8 }}>
-                <strong>{previewResult.totalInvoices}</strong> invoices found 
+                <strong>{previewResult.totalInvoices}</strong> invoices found
                 {previewResult.estimatedSalesRecords && (
-                  <span> (approximately <strong>{previewResult.estimatedSalesRecords}</strong> sales records)</span>
+                  <span> (approximately <strong>{previewResult.estimatedSalesRecords}</strong> sales records — estimated <strong>{previewResult.estimatedTimeFormatted}</strong>)</span>
                 )}
               </div>
               {previewResult.estimatedTimeFormatted && (
                 <div style={{ color: '#2b6cb0', marginBottom: 8, fontSize: 14 }}>
-                  ⏱️ Estimated sync time: <strong>{previewResult.estimatedTimeFormatted}</strong>
+                  ⏱️ Estimated sales sync time: <strong>{previewResult.estimatedTimeFormatted}</strong>
                 </div>
               )}
               <div style={{ fontSize: 13, color: '#4a5568' }}>
@@ -718,8 +733,7 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
             fontSize: 13,
             color: '#744210'
           }}>
-            <strong>📊 Data Sync:</strong> This will import your product catalog and recent sales data from Cliniko. 
-            This may take a moment depending on the amount of data.
+            <strong>📊 Data Sync:</strong> Products and suppliers are synced now so you can start using the app immediately. Sales records will continue to sync in the background while you use the app. Estimated sales sync time is approximate (we use ~3 seconds per sale record to estimate total time).
           </div>
         </div>
       )}
