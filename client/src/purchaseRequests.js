@@ -108,10 +108,15 @@ function PurchaseRequests() {
           const augmented = await Promise.all(res.map(async pr => {
             try {
               const files = await window.api.getGeneratedFiles(pr.id);
-              const hasExcel = Array.isArray(files) && files.some(f => (f.file_type === 'excel' || (f.type === 'file' && !(f.isOutlookTemplate)) || (f.file && /\.xlsx?$/.test(f.file))));
+              // Detect POs stored as HTML on the backend (file_type === 'html') or plain .html files.
+              const hasPo = Array.isArray(files) && files.some(f => (
+                f.file_type === 'html' ||
+                (f.type === 'file' && !(f.isOutlookTemplate)) ||
+                (f.file && /\.html?$/i.test(f.file))
+              ));
               const hasOft = Array.isArray(files) && files.some(f => (f.file_type === 'oft' || (f.type === 'email' && f.isOutlookTemplate) || (f.file && f.file.toLowerCase().endsWith('.oft'))));
               // Only set the flags true if files actually exist. If the API returned no files, ensure flags are false to avoid stale UI.
-              return { ...pr, supplier_files_created: !!hasExcel, oft_files_created: !!hasOft };
+              return { ...pr, supplier_files_created: !!hasPo, oft_files_created: !!hasOft };
             } catch (err) {
               return pr;
             }
@@ -787,7 +792,7 @@ function PurchaseRequests() {
                   <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
                     📄
                   </span>
-                  <span style={{ marginLeft: 6 }}>Excel</span>
+                  <span style={{ marginLeft: 6 }}>PO</span>
                 </th>
                 <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
                   <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
