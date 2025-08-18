@@ -119,8 +119,10 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
 
     orders.forEach((o, i) => {
       const qty = findNumber(o, ['No. to Order', 'No to Order', 'NoToOrder', 'Quantity', 'quantity', 'no_to_order', 'qty']);
-      const product = o['Product Name'] || o.product_name || o.name || '';
-      const unit = o['Unit'] || o.unit || o.unitOfMeasure || '';
+  const product = o['Product Name'] || o.product_name || o.name || '';
+  let unit = o['Unit'] || o.unit || o.unitOfMeasure || '';
+  // Default unit to 'EA' (each) when not provided
+  if (!unit || String(unit).trim() === '') unit = 'EA';
 
   // Try multiple possible keys for unit price so uploaded/old PRs are handled
   let price = findNumber(o, ['Unit Price', 'unit_price', 'unitPrice', 'Price', 'price', 'Cost', 'cost', 'unitprice', 'unit_cost', 'unitcost']);
@@ -142,8 +144,10 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
       rows += `<tr><td>${i + 1}</td><td>${qty}</td><td>${escapeHtml(unit)}</td><td>${escapeHtml(product)}</td><td style="text-align:right">${priceText}</td><td style="text-align:right">${lineText}</td></tr>`;
     });
 
-    const gst = 0;
-    const total = subtotal + gst;
+  // Calculate GST (10%) on the subtotal and add to total.
+  // Round GST to 2 decimals to avoid floating point display issues.
+  const gst = Math.round((subtotal * 0.10) * 100) / 100;
+  const total = subtotal + gst;
 
     // Determine notes: supplier-level overrides company-level; if neither present, notesText will be empty
     const supplierLevelInstructions = (function(){
@@ -224,8 +228,8 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
         <th style="width:8%">Qty</th>
         <th style="width:12%">Unit</th>
         <th>Description</th>
-        <th style="width:14%">Unit Price</th>
-        <th style="width:14%">Line Total</th>
+  <th style="width:14%; text-align:center">Unit Price</th>
+  <th style="width:14%; text-align:center">Line Total</th>
       </tr>
     </thead>
     <tbody>

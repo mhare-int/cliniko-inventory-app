@@ -408,16 +408,16 @@ function GenerateSupplierFiles() {
       
       let files = [];
       
-      // Step 1: Create Excel files if requested
+  // Step 1: Create PO files if requested
       if (createFiles) {
-        // Check if Excel files already exist for this PR (we will only delete them after new files are successfully created)
-        console.log('🔍 Checking for existing Excel files for PR:', pr.id);
+        // Check if PO files already exist for this PR (we will only delete them after new files are successfully created)
+        console.log('🔍 Checking for existing PO files for PR:', pr.id);
         const existingExcelFiles = await window.api.getGeneratedFiles(pr.id, 'excel');
         if (existingExcelFiles && existingExcelFiles.length > 0) {
-          console.log('ℹ️ Found existing Excel files; will delete them only after new files are successfully created:', existingExcelFiles.map(f => f.filename));
+          console.log('ℹ️ Found existing PO files; will delete them only after new files are successfully created:', existingExcelFiles.map(f => f.filename));
         }
         
-        console.log('✅ Creating new Excel files');
+        console.log('✅ Creating new PO files');
 
   // Create the actual files
         if (!window.api || !window.api.createSupplierOrderFilesForVendors) throw new Error("createSupplierOrderFilesForVendors not available");
@@ -525,7 +525,7 @@ function GenerateSupplierFiles() {
           }
         }
         
-        // Track Excel files in the database
+  // Track PO files in the database
         if (res && Array.isArray(res.files) && res.files.length > 0) {
           try {
             for (const fileInfo of res.files) {
@@ -557,7 +557,7 @@ function GenerateSupplierFiles() {
               console.log(`✅ Tracked ${fileType} file: ${filename} for ${supplierName}`);
             }
           } catch (trackErr) {
-            console.error('❌ Failed to track Excel files:', trackErr);
+            console.error('❌ Failed to track PO files:', trackErr);
           }
         }
         
@@ -571,7 +571,7 @@ function GenerateSupplierFiles() {
           }
         }
         
-        alert("Excel files created successfully!");
+  alert("PO files created successfully!");
       }
       
       // Step 2: If email setup is ready, automatically create the .oft email template files
@@ -1300,7 +1300,7 @@ ${supplierSpecificSignature}
 </html>
         `.trim();
         
-        // Debug attachment logic - look specifically for Excel files, not OFT files
+  // Debug attachment logic - look specifically for PO/html files, not OFT files
         // Use freshFiles if provided (for automatic workflow), otherwise use downloadLinks (for manual workflow)
         const filesToSearch = freshFiles || downloadLinks;
         const potentialAttachment = filesToSearch.find(f => {
@@ -1649,7 +1649,7 @@ Website: www.goodlifeclinic.com`
       const personalizedBody = replaceTemplateVariables(rawTemplate.body, vendorName);
       const personalizedSignature = replaceTemplateVariables(rawTemplate.signature, vendorName);
 
-      // Find corresponding Excel file for this vendor (if attachments are enabled)
+  // Find corresponding PO/html file for this vendor (if attachments are enabled)
       let excelFilePath = null;
       if (createFiles && realFiles.length > 0) {
         const matchingFile = realFiles.find(file => {
