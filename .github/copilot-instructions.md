@@ -1,6 +1,8 @@
 ## Quick task receipt
 I will add concise, actionable guidance so an AI coding agent can be productive immediately in this repo: architecture, developer workflows, patterns, and important files to inspect or edit.
 
+NOTE: On Windows this repository uses PowerShell as the default shell for examples and terminal commands; code fences labelled `powershell` show Windows-friendly commands. Use `powershell.exe` when running the example commands on Windows.
+
 ## Checklist for the agent
 - Understand the runtime split: Electron main, Node backend (server-like modules), and React client in `client/`.
 - Use the project's migration system (`backend/migrations.js`) and `backend/db.js` when touching the DB.
