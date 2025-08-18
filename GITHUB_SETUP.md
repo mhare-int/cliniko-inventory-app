@@ -33,7 +33,7 @@ autoUpdater.setFeedURL({
 5. Create repository
 
 ### 3. **Push Your Code to GitHub**
-```powershell
+```bash
 cd "/Users/mitchellhare/Downloads/Revamped Cliniko App"
 git init
 git add .
@@ -53,7 +53,7 @@ git push -u origin main
 
 ### 5. **Set Environment Variable**
 Add this to your terminal profile (`~/.zshrc` on macOS):
-```powershell
+```bash
 export GH_TOKEN="your_github_token_here"
 ```
 
@@ -71,7 +71,7 @@ Then reload: `source ~/.zshrc`
    ```
 
 3. **Build and publish:**
-   ```powershell
+   ```bash
    npm run build --prefix client
    npx electron-builder --publish=always
    ```

@@ -301,17 +301,41 @@ function GenerateSupplierFiles() {
           console.log('🔍 Processing file record:', fileRecord);
 
           if (fileRecord.filename) {
-            // Use the stored filename and path
-            const filePath = fileRecord.file_path || `${outputFolder}/${fileRecord.filename}`;
+            // Use the stored filename and path (prefer DB path). If not found, try common fallback locations
+            const storedPath = fileRecord.file_path || '';
+            const fname = fileRecord.filename;
+            const vendor = fileRecord.vendor_name || fileRecord.vendor || '';
+            const candidates = [];
+            if (storedPath) candidates.push(storedPath);
+            // Output folder + filename
+            if (outputFolder && fname) candidates.push(`${outputFolder}${outputFolder.endsWith('\\') || outputFolder.endsWith('/') ? '' : '\\'}${fname}`);
+            // Output folder + vendor subfolder + filename
+            if (outputFolder && vendor && fname) candidates.push(`${outputFolder}${outputFolder.endsWith('\\') || outputFolder.endsWith('/') ? '' : '\\'}${vendor}${vendor.endsWith('\\') || vendor.endsWith('/') ? '' : '\\'}${fname}`);
+            // Basename of storedPath inside outputFolder (use JS string split to derive basename)
+            if (outputFolder && storedPath && fname) {
+              const base = storedPath.split('\\').pop().split('/').pop();
+              candidates.push(`${outputFolder}${outputFolder.endsWith('\\') || outputFolder.endsWith('/') ? '' : '\\'}${base}`);
+            }
 
-            // Verify the file still exists
+            let foundPath = null;
             try {
-              const fileExists = await window.api.fileExists(filePath);
-              if (fileExists) {
-                console.log(`✅ Found existing ${fileRecord.file_type} file from database:`, fileRecord.filename);
+              for (const candidate of candidates) {
+                if (!candidate) continue;
+                try {
+                  const exists = await window.api.fileExists(candidate);
+                  if (exists) {
+                    foundPath = candidate;
+                    break;
+                  }
+                } catch (e) {
+                  // ignore and try next candidate
+                }
+              }
+              if (foundPath) {
+                console.log(`✅ Found existing ${fileRecord.file_type} file from database (resolved):`, fname, '->', foundPath);
                 existingFileLinks.push({
-                  file: fileRecord.filename,
-                  path: filePath,
+                  file: fname,
+                  path: foundPath,
                   vendor: fileRecord.vendor_name,
                   type: fileRecord.file_type === 'oft' ? 'email' : 'file',
                   isOutlookTemplate: fileRecord.file_type === 'oft',
@@ -320,10 +344,10 @@ function GenerateSupplierFiles() {
                   createdAt: fileRecord.created_at
                 });
               } else {
-                console.log('⚠️ File exists in database but not on disk:', filePath);
+                console.log('⚠️ File exists in database but not found in known locations. Tried:', candidates);
               }
             } catch (error) {
-              console.log('❌ Error verifying file exists:', filePath, error);
+              console.log('❌ Error verifying file exists (candidates):', candidates, error);
             }
           } else {
             console.log('⚠️ File record has no filename stored:', fileRecord);
@@ -394,9 +418,48 @@ function GenerateSupplierFiles() {
         }
         
         console.log('✅ Creating new Excel files');
-        
+
   // Create the actual files
         if (!window.api || !window.api.createSupplierOrderFilesForVendors) throw new Error("createSupplierOrderFilesForVendors not available");
+
+        // Before creating new files, delete any existing HTML PO files for this PR so they are replaced cleanly.
+        try {
+          const existingHtmlFilesPre = await window.api.getGeneratedFiles(pr.id, 'html').catch(() => []);
+          const existingPoFilesPre = await window.api.getGeneratedFiles(pr.id, 'po').catch(() => []);
+          const existingHtmlCandidates = (existingHtmlFilesPre || []).concat(existingPoFilesPre || []);
+          if (existingHtmlCandidates && existingHtmlCandidates.length > 0) {
+            console.log('ℹ️ Deleting existing PO/html files before creation:', existingHtmlCandidates.map(f => f.filename));
+            for (const oldFile of existingHtmlCandidates) {
+              try {
+                const vendorKey = oldFile.vendor || oldFile.vendor_name || oldFile.supplier || '';
+                const filename = oldFile.filename || oldFile.file || '';
+                if (filename) {
+                  // Delete DB record first
+                  try {
+                    await window.api.deleteGeneratedFile(pr.id, vendorKey, 'html', filename);
+                    console.log('Deleted old HTML DB record (pre):', filename);
+                  } catch (dbErr) {
+                    console.warn('Could not delete old HTML DB record (pre):', filename, dbErr);
+                  }
+                  // Delete from disk if path available
+                  const filePath = oldFile.file_path || oldFile.path || (outputFolder ? `${outputFolder}\${vendorKey}\${filename}` : '');
+                  if (filePath) {
+                    try {
+                      await window.api.deleteFileFromDisk(filePath);
+                      console.log('Deleted old HTML file from disk (pre):', filePath);
+                    } catch (diskErr) {
+                      console.warn('Could not delete old HTML file from disk (pre):', filePath, diskErr);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('Error deleting existing PO/html file (pre):', e && e.message ? e.message : e);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Failed pre-clean of existing PO/html files (continuing):', e && e.message ? e.message : e);
+        }
         const vendorItems = pr.items.map(item => {
           // Conservatively pass through known pricing fields if present so backend generator
           // doesn't have to rely on DB reload. Keep shape minimal and non-destructive.

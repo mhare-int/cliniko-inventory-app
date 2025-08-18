@@ -3803,22 +3803,40 @@ function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, 
         return reject({ error: 'Failed to create vendor_files table', details: createErr.message });
       }
       
-      // Insert or replace the file record
-      db.run(
-        `INSERT OR REPLACE INTO vendor_files 
-         (pr_id, vendor_name, file_type, filename, file_path, file_size, created_at) 
-         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-        [prId, vendorName, fileType, filename, filePath, fileSize],
-        function(err) {
-          if (err) {
-            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated ERROR: ${err && err.message ? err.message : err}\n`); } catch (e) {}
-            console.error('Error marking vendor files created:', err);
-            return reject({ error: 'Failed to mark vendor files created', details: err.message });
+        // Run a dedupe pass to remove accidental duplicates (keep the earliest id per group)
+        db.run(`DELETE FROM vendor_files WHERE id NOT IN (SELECT MIN(id) FROM vendor_files GROUP BY pr_id, vendor_name, file_type, filename)`, [], function(dedupeErr) {
+          if (dedupeErr) {
+            // Log but do not fail - we'll still try to create the unique index and upsert
+            console.warn('Warning: failed to dedupe vendor_files table before creating index:', dedupeErr.message || dedupeErr);
+            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] DEDUPE WARNING: ${dedupeErr && dedupeErr.message ? dedupeErr.message : dedupeErr}\n`); } catch (e) {}
           }
-          try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated success for prId=${prId}, vendor=${vendorName}, filename=${filename}\n`); } catch (e) {}
-          resolve(true);
-        }
-      );
+
+          // Create a unique index to prevent future duplicate rows on the same (pr_id, vendor_name, file_type, filename)
+          db.run(`CREATE UNIQUE INDEX IF NOT EXISTS vendor_files_unique_idx ON vendor_files(pr_id, vendor_name, file_type, filename)`, [], function(idxErr) {
+            if (idxErr) {
+              console.warn('Warning: failed to create unique index on vendor_files:', idxErr.message || idxErr);
+              try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] INDEX CREATE WARNING: ${idxErr && idxErr.message ? idxErr.message : idxErr}\n`); } catch (e) {}
+            }
+
+            // Use UPSERT to insert or update the record atomically
+            const upsertSql = `INSERT INTO vendor_files (pr_id, vendor_name, file_type, filename, file_path, file_size, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(pr_id, vendor_name, file_type, filename) DO UPDATE SET
+                file_path = excluded.file_path,
+                file_size = excluded.file_size,
+                created_at = CURRENT_TIMESTAMP`;
+
+            db.run(upsertSql, [prId, vendorName, fileType, filename, filePath, fileSize], function(err) {
+              if (err) {
+                try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated ERROR: ${err && err.message ? err.message : err}\n`); } catch (e) {}
+                console.error('Error marking vendor files created (upsert):', err);
+                return reject({ error: 'Failed to mark vendor files created', details: err.message });
+              }
+              try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated success for prId=${prId}, vendor=${vendorName}, filename=${filename}\n`); } catch (e) {}
+              resolve(true);
+            });
+          });
+        });
     });
   });
 }

@@ -18,7 +18,7 @@
 ### 🛠️ Available Scripts
 
 #### Database Management
-```powershell
+```bash
 npm run validate-db          # Check database schema and cleanliness
 npm run validate-dist-db     # Validate database in distribution locations
 npm run clean-db            # Clean database (ORIGINAL SCRIPT - had issues)
@@ -26,7 +26,7 @@ node simple-clean-db.js      # Clean database (WORKING SCRIPT)
 ```
 
 #### Build and Distribution
-```powershell
+```bash
 npm run build-validated      # Build with validation checks
 npm run build-clean         # Clean database + validated build
 ```
@@ -71,7 +71,7 @@ npm run build-clean         # Clean database + validated build
 
 ### 🔧 Troubleshooting
 If you need to restore data:
-```powershell
+```bash
 # Restore from latest backup
 cp backend/appdata.db.backup-simple-clean-2025-08-08T07-04-14-541Z backend/appdata.db
 ```

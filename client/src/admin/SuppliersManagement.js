@@ -58,7 +58,14 @@ function RestoreSuppliersPopup({
 
   // Debug: log the inactive supplier objects the popup will render
   useEffect(() => {
-    // Debug logging removed
+    try {
+      console.debug('[SuppliersManagement] RestoreSuppliersPopup inactiveSuppliersData count:', inactiveSuppliersData.length);
+      if (inactiveSuppliersData.length > 0) {
+        console.debug('[SuppliersManagement] Sample inactive supplier:', inactiveSuppliersData[0]);
+      }
+    } catch (e) {
+      console.error('Error logging inactiveSuppliersData:', e);
+    }
   }, [inactiveSuppliersData]);
 
   const handleSelectAll = () => {
@@ -256,7 +263,8 @@ function SuppliersManagement() {
     setLoading(true);
     setError('');
     try {
-  const result = await window.api.getAllSuppliers();
+      const result = await window.api.getAllSuppliers();
+  console.debug('[SuppliersManagement] getAllSuppliers result:', result && result.length ? `${result.length} suppliers` : result);
       // Validate response
       if (!result) {
         setSuppliers([]);
@@ -273,6 +281,7 @@ function SuppliersManagement() {
         try {
           if (window.api && window.api.getInactiveSuppliers) {
             const inactiveResult = await window.api.getInactiveSuppliers();
+    console.debug('[SuppliersManagement] getInactiveSuppliers result:', Array.isArray(inactiveResult) ? `${inactiveResult.length} inactive` : inactiveResult);
             if (inactiveResult && !inactiveResult.error && Array.isArray(inactiveResult) && inactiveResult.length > 0) {
               setInactiveSuppliers(new Set(inactiveResult.map(s => s.id)));
               setInactiveSuppliersList(inactiveResult);
@@ -297,6 +306,7 @@ function SuppliersManagement() {
   };
 
   const handleOpenRestorePopup = () => {
+    console.debug('[SuppliersManagement] Opening Restore popup - inactiveSuppliers.size:', inactiveSuppliers.size, 'inactiveSuppliersList.length:', inactiveSuppliersList.length);
     setShowRestorePopup(true);
   };
 
@@ -313,7 +323,7 @@ function SuppliersManagement() {
         specialInstructions: formData.specialInstructions,
         accountNumber: formData.accountNumber
       };
-  // Saving supplier payload
+      console.debug('[SuppliersManagement] saving supplier, editing:', !!editingSupplier, 'payload:', payload);
       if (editingSupplier) {
         result = await window.api.updateSupplier(
           editingSupplier.id,
@@ -332,7 +342,7 @@ function SuppliersManagement() {
           payload.accountNumber
         );
       }
-  // Save supplier result
+      console.debug('[SuppliersManagement] save supplier result:', result);
       
       if (result.error) {
         setError(result.error);

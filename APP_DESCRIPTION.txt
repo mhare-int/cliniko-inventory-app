@@ -74,5 +74,3 @@ BENEFITS
 - Real-time visibility into stock levels
 - Data-driven decision making through analytics
 - Integration with existing Cliniko workflows
-
-NOTE: On Windows, this repo's examples and developer commands use PowerShell by default.

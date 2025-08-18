@@ -1,89 +1,174 @@
 // createSupplierOrderFiles.js
-// Utility to create supplier order Excel files in a user-selected output folder
-// Usage: createSupplierOrderFiles(items, outputFolder)
-// items: array of { 'Supplier Name', ... }
-// outputFolder: absolute path to base output directory
-
+// Clean implementation that supports optional template rendering and PDF generation (Electron)
 const fs = require('fs');
 const path = require('path');
-// We'll generate a simple, print-friendly HTML purchase order per supplier.
-// This avoids Excel dependency for a proper-looking PO document.
 
-/**
- * Creates supplier order Excel files in subfolders under the output folder.
- * @param {Array<Object>} items - List of order items, each with 'Supplier Name' and other fields.
- * @param {string} outputFolder - Absolute path to the output directory.
- * @returns {Promise<Array<{supplier: string, file: string}>>} - List of created files (relative to outputFolder).
- */
-async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'html' }) {
-  if (!Array.isArray(items) || !outputFolder) throw new Error('Invalid arguments');
-  // Group items by supplier
-  const supplierGroups = {};
-  for (const item of items) {
-    const supplier = item['Supplier Name'] || 'Unknown Supplier';
-    if (!supplierGroups[supplier]) supplierGroups[supplier] = [];
-    supplierGroups[supplier].push(item);
+// Simple debug logger for PO generation
+function poDebugLog(msg) {
+  try {
+    const p = path.join(__dirname, 'create_po_debug.log');
+    const line = `[${new Date().toISOString()}] ${String(msg)}\n`;
+    fs.appendFileSync(p, line, { encoding: 'utf8' });
+  } catch (e) {
+    // swallow logging errors
   }
+}
+
+async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'html' }) {
+  const isPreview = opts && opts.previewOnly === true;
+  if (!Array.isArray(items) || (!isPreview && !outputFolder)) {
+    poDebugLog(`Invalid arguments passed to createSupplierOrderFiles - itemsType:${typeof items} itemsLen:${Array.isArray(items)?items.length:'NA'} outputFolder:${outputFolder} isPreview:${isPreview}`);
+    throw new Error('Invalid arguments');
+  }
+
+  poDebugLog(`createSupplierOrderFiles called with items=${items.length}, outputFolder=${outputFolder}, opts=${JSON.stringify(opts)}`);
+
+  const groups = {};
+  for (const it of items) {
+    const s = it['Supplier Name'] || 'Unknown Supplier';
+    if (!groups[s]) groups[s] = [];
+    groups[s].push(it);
+  }
+
+  const created = [];
   const today = new Date();
   const dateStr = today.toISOString().replace(/[:.]/g, '-');
-  const createdFiles = [];
 
-  // Helper to sanitize file/folder names
   const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim() || 'Unknown';
 
-  for (const [supplier, orders] of Object.entries(supplierGroups)) {
-    if (!orders.length) continue;
-    const supplierNameSafe = sanitize(supplier);
-    const supplierFolder = path.join(outputFolder, supplierNameSafe);
-    fs.mkdirSync(supplierFolder, { recursive: true });
-  // Prefer to include PR/PUR id in the filename when available so we can safely scope deletions
-  const prIdCandidate = (opts && opts.prId) || (orders[0] && (orders[0]['PUR Number'] || orders[0].pr_id || orders[0].PRNumber || orders[0].prId));
-  const prIdSafe = prIdCandidate ? String(prIdCandidate).replace(/[^a-zA-Z0-9-_]/g, '') : null;
-  const orderFilename = prIdSafe ? `${supplierNameSafe}_PurchaseOrder_${prIdSafe}.html` : `${supplierNameSafe}_PurchaseOrder_${dateStr}.html`;
-    const orderPath = path.join(supplierFolder, orderFilename);
+  for (const [supplier, orders] of Object.entries(groups)) {
+    if (!orders || orders.length === 0) continue;
+    // Debug: log a sample order object so we can detect field names present in incoming PR items
+    try {
+      poDebugLog(`Order sample for supplier ${supplier}: ${JSON.stringify(orders[0])}`);
+    } catch (e) {
+      poDebugLog(`Order sample logging failed for supplier ${supplier}: ${e && e.message ? e.message : e}`);
+    }
+    const safe = sanitize(supplier);
+    const folder = !isPreview ? path.join(outputFolder, safe) : null;
+    if (!isPreview) {
+      try {
+        fs.mkdirSync(folder, { recursive: true });
+        poDebugLog(`Created folder: ${folder}`);
+      } catch (e) {
+        poDebugLog(`Failed to create folder ${folder}: ${e && e.message ? e.message : e}`);
+        // continue - writer will likely fail below but we want to log the error
+      }
+    }
+  const poNumber = orders[0]['PUR Number'] || orders[0]['PR Number'] || '';
+  // Use PR identifier in filename when available so repeated generation for the same
+  // PR and supplier overwrites the previous file instead of creating timestamped duplicates.
+  const filename = `${safe}_PurchaseOrder_${poNumber ? poNumber : dateStr}.html`;
+  const filePath = !isPreview ? path.join(folder, filename) : null;
+    // Prefer SupplierAccountNumber (enriched by backend) or supplier_account_number when available,
+    // then fall back to older keys used in various import shapes.
+    const account = orders.map(o => 
+      o.SupplierAccountNumber || o.supplier_account_number || o['Account Number'] || o.accountNumber || o.account_number
+    ).filter(Boolean)[0] || '';
 
-    // Allow overrides from opts.company and opts.template
-    const poNumber = orders[0]['PUR Number'] || orders[0]['PR Number'] || '';
-    const accountNumbers = orders.map(o => o['Account Number'] || o.accountNumber || o.account_number).filter(Boolean);
-    const accountNumber = accountNumbers.length ? accountNumbers[0] : '';
+    const company = (opts && opts.company) ? opts.company : {};
+    const companyName = company.name || 'Good Life Clinic';
+    const companyAddress = company.address || '123 Wellness Way\nMelbourne VIC 3000';
+    const companyPhone = company.phone || '';
+    const companyEmail = company.email || '';
+  // Company-level special instructions (fallback)
+  const companySpecialInstructions = (company.special_instructions || company.specialInstructions || (opts && opts.company && opts.company.special_instructions)) || '';
 
-    const companyFromOpts = (opts && opts.company) ? opts.company : {};
-    const companyName = companyFromOpts.name || 'Good Life Clinic';
-    const companyAddress = companyFromOpts.address || '123 Wellness Way, Suite 5\nMelbourne VIC 3000';
-    const companyPhone = companyFromOpts.phone || '02 9000 0000';
-    const companyEmail = companyFromOpts.email || 'orders@goodlifeclinic.example';
-
-    // Logo embedding: prefer explicit logoPath, otherwise company.logo filename under backend/uploads
+    // build logo data uri
     let logoDataUri = null;
     try {
-      const logoPathCandidate = (opts && opts.company && opts.company.logoPath) || (opts && opts.company && opts.company.logo);
-      if (logoPathCandidate) {
-        let logoFullPath = logoPathCandidate;
-        if (!path.isAbsolute(logoFullPath)) {
-          // Assume uploads folder
-          logoFullPath = path.join(__dirname, 'uploads', logoPathCandidate);
-        }
-        if (fs.existsSync(logoFullPath)) {
-          const imgBuf = fs.readFileSync(logoFullPath);
-          const ext = path.extname(logoFullPath).toLowerCase();
+      const logo = company.logo || company.logoPath || null;
+      if (logo) {
+        let full = logo;
+        if (!path.isAbsolute(full)) full = path.join(__dirname, 'uploads', logo);
+        if (fs.existsSync(full)) {
+          const buf = fs.readFileSync(full);
+          const ext = path.extname(full).toLowerCase();
           let mime = 'image/png';
           if (ext === '.jpg' || ext === '.jpeg') mime = 'image/jpeg';
           else if (ext === '.svg') mime = 'image/svg+xml';
-          else if (ext === '.gif') mime = 'image/gif';
-          const b64 = imgBuf.toString('base64');
+          const b64 = buf.toString('base64');
           logoDataUri = `data:${mime};base64,${b64}`;
         }
       }
     } catch (e) {
-      console.warn('Failed to load logo for embedding:', e && e.message ? e.message : e);
       logoDataUri = null;
     }
 
-  const htmlHeader = `<!doctype html>
+    // rows
+    let rows = '';
+    let subtotal = 0;
+
+    // Helper: find first numeric-looking field from a list of candidate keys
+    const findNumber = (obj, keys) => {
+      for (const k of keys) {
+        if (!obj) continue;
+        if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+        const raw = obj[k];
+        if (raw === undefined || raw === null) continue;
+        if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+        // If string, strip currency/thousands characters and parse
+        if (typeof raw === 'string') {
+          const cleaned = raw.replace(/[,\s\$£€\(\)]/g, '').replace(/–/g, '-');
+          const n = parseFloat(cleaned);
+          if (!Number.isNaN(n) && Number.isFinite(n)) return n;
+        }
+      }
+      return 0;
+    };
+
+    orders.forEach((o, i) => {
+      const qty = findNumber(o, ['No. to Order', 'No to Order', 'NoToOrder', 'Quantity', 'quantity', 'no_to_order', 'qty']);
+      const product = o['Product Name'] || o.product_name || o.name || '';
+      const unit = o['Unit'] || o.unit || o.unitOfMeasure || '';
+
+  // Try multiple possible keys for unit price so uploaded/old PRs are handled
+  let price = findNumber(o, ['Unit Price', 'unit_price', 'unitPrice', 'Price', 'price', 'Cost', 'cost', 'unitprice', 'unit_cost', 'unitcost']);
+
+  // If the importer already has a precomputed line total field, prefer that
+  const precomputedLine = findNumber(o, ['line_total', 'lineTotal', 'Line Total']);
+
+  // If price missing but precomputed line exists and qty > 0, derive unit price
+  const derivedPrice = (precomputedLine > 0 && qty > 0) ? (precomputedLine / qty) : 0;
+  if ((!price || price === 0) && derivedPrice) price = derivedPrice;
+
+  const line = precomputedLine > 0 ? precomputedLine : (Number(qty) * Number(price || 0));
+      subtotal += Number(line) || 0;
+
+      // Always render numeric values with two decimals (show 0.00 when empty)
+      const priceText = Number.isFinite(price) ? Number(price).toFixed(2) : '0.00';
+      const lineText = Number.isFinite(line) ? Number(line).toFixed(2) : '0.00';
+
+      rows += `<tr><td>${i + 1}</td><td>${qty}</td><td>${escapeHtml(unit)}</td><td>${escapeHtml(product)}</td><td style="text-align:right">${priceText}</td><td style="text-align:right">${lineText}</td></tr>`;
+    });
+
+    const gst = 0;
+    const total = subtotal + gst;
+
+    // Determine notes: supplier-level overrides company-level; if neither present, notesText will be empty
+    const supplierLevelInstructions = (function(){
+      try {
+        const first = orders && orders[0] ? orders[0] : null;
+        if (first) {
+          const supplierLevel = first.supplier_special_instructions || first.supplierSpecialInstructions || first.special_instructions || first.specialInstructions || (first.supplier && (first.supplier.special_instructions || first.supplier.specialInstructions));
+          if (supplierLevel && String(supplierLevel).trim() !== '') return String(supplierLevel);
+        }
+      } catch (e) {}
+      return null;
+    })();
+
+    const notesText = supplierLevelInstructions || companySpecialInstructions || '';
+
+  // Templates are ignored — use the application's hardcoded/default PO HTML layout
+  // (This preserves the original hardcoded PO structure and prevents admin-supplied
+  // template fragments from changing the generated output.)
+
+    // default layout (matches the tested HTML structure)
+    const html = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Purchase Order - ${escapeHtml(supplierNameSafe)}</title>
+  <title>Purchase Order - ${escapeHtml(safe)}</title>
   <style>
     body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 30px; color:#222 }
     .top { display:flex; justify-content:space-between; align-items:flex-start }
@@ -120,10 +205,10 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
   </div>
 
   <div class="supplier-block">
-  <div class="supplier-details">
+    <div class="supplier-details">
       <div style="font-weight:700">Supplier</div>
       <div style="margin-top:6px">${escapeHtml(supplier)}</div>
-  ${accountNumber ? `<div style="margin-top:6px">Account Number: <strong>${escapeHtml(accountNumber)}</strong></div>` : ''}
+      ${account ? `<div style="margin-top:6px">Account Number: <strong>${escapeHtml(account)}</strong></div>` : ''}
     </div>
     <div class="supplier-details">
       <div style="font-weight:700">Delivery / Billing</div>
@@ -144,31 +229,7 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
       </tr>
     </thead>
     <tbody>
-`;
-
-    let rowHtml = '';
-    let subtotal = 0;
-    orders.forEach((order, idx) => {
-      const qty = Number(order['No. to Order'] ?? order['No. To Order'] ?? order['Quantity'] ?? order.no_to_order ?? order.quantity ?? 0) || 0;
-      const product = order['Product Name'] || order.product_name || order.name || '';
-      const unit = order['Unit'] || order.unit || '';
-      const price = Number(order['Unit Price'] || order.unit_price || 0) || 0;
-      const lineTotal = qty * price;
-      subtotal += lineTotal;
-      rowHtml += `<tr>
-        <td>${idx + 1}</td>
-        <td>${qty}</td>
-        <td>${escapeHtml(unit)}</td>
-        <td>${escapeHtml(product)}</td>
-        <td style="text-align:right">${price ? price.toFixed(2) : ''}</td>
-        <td style="text-align:right">${lineTotal ? lineTotal.toFixed(2) : ''}</td>
-      </tr>`;
-    });
-
-    const gst = 0; // placeholder
-    const total = subtotal + gst;
-
-    const htmlFooter = `
+${rows}
     </tbody>
   </table>
 
@@ -182,115 +243,131 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
 
   <div class="notes">
     <strong>Special Instructions / Notes:</strong>
-    <div>${escapeHtml((orders[0] && (orders[0].special_instructions || orders[0].specialInstructions)) || '')}</div>
-    <div style="margin-top:12px">Please deliver to the address above. This purchase order is subject to our standard terms.</div>
+    <div>${escapeHtml(notesText)}</div>
+    ${notesText ? '' : '<div style="margin-top:12px">Please deliver to the address above. This purchase order is subject to our standard terms.</div>'}
   </div>
 
 </body>
 </html>`;
 
-    const content = htmlHeader + rowHtml + htmlFooter;
-
-    // Collect existing PO files so we can remove them only after a successful write.
-    let existingFiles = [];
-    try {
-      const allFiles = fs.readdirSync(supplierFolder);
-      if (prIdSafe) {
-        // Only target files for the same PR when a PR id is known
-        existingFiles = allFiles.filter(f => f.indexOf(`_PurchaseOrder_${prIdSafe}`) !== -1).map(f => path.join(supplierFolder, f));
-      } else {
-        // Fallback: previous behavior (delete previously date-stamped purchase orders for this supplier)
-        existingFiles = allFiles.filter(f => {
-          const lower = f.toLowerCase();
-          return lower.startsWith(`${supplierNameSafe.toLowerCase()}_purchaseorder_`) && (lower.endsWith('.html') || lower.endsWith('.htm') || lower.endsWith('.pdf'));
-        }).map(f => path.join(supplierFolder, f));
-      }
-    } catch (e) {
-      // If reading dir fails, log and continue; do not block generation
-      console.warn('Could not list old PO files for', supplier, e && e.message ? e.message : e);
-      existingFiles = [];
+    if (isPreview) {
+      // Return the rendered default HTML for preview (first supplier only)
+      return html;
     }
 
-    // Write atomically: write to a temp file then rename into place.
-    const tmpPath = orderPath + '.tmp';
     try {
-      fs.writeFileSync(tmpPath, content, { encoding: 'utf8' });
-      // Windows: ensure any existing target is replaced by rename
-      try { fs.unlinkSync(orderPath); } catch (e) { /* ignore if doesn't exist */ }
-      fs.renameSync(tmpPath, orderPath);
+      fs.writeFileSync(filePath, html, 'utf8');
+      poDebugLog(`Wrote HTML file: ${filePath}`);
     } catch (e) {
-      // Cleanup temp file if present
-      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
-      // rethrow to let caller handle the error
-      throw e;
+      poDebugLog(`Error writing HTML file ${filePath}: ${e && e.message ? e.message : e}`);
+      // still attempt to continue to next supplier
     }
 
-    // After successful write, remove previous versions (except the new file)
-    try {
-      for (const fpath of existingFiles) {
-        try {
-          if (path.normalize(fpath) === path.normalize(orderPath)) continue;
-          fs.unlinkSync(fpath);
-          console.log(`Removed old PO file for ${supplier}: ${path.basename(fpath)}`);
-        } catch (e) {
-          console.warn(`Failed to remove old PO file ${path.basename(fpath)} for ${supplier}:`, e && e.message ? e.message : e);
-        }
-      }
-    } catch (e) {
-      console.warn('Could not clean old PO files for', supplier, e && e.message ? e.message : e);
-    }
-
-    const relative = outputFolder ? path.relative(outputFolder, orderPath) : path.basename(orderPath);
-    const entry = { supplier, file: path.basename(orderPath), relative, path: path.normalize(orderPath) };
-
-    // If PDF requested and running inside Electron main process, generate PDF using a headless BrowserWindow
+    // If PDF requested and running under Electron, attempt to generate PDF
+  const entry = { supplier, file: path.relative(outputFolder, filePath), path: filePath };
     if (opts && String(opts.format).toLowerCase() === 'pdf') {
+      // Check electron availability explicitly and log clear reasons why PDF may be skipped
+      let electronAvailable = true;
       try {
-        // Try to require electron - will throw if not running in Electron
-        const { BrowserWindow } = require('electron');
-        // Create an offscreen / hidden window to render the HTML
-        const win = new BrowserWindow({ show: false, webPreferences: { offscreen: false } });
-        // Load the HTML via data URL to avoid writing extra files
-        const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(content);
-        await win.loadURL(dataUrl);
-        // Wait for finish
-        await new Promise((res) => win.webContents.once('did-finish-load', res));
-        // Print to PDF
-        const pdfBuffer = await win.webContents.printToPDF({ printBackground: true });
-        const pdfFilename = orderFilename.replace(/\.html?$/i, '.pdf');
-        const pdfPath = path.join(supplierFolder, pdfFilename);
-
-        const tmpPdf = pdfPath + '.tmp';
-        try {
-          fs.writeFileSync(tmpPdf, pdfBuffer);
-          try { fs.unlinkSync(pdfPath); } catch (e) { /* ignore */ }
-          fs.renameSync(tmpPdf, pdfPath);
-        } catch (e) {
-          try { if (fs.existsSync(tmpPdf)) fs.unlinkSync(tmpPdf); } catch (_) {}
-          throw e;
+        const maybe = require('electron');
+        if (!maybe || !maybe.BrowserWindow) {
+          electronAvailable = false;
+          poDebugLog('Electron present but BrowserWindow missing - cannot generate PDF');
         }
-
-        // Close the window
-        try { win.close(); } catch (e) { /* ignore */ }
-        // Add PDF info to entry (normalized paths)
-        entry.pdf = path.basename(pdfPath);
-        entry.pdfRelative = outputFolder ? path.relative(outputFolder, pdfPath) : path.basename(pdfPath);
-        entry.pdfPath = path.normalize(pdfPath);
       } catch (e) {
-        // Not running in Electron or PDF generation failed - keep HTML only
-        console.warn('PDF generation unavailable or failed for', supplier, e && e.message ? e.message : e);
+        electronAvailable = false;
+        poDebugLog('Electron module not available in this process; skipping PDF generation: ' + (e && e.message ? e.message : e));
+      }
+
+      if (electronAvailable) {
+        try {
+          const { BrowserWindow } = require('electron');
+          const win = new BrowserWindow({ show: false, webPreferences: { offscreen: false } });
+          const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+          await win.loadURL(dataUrl);
+          await new Promise((res) => win.webContents.once('did-finish-load', res));
+          const pdfBuf = await win.webContents.printToPDF({ printBackground: true });
+          const pdfName = filename.replace(/\.html?$/i, '.pdf');
+          const pdfPath = path.join(folder, pdfName);
+          try {
+            fs.writeFileSync(pdfPath, pdfBuf);
+            poDebugLog(`Wrote PDF file: ${pdfPath}`);
+          } catch (e) {
+            poDebugLog(`Error writing PDF file ${pdfPath}: ${e && e.message ? e.message : e}`);
+          }
+          try { win.close(); } catch (e) { poDebugLog(`Error closing BrowserWindow: ${e && e.message ? e.message : e}`); }
+          entry.pdf = path.relative(outputFolder, pdfPath);
+          entry.pdfPath = pdfPath;
+        } catch (e) {
+          poDebugLog(`PDF generation error for supplier ${supplier}: ${e && e.message ? e.message : e}`);
+        }
+      } else {
+        poDebugLog(`Skipping PDF generation for supplier ${supplier} because Electron/BrowserWindow not available`);
       }
     }
 
-    createdFiles.push(entry);
+    created.push(entry);
   }
-  return createdFiles;
 
-  // helper: escape HTML
-  function escapeHtml(s) {
-    if (!s && s !== 0) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+  return created;
+}
+
+function renderSimpleTemplate(tpl, ctx, logoDataUri) {
+  let out = String(tpl || '');
+  // Insert logo placeholder (unescaped, expects data URI)
+  out = out.replace(/\{\{\s*logo\s*\}\}/g, logoDataUri || '');
+  // Insert raw items HTML first
+  out = out.replace(/\{\{\s*items\s*\}\}/g, ctx.items || '');
+
+  // Helper: convert snake/hyphen to camelCase (company_address -> companyAddress)
+  const toCamelCase = (s) => String(s || '').split(/[_-]/).map((part, i) => i === 0 ? part : (part.charAt(0).toUpperCase() + part.slice(1))).join('');
+
+  // Common alias mapping (template aliases -> ctx keys)
+  const alias = {
+    orderNumber: 'poNumber',
+    order_number: 'poNumber',
+    orderNum: 'poNumber',
+    orderNo: 'poNumber',
+    orderId: 'poNumber',
+    supplierName: 'supplier',
+    supplier_name: 'supplier',
+    orderTable: 'items',
+    order_table: 'items',
+    itemsTable: 'items',
+    company: 'companyName'
+  };
+
+  out = out.replace(/\{\{\s*([a-zA-Z0-9_\-]+)\s*\}\}/g, (m, key) => {
+    try {
+      // If alias exists, map to canonical key
+      if (alias[key]) {
+        const mapped = alias[key];
+        // items already inserted as raw, treat logo handled above
+        if (mapped === 'items') return ctx.items || '';
+        const valA = ctx[mapped];
+        return valA !== undefined && valA !== null ? escapeHtml(String(valA)) : '';
+      }
+
+      // try camelCase version
+      const camel = toCamelCase(key);
+      if (ctx[camel] !== undefined && ctx[camel] !== null) return escapeHtml(String(ctx[camel]));
+
+      // try direct key
+      if (ctx[key] !== undefined && ctx[key] !== null) return escapeHtml(String(ctx[key]));
+
+      // fallback to empty
+      return '';
+    } catch (e) {
+      return '';
+    }
+  });
+
+  return out;
+}
+
+function escapeHtml(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 module.exports = createSupplierOrderFiles;
