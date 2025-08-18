@@ -11,7 +11,9 @@ function PurchaseRequests() {
   const [expanded, setExpanded] = useState([]); // For PR tab
   const [expandedVendor, setExpandedVendor] = useState([]); // For Vendor tab
   const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedLines, setSelectedLines] = useState({}); // { prId: [bool, bool, ...] }
   const [editing, setEditing] = useState({}); // For PR tab
+  const [selectedVendorLines, setSelectedVendorLines] = useState({}); // { vendor: [bool,...] }
   const [vendorEditing, setVendorEditing] = useState({}); // For Vendor tab
   const [savingId, setSavingId] = useState(null);
   const [savingVendor, setSavingVendor] = useState(null);
@@ -23,6 +25,43 @@ function PurchaseRequests() {
   const [prSuggestions, setPrSuggestions] = useState([]);
   const [vendorSuggestions, setVendorSuggestions] = useState([]);
   const [suppliersMap, setSuppliersMap] = useState({});
+
+  const fmtCurrency = (n) => {
+    if (n === null || typeof n === 'undefined' || n === '') return '—';
+    const num = Number(n) || 0;
+    return `$${num.toFixed(2)}`;
+  };
+
+  // Compute PR-level total when backend doesn't supply `total_cost`.
+  // Prefer explicit pr.total_cost/pr.totalCost, otherwise sum item.line_total or
+  // fall back to (unit_cost * No. to Order) per item.
+  const computePrTotal = (pr) => {
+    if (!pr) return '';
+    const explicit = pr.total_cost ?? pr.totalCost;
+    if (typeof explicit !== 'undefined' && explicit !== null) return explicit;
+    if (!Array.isArray(pr.items)) return '';
+    const total = pr.items.reduce((acc, item) => {
+      const line = Number(item.line_total ?? item.lineTotal ?? NaN);
+      if (!Number.isNaN(line)) return acc + line;
+      const unit = Number(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? 0) || 0;
+      const qty = Number(item["No. to Order"] ?? item.no_to_order ?? item.quantity ?? 0) || 0;
+      return acc + unit * qty;
+    }, 0);
+    return total;
+  };
+
+  // Compute total for an array of items (used in Vendor view header)
+  const computeItemsTotal = (items) => {
+    if (!Array.isArray(items)) return '';
+    const total = items.reduce((acc, item) => {
+      const line = Number(item.line_total ?? item.lineTotal ?? NaN);
+      if (!Number.isNaN(line)) return acc + line;
+      const unit = Number(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? 0) || 0;
+      const qty = Number(item["No. to Order"] ?? item.no_to_order ?? item.quantity ?? 0) || 0;
+      return acc + unit * qty;
+    }, 0);
+    return total;
+  };
 
 
   useEffect(() => {
@@ -93,6 +132,17 @@ function PurchaseRequests() {
         );
       });
       setEditing(obj);
+      // Initialize per-line selection for PRs (default: select lines with outstanding > 0)
+      const sel = {};
+      res.forEach(pr => {
+        sel[pr.id] = pr.items.map(i => {
+          const outstanding = typeof i["outstanding"] !== "undefined"
+            ? i["outstanding"]
+            : ((i["No. to Order"] ?? i.no_to_order ?? 0) - (i["received_so_far"] ?? i.received_so_far ?? 0));
+          return Number(outstanding) > 0;
+        });
+      });
+      setSelectedLines(sel);
     } else {
       const res = await window.api.getPurchaseRequests(true, "vendor");
       // Only show vendors with at least one item outstanding
@@ -118,6 +168,17 @@ function PurchaseRequests() {
         );
       });
       setVendorEditing(obj);
+      // Initialize per-line selection for vendors (default: select lines with outstanding > 0)
+      const vsel = {};
+      Object.entries(filteredVendorData).forEach(([vendor, items]) => {
+        vsel[vendor] = items.map(i => {
+          const outstanding = typeof i["outstanding"] !== "undefined"
+            ? i["outstanding"]
+            : ((i["No. to Order"] ?? i.no_to_order ?? 0) - (i["received_so_far"] ?? i.received_so_far ?? 0));
+          return Number(outstanding) > 0;
+        });
+      });
+      setSelectedVendorLines(vsel);
     }
     setLoading(false);
   };
@@ -163,12 +224,16 @@ function PurchaseRequests() {
       const prGroups = {};
       const stockUpdateResults = [];
       
+      const perVendorSel = selectedVendorLines[vendor] || [];
+      const anySelected = perVendorSel.some(Boolean);
       items.forEach((item, idx) => {
         if (!prGroups[item.pr_id]) prGroups[item.pr_id] = [];
         const receivedQty = Number(receivedArr[idx]);
+        const include = anySelected ? Boolean(perVendorSel[idx]) : true;
         const productName = item["Product Name"] ?? item.name;
         
-        prGroups[item.pr_id].push({
+        if (include) {
+          prGroups[item.pr_id].push({
           productName: productName,
           ordered: item["No. to Order"] ?? item.no_to_order ?? 0,
           receivedSoFar: item["received_so_far"] ?? item.received_so_far ?? 0,
@@ -176,10 +241,11 @@ function PurchaseRequests() {
             ? item["outstanding"]
             : ((item["No. to Order"] ?? item.no_to_order ?? 0) - (item["received_so_far"] ?? item.received_so_far ?? 0)),
           newlyReceived: receivedQty,
-        });
+          });
+        }
         
         // Prepare Cliniko stock update for items with received quantities
-        if (receivedQty > 0 && productName) {
+  if (include && receivedQty > 0 && productName) {
           stockUpdateResults.push({
             product: productName,
             quantity: receivedQty,
@@ -238,6 +304,8 @@ function PurchaseRequests() {
       
       alert(message);
       setSavingVendor(null);
+  // Clear vendor selections for that vendor
+  setSelectedVendorLines(s => ({ ...s, [vendor]: (s[vendor] || []).map(() => false) }));
       fetchData('vendor');
     } catch (error) {
       console.error('Error in saveVendorReceived:', error);
@@ -256,6 +324,12 @@ function PurchaseRequests() {
     setSelectedIds(ids =>
       checked ? [...ids, id] : ids.filter(selectedId => selectedId !== id)
     );
+    // Also set per-line selections for this PR: toggle all lines on/off when PR checkbox clicked
+    const pr = prs.find(p => p.id === id);
+    if (pr) {
+      const allTrue = pr.items.map(() => !!checked);
+      setSelectedLines(sel => ({ ...sel, [id]: allTrue }));
+    }
   };
 
   const handleDelete = async () => {
@@ -278,6 +352,22 @@ function PurchaseRequests() {
       const arr = [...editing[prId]];
       arr[idx] = v;
       return { ...editing, [prId]: arr };
+    });
+  };
+
+  const toggleLineSelection = (prId, idx, checked) => {
+    setSelectedLines(sel => {
+      const arr = sel[prId] ? [...sel[prId]] : [];
+      arr[idx] = checked;
+      return { ...sel, [prId]: arr };
+    });
+  };
+
+  const toggleVendorLineSelection = (vendor, idx, checked) => {
+    setSelectedVendorLines(sel => {
+      const arr = sel[vendor] ? [...sel[vendor]] : [];
+      arr[idx] = checked;
+      return { ...sel, [vendor]: arr };
     });
   };
 
@@ -327,6 +417,9 @@ function PurchaseRequests() {
       const receivedArr = getReceivedArr(pr);
       console.log('receivedArr:', receivedArr);
       
+      // Build lines but only include ones that are selected (if any selections exist)
+      const perLineSel = selectedLines[pr.id] || [];
+      const anySelected = perLineSel.some(Boolean);
       const lines = pr.items.map((item, idx) => ({
         productName: item["Product Name"] ?? item.name,
         ordered: item["No. to Order"] ?? item.no_to_order ?? 0,
@@ -335,7 +428,8 @@ function PurchaseRequests() {
           ? item["outstanding"]
           : ((item["No. to Order"] ?? item.no_to_order ?? 0) - (item["received_so_far"] ?? item.received_so_far ?? 0)),
         newlyReceived: Number(receivedArr[idx]),
-      }));
+        _selected: perLineSel.length ? Boolean(perLineSel[idx]) : true,
+      })).filter(l => anySelected ? l._selected : true);
       
       console.log('lines to process:', lines);
       
@@ -354,7 +448,7 @@ function PurchaseRequests() {
       const stockUpdateResults = [];
       for (let idx = 0; idx < lines.length; idx++) {
         const line = lines[idx];
-        const receivedQty = Number(receivedArr[idx]);
+        const receivedQty = line.newlyReceived;
         
         if (receivedQty > 0 && line.productName) {
           try {
@@ -417,6 +511,8 @@ function PurchaseRequests() {
         delete copy[pr.id];
         return copy;
       });
+  // Clear selection for PR after processing
+  setSelectedLines(sel => ({ ...sel, [pr.id]: (sel[pr.id] || []).map(() => false) }));
       setSavingId(null);
       fetchData('pr');
     } catch (error) {
@@ -685,6 +781,7 @@ function PurchaseRequests() {
                 </th>
                 <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8" }}>PO ID</th>
                 <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8" }}>Date</th>
+                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: 'center' }}>Total Cost</th>
                 <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
                   <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
                     📄
@@ -740,6 +837,7 @@ function PurchaseRequests() {
                         ? new Date(pr.date_received).toLocaleString()
                         : "—"}
                     </td>
+                    <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center", fontWeight: 700 }}>{fmtCurrency(computePrTotal(pr))}</td>
                     <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center", fontSize: 18, backgroundColor: pr.supplier_files_created ? "#e8f5e8" : "#ffeaea" }}>
                       <span style={{ color: pr.supplier_files_created ? "#28a745" : "#dc3545", fontWeight: "bold", fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }}>
                         {pr.supplier_files_created ? "✓" : "✗"}
@@ -756,16 +854,19 @@ function PurchaseRequests() {
                   </tr>
                   {expanded.includes(pr.id) && (
                     <tr>
-                      <td colSpan={6} style={{ padding: 0 }}>
+                      <td colSpan={7} style={{ padding: 0 }}>
                         <div style={{ padding: 12, background: "#fafdff" }}>
                           <table style={{ width: "100%", borderCollapse: "collapse" }}>
                             <thead>
                               <tr>
+                                <th style={{ border: "1px solid #ccc", textAlign: 'center' }}></th>
                                 <th style={{ border: "1px solid #ccc" }}>Product Name</th>
                                 <th style={{ border: "1px solid #ccc" }}>Supplier</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Ordered</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Previously Received</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Outstanding</th>
+                                <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Unit Cost</th>
+                                <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Line Total</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Newly Receiving</th>
                               </tr>
                             </thead>
@@ -784,6 +885,13 @@ function PurchaseRequests() {
                                     : maxQty;
                                 return (
                                   <tr key={idx}>
+                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={(selectedLines[pr.id] && selectedLines[pr.id][idx]) || false}
+                                        onChange={e => toggleLineSelection(pr.id, idx, e.target.checked)}
+                                      />
+                                    </td>
                                     <td style={{ border: "1px solid #ccc", padding: 4 }}>{prodName}</td>
                                     <td style={{ border: "1px solid #ccc", padding: 4 }}>{supplier}</td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
@@ -794,6 +902,12 @@ function PurchaseRequests() {
                                     </td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                       {maxQty}
+                                    </td>
+                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
+                                      {fmtCurrency(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? '')}
+                                    </td>
+                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
+                                      {fmtCurrency(item.line_total ?? item.lineTotal ?? '')}
                                     </td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                       <input
@@ -817,26 +931,28 @@ function PurchaseRequests() {
                               })}
                             </tbody>
                           </table>
-                          <button
-                            style={{
-                              marginTop: 16,
-                              background: getButtonColor(pr),
-                              color: "#fff",
-                              border: "none",
-                              padding: "9px 32px",
-                              borderRadius: 5,
-                              fontWeight: 700,
-                              fontSize: "1.12em",
-                              boxShadow: "0 2px 10px 0 rgba(0,0,0,0.06)",
-                              letterSpacing: "0.03em",
-                              cursor: "pointer",
-                            }}
-                            disabled={savingId === pr.id}
-                            onClick={() => saveReceived(pr)}
-                          >
-                            {savingId === pr.id ? "Saving..." : getReceiveType(pr)}
-                          </button>
-                        </div>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                            <button
+                              style={{
+                                marginTop: 16,
+                                background: getButtonColor(pr),
+                                color: "#fff",
+                                border: "none",
+                                padding: "9px 32px",
+                                borderRadius: 5,
+                                fontWeight: 700,
+                                fontSize: "1.12em",
+                                boxShadow: "0 2px 10px 0 rgba(0,0,0,0.06)",
+                                letterSpacing: "0.03em",
+                                cursor: "pointer",
+                              }}
+                              disabled={savingId === pr.id}
+                              onClick={() => saveReceived(pr)}
+                            >
+                              {savingId === pr.id ? "Saving..." : getReceiveType(pr)}
+                            </button>
+                          </div>
+                          </div>
                       </td>
                     </tr>
                   )}
@@ -994,17 +1110,26 @@ function PurchaseRequests() {
                   style={{ margin: 0, padding: "16px 24px", background: "#f6f9fb", borderRadius: "8px 8px 0 0", color: "#1867c0", fontWeight: 700, cursor: "pointer" }}
                   onClick={() => handleVendorExpand(vendor)}
                 >
-                  {vendor} {expandedVendor.includes(vendor) ? "▲" : "▼"}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{vendor}</span>
+                      <span style={{ fontSize: 14, color: '#1867c0' }}>{expandedVendor.includes(vendor) ? '▲' : '▼'}</span>
+                    </div>
+                    <div style={{ fontWeight: 700, color: '#1867c0' }}>{fmtCurrency(computeItemsTotal(items))}</div>
+                  </div>
                 </h3>
                 {expandedVendor.includes(vendor) && (
                   <div style={{ padding: 12 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
                         <tr>
+                          <th style={{ border: "1px solid #ccc", textAlign: 'center' }}></th>
                           <th style={{ border: "1px solid #ccc" }}>Product Name</th>
                           <th style={{ border: "1px solid #ccc" }}>Ordered</th>
                           <th style={{ border: "1px solid #ccc" }}>Previously Received</th>
                           <th style={{ border: "1px solid #ccc" }}>Outstanding</th>
+                          <th style={{ border: "1px solid #ccc" }}>Unit Cost</th>
+                          <th style={{ border: "1px solid #ccc" }}>Line Total</th>
                           <th style={{ border: "1px solid #ccc" }}>Newly Receiving</th>
                           <th style={{ border: "1px solid #ccc" }}>Purchase Order ID</th>
                           <th style={{ border: "1px solid #ccc" }}>Date Created</th>
@@ -1024,10 +1149,23 @@ function PurchaseRequests() {
                               : outstanding;
                           return (
                             <tr key={idx}>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={(selectedVendorLines[vendor] && selectedVendorLines[vendor][idx]) || false}
+                                  onChange={e => toggleVendorLineSelection(vendor, idx, e.target.checked)}
+                                />
+                              </td>
                               <td style={{ border: "1px solid #ccc", padding: 4 }}>{prodName}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{ordered}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{prevReceived}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{outstanding}</td>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
+                                {fmtCurrency(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? '')}
+                              </td>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
+                                {fmtCurrency(item.line_total ?? item.lineTotal ?? '')}
+                              </td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                 <input
                                   type="number"

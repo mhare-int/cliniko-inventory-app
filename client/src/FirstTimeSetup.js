@@ -183,15 +183,6 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
       console.log('Product sync result:', productResult);
       
       if (productResult && !productResult.error) {
-        // Ensure product costs / unit_price are populated by running the stock/price updater.
-        // This makes the Setup workflow populate `unit_price` for products (costs) when available from Cliniko.
-        try {
-          console.log('Updating product prices/unit_price from Cliniko...');
-          const priceRes = await window.api.updateStockFromCliniko();
-          console.log('Price update result:', priceRes);
-        } catch (priceErr) {
-          console.warn('Price update during setup failed (non-fatal):', priceErr);
-        }
         // Get product count and supplier count
         const productCount = productResult.products_synced || productResult.inserted || productResult.total || 0;
         // During first-time setup, suppliers are auto-added, so check suppliers_added first

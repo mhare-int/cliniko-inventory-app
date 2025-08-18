@@ -77,13 +77,13 @@ export const useSmartPrompts = (user, currentPath) => {
         });
       }
       
-      if (currentPath === '/master-list' && !hasUsedPurchaseRequests) {
+    if (currentPath === '/master-list' && !hasUsedPurchaseRequests) {
         prompts.push({
           id: 'onboarding_purchase_requests',
           type: 'tip',
-          title: '📝 Next Step: Create Purchase Requests',
-          message: 'Great! Now you can create purchase requests for items that are running low.',
-          action: 'Create Purchase Request',
+      title: '📝 Next Step: Create Purchase Orders',
+      message: 'Great! Now you can create purchase orders for items that are running low.',
+      action: 'Create Purchase Order',
           actionPath: '/create-pr',
           priority: 9
         });
@@ -123,7 +123,7 @@ export const useSmartPrompts = (user, currentPath) => {
         id: 'workflow_bulk_selection',
         type: 'efficiency',
         title: '⚡ Pro Tip: Bulk Selection',
-        message: 'You can select multiple items at once when creating purchase requests. Use Ctrl/Cmd + click!',
+        message: 'You can select multiple items at once when creating purchase orders. Use Ctrl/Cmd + click!',
         priority: 5
       });
     }
@@ -134,7 +134,7 @@ export const useSmartPrompts = (user, currentPath) => {
         id: 'help_create_pr',
         type: 'help',
         title: '💡 Quick Guide',
-        message: 'Select products from the list, set quantities, and click "Create Purchase Request" to get started.',
+        message: 'Select products from the list, set quantities, and click "Create Purchase Order" to get started.',
         priority: 8
       });
     }
@@ -145,7 +145,7 @@ export const useSmartPrompts = (user, currentPath) => {
         id: 'suggest_supplier_files',
         type: 'workflow',
         title: '🏢 Complete the Workflow',
-        message: 'Generate supplier order files to send your purchase requests directly to vendors.',
+        message: 'Generate supplier order files to send your purchase orders directly to vendors.',
         action: 'Generate Files',
         actionPath: '/generate-supplier-files',
         priority: 4

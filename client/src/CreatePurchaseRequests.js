@@ -33,12 +33,6 @@ function CreatePurchaseRequests() {
   const [addRow, setAddRow] = React.useState({ product: null, noToOrder: "" });
   const [suppliersMap, setSuppliersMap] = React.useState({});
 
-  const fmtCurrency = (n) => {
-    if (n === null || typeof n === 'undefined' || n === '') return '—';
-    const num = Number(n) || 0;
-    return `$${num.toFixed(2)}`;
-  };
-
 
 
 
@@ -148,14 +142,8 @@ function CreatePurchaseRequests() {
 
         if (fromMasterList && preSelectedItems && preSelectedItems.length > 0) {
           console.log('Pre-selected items from Master List:', preSelectedItems);
-          // Ensure unit_cost is filled from products when available
-          const normalized = preSelectedItems.map(it => {
-            const prodName = it['Product Name'] || it.name || '';
-            const prod = (prodResp || []).find(p => p.name === prodName || String(p.id) === String(it.Id) || String(p.cliniko_id) === String(it.Id));
-            return { ...it, unit_cost: Number(it.unit_cost ?? it.unitCost ?? it.unit_price ?? it.unitPrice ?? (prod ? (prod.unit_price ?? prod.unitPrice ?? 0) : 0)) };
-          });
-          setItems(normalized);
-          setSelectedRows(normalized.map((_, idx) => idx));
+          setItems(preSelectedItems);
+          setSelectedRows(preSelectedItems.map((_, idx) => idx));
           setError("");
         } else {
           setItems([]);
@@ -174,25 +162,6 @@ function CreatePurchaseRequests() {
         i === idx ? { ...item, ["No. to Order"]: Number(newValue) } : item
       )
     );
-  };
-
-  const handleUnitCostChange = (idx, newValue) => {
-    const val = Number(newValue) || 0;
-    setItems((items) =>
-      items.map((item, i) =>
-        i === idx ? { ...item, unit_cost: val } : item
-      )
-    );
-  };
-
-  const computeLineTotal = (item) => {
-    const qty = Number(item["No. to Order"] ?? item.no_to_order ?? 0) || 0;
-    const unit = Number(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? 0) || 0;
-    return unit * qty;
-  };
-
-  const computePrTotal = () => {
-    return items.reduce((acc, it) => acc + computeLineTotal(it), 0);
   };
 
   const handleSelectRow = (idx) => {
@@ -238,34 +207,17 @@ function CreatePurchaseRequests() {
       const prItems = Object.values(combinedMap);
 
       // Ensure supplier fields are explicitly present on every item
-      // and compute unit_cost, line_total and PR total_cost
-      let prTotal = 0;
       const normalizedPrItems = prItems.map(it => {
         const supplierName = it['Supplier Name'] || it.supplier_name || it.SupplierName || '';
         const supplierId = it['Supplier Id'] || it.supplier_id || it.supplierId || it.supplier || null;
-        const prodName = it['Product Name'] || it.name || '';
-        const qty = Number(it['No. to Order'] ?? it.no_to_order ?? 0) || 0;
-
-        // Try to determine a unit cost from the item or the products list
-        let unitCost = Number(it.unit_cost ?? it.unitCost ?? it.unit_price ?? it.unitPrice ?? 0) || 0;
-        if ((!unitCost || unitCost === 0) && Array.isArray(products)) {
-          const prod = products.find(p => (p.name === prodName) || (p.id && (p.id === it.Id || p.id === it['Id'])) || (p.cliniko_id && (p.cliniko_id === it.Id || p.cliniko_id === it['Id'])));
-          if (prod) unitCost = Number(prod.unit_price ?? prod.unitPrice ?? prod.cost_price ?? 0) || unitCost;
-        }
-
-        const lineTotal = Number((unitCost * qty) || 0);
-        prTotal += lineTotal;
-
         return {
           ...it,
           'Supplier Name': supplierName,
-          'Supplier Id': supplierId,
-          unit_cost: unitCost,
-          line_total: lineTotal
+          'Supplier Id': supplierId
         };
       });
 
-      await window.api.createPurchaseRequest({ items: normalizedPrItems, total_cost: prTotal });
+      await window.api.createPurchaseRequest({ items: normalizedPrItems });
   alert("Purchase Order created successfully!");
       // Optionally refresh PR map after creation
       if (window.api.getPurchaseRequests) {
@@ -337,8 +289,6 @@ function CreatePurchaseRequests() {
       "Reorder Level": prod.reorder_level,
       ["No. to Order"]: Number(addRow.noToOrder)
     };
-  // populate unit_cost from product when available
-  item.unit_cost = Number(prod.unit_price ?? prod.unitPrice ?? prod.unitCost ?? 0) || 0;
     setItems(prev => [...prev, item]);
     setAddingRow(false);
     setAddRow({ product: null, noToOrder: "" });
@@ -370,17 +320,13 @@ function CreatePurchaseRequests() {
     const processedItems = filtered.map(i => {
       const onOrderQty = onOrderMap[i.name] || 0;
       const totalStock = (parseInt(i.stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0);
-      // Determine unit cost from product data when available
-      const prodMatch = Array.isArray(products) ? products.find(p => p.name === i.name || String(p.id) === String(i.id) || String(p.cliniko_id) === String(i.cliniko_id)) : null;
-      const unitCost = Number(i.unit_price ?? i.unitPrice ?? i.unit_cost ?? (prodMatch ? (prodMatch.unit_price ?? prodMatch.unitPrice ?? 0) : 0)) || 0;
       return {
         ...i,
-        ["Supplier Name"]: i.supplier_name || i.SupplierName || '',
-        ["Supplier Id"]: i.supplier_id || i.supplierId || null,
+  ["Supplier Name"]: i.supplier_name || i.SupplierName || '',
+  ["Supplier Id"]: i.supplier_id || i.supplierId || null,
         ["On Order"]: onOrderQty,
         ["Total Stock"]: totalStock,
-        ["No. to Order"]: Math.max(0, Number(i.reorder_level - totalStock)),
-        unit_cost: unitCost
+        ["No. to Order"]: Math.max(0, Number(i.reorder_level - totalStock))
       };
     });
     setItems(processedItems);
@@ -662,28 +608,6 @@ function CreatePurchaseRequests() {
                       fontWeight: 600,
                       color: "#246aa8"
                     }}>No. to Order</th>
-                    <th style={{ 
-                      padding: "12px 8px", 
-                      border: "1px solid #dee2e6", 
-                      textAlign: "center",
-                      position: "sticky",
-                      top: 0,
-                      backgroundColor: "#f3f7fb",
-                      zIndex: 11,
-                      fontWeight: 600,
-                      color: "#246aa8"
-                    }}>Unit Cost</th>
-                    <th style={{ 
-                      padding: "12px 8px", 
-                      border: "1px solid #dee2e6", 
-                      textAlign: "center",
-                      position: "sticky",
-                      top: 0,
-                      backgroundColor: "#f3f7fb",
-                      zIndex: 11,
-                      fontWeight: 600,
-                      color: "#246aa8"
-                    }}>Line Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -751,25 +675,6 @@ function CreatePurchaseRequests() {
                             onChange={(e) => handleNoToOrderChange(idx, e.target.value)}
                           />
                         </td>
-                        <td style={{ 
-                          padding: "12px 8px", 
-                          border: "1px solid #dee2e6", 
-                          textAlign: "center" 
-                        }}>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min={0}
-                              value={Number(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? 0)}
-                              readOnly
-                              style={{ width: 90, textAlign: "center", background: "#f5f7fa", border: "1px solid #e6e9ee" }}
-                            />
-                        </td>
-                        <td style={{ 
-                          padding: "12px 8px", 
-                          border: "1px solid #dee2e6", 
-                          textAlign: "center" 
-                        }}>{fmtCurrency(computeLineTotal(item))}</td>
                       </tr>
                     );
                   })}
@@ -902,18 +807,6 @@ function CreatePurchaseRequests() {
                           </div>
                         </div>
                       </td>
-                      <td style={{ 
-                        padding: "12px 8px", 
-                        border: "1px solid #dee2e6", 
-                        textAlign: "center" 
-                      }}>
-                        <input type="number" step="0.01" min={0} value={Number(addRow.product ? (addRow.product.unit_price ?? addRow.product.unitPrice ?? 0) : 0)} readOnly style={{ width: 90, textAlign: 'center', background: '#f5f7fa', border: '1px solid #e6e9ee' }} />
-                      </td>
-                      <td style={{ 
-                        padding: "12px 8px", 
-                        border: "1px solid #dee2e6", 
-                        textAlign: "center" 
-                      }}>{fmtCurrency(Number(addRow.product ? (addRow.product.unit_price ?? addRow.product.unitPrice ?? 0) : 0) * Number(addRow.noToOrder || 0))}</td>
                     </tr>
                   )}
                 </tbody>
@@ -1017,7 +910,6 @@ function CreatePurchaseRequests() {
             )}
 
             {/* Floating Create Purchase Order Button */}
-            {/* Floating Create Purchase Order button (no inline total here) */}
             <div
               style={{
                 position: "fixed",
@@ -1026,53 +918,45 @@ function CreatePurchaseRequests() {
                 zIndex: 1000
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                <button
-                  onClick={handleCreatePR}
-                  disabled={loading || selectedRows.length === 0}
-                  style={{
-                    background: selectedRows.length === 0 ? "#ccc" : "#006bb6",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "50px",
-                    padding: "16px 24px",
-                    fontSize: "16px",
-                    fontWeight: "600",
-                    cursor: selectedRows.length === 0 ? "not-allowed" : "pointer",
-                    boxShadow: selectedRows.length === 0 ? "none" : "0 4px 12px rgba(0, 107, 182, 0.3)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    transition: "all 0.2s ease",
-                    minWidth: "200px",
-                    justifyContent: "center"
-                  }}
-                  onMouseEnter={(e) => {
-                    if (selectedRows.length > 0) {
-                      e.target.style.background = "#005a9a";
-                      e.target.style.transform = "translateY(-2px)";
-                      e.target.style.boxShadow = "0 6px 16px rgba(0, 107, 182, 0.4)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedRows.length > 0) {
-                      e.target.style.background = "#006bb6";
-                      e.target.style.transform = "translateY(0)";
-                      e.target.style.boxShadow = "0 4px 12px rgba(0, 107, 182, 0.3)";
-                    }
-                  }}
-                >
-                  Create Purchase Order
-                </button>
-              </div>
+              <button
+                onClick={handleCreatePR}
+                disabled={loading || selectedRows.length === 0}
+                style={{
+                  background: selectedRows.length === 0 ? "#ccc" : "#006bb6",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "50px",
+                  padding: "16px 24px",
+                  fontSize: "16px",
+                  fontWeight: "600",
+                  cursor: selectedRows.length === 0 ? "not-allowed" : "pointer",
+                  boxShadow: selectedRows.length === 0 ? "none" : "0 4px 12px rgba(0, 107, 182, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  transition: "all 0.2s ease",
+                  minWidth: "200px",
+                  justifyContent: "center"
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedRows.length > 0) {
+                    e.target.style.background = "#005a9a";
+                    e.target.style.transform = "translateY(-2px)";
+                    e.target.style.boxShadow = "0 6px 16px rgba(0, 107, 182, 0.4)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedRows.length > 0) {
+                    e.target.style.background = "#006bb6";
+                    e.target.style.transform = "translateY(0)";
+                    e.target.style.boxShadow = "0 4px 12px rgba(0, 107, 182, 0.3)";
+                  }
+                }}
+              >
+                Create Purchase Order
+              </button>
             </div>
           </>
-        )}
-        {/* Estimated total displayed under the table */}
-        {(items.length > 0 || addingRow) && (
-          <div style={{ marginTop: 14, marginBottom: 8, textAlign: 'right', width: '100%' }}>
-            <span style={{ color: '#374151', fontSize: 14 }}>Estimated total: <strong>{fmtCurrency(computePrTotal())}</strong></span>
-          </div>
         )}
       </div>
     </>

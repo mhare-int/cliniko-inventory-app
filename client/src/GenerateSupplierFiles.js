@@ -377,7 +377,7 @@ function GenerateSupplierFiles() {
       
       // Step 1: Create Excel files if requested
       if (createFiles) {
-        // Check if Excel files already exist for this PR (we will only delete them after new files are created)
+        // Check if Excel files already exist for this PR (we will only delete them after new files are successfully created)
         console.log('🔍 Checking for existing Excel files for PR:', pr.id);
         const existingExcelFiles = await window.api.getGeneratedFiles(pr.id, 'excel');
         if (existingExcelFiles && existingExcelFiles.length > 0) {
@@ -407,32 +407,47 @@ function GenerateSupplierFiles() {
         const res = await window.api.createSupplierOrderFilesForVendors(vendorItems, outputFolder);
         // Accept both array of strings or array of {supplier, file}
         if (res && Array.isArray(res.files)) {
-        files = res.files.map(f => {
-          if (typeof f === 'string') return { file: f };
-          if (f && typeof f === 'object' && f.file) return f;
-          return { file: String(f) };
-        });
+          files = res.files.map(f => {
+            if (typeof f === 'string') return { file: f };
+            if (f && typeof f === 'object' && f.file) return f;
+            return { file: String(f) };
+          });
         }
         alert("Orders sent to suppliers successfully!");
 
-        // If we previously found existing Excel files, delete them now that new files were created successfully
-        if (existingExcelFiles && existingExcelFiles.length > 0) {
-          console.log('\u26a0\ufe0f Deleting previous Excel files now that new ones were created:', existingExcelFiles.map(f => f.filename));
-          for (const existingFile of existingExcelFiles) {
-            try {
-              // Delete from database
-              await window.api.deleteGeneratedFile(pr.id, existingFile.vendor_name, 'excel', existingFile.filename);
-              console.log('\u2705 Deleted old Excel DB record:', existingFile.filename);
-            } catch (deleteErr) {
-              console.warn('\u26a0\ufe0f Could not delete old Excel DB record:', existingFile.filename, deleteErr);
-            }
-            // Delete from disk if file path exists
-            if (existingFile.file_path) {
+        // Delete any old HTML file for the same PR and supplier after new HTML files are created
+        const existingHtmlFiles = await window.api.getGeneratedFiles(pr.id, 'html');
+        if (existingHtmlFiles && existingHtmlFiles.length > 0 && files && files.length > 0) {
+          for (const newFile of files) {
+            // Only process HTML files
+            const newIsHtml = (newFile.file_type === 'html') || (newFile.filename && newFile.filename.endsWith('.html')) || (newFile.file && newFile.file.endsWith('.html'));
+            if (!newIsHtml) continue;
+            const newSupplier = newFile.vendor || newFile.vendor_name || newFile.supplier;
+            const newFilename = newFile.filename || newFile.file;
+            // Find any old HTML file for the same supplier, EXCEPT the new one
+            const oldHtmlFiles = existingHtmlFiles.filter(f => {
+              const oldIsHtml = f.file_type === 'html' || (f.filename && f.filename.endsWith('.html')) || (f.file && f.file.endsWith('.html'));
+              const oldSupplier = f.vendor || f.vendor_name || f.supplier;
+              const oldFilename = f.filename || f.file;
+              return oldIsHtml && oldSupplier === newSupplier && oldFilename !== newFilename;
+            });
+            for (const oldFile of oldHtmlFiles) {
               try {
-                await window.api.deleteFileFromDisk(existingFile.file_path);
-                console.log('\u2705 Deleted old Excel from disk:', existingFile.file_path);
-              } catch (diskErr) {
-                console.warn('\u26a0\ufe0f Could not delete old Excel file from disk:', existingFile.file_path, diskErr);
+                const vendorKey = oldFile.vendor || oldFile.vendor_name || oldFile.supplier || '';
+                const filename = oldFile.filename || oldFile.file || '';
+                await window.api.deleteGeneratedFile(pr.id, vendorKey, 'html', filename);
+                console.log('Deleted old HTML DB record:', filename);
+              } catch (dbErr) {
+                console.warn('Could not delete old HTML file from DB:', oldFile.filename, dbErr);
+              }
+              const filePath = oldFile.file_path || oldFile.path || oldFile.file || '';
+              if (filePath) {
+                try {
+                  await window.api.deleteFileFromDisk(filePath);
+                  console.log('Deleted old HTML file from disk:', filePath);
+                } catch (diskErr) {
+                  console.warn('Could not delete old HTML file from disk:', filePath, diskErr);
+                }
               }
             }
           }
@@ -446,6 +461,7 @@ function GenerateSupplierFiles() {
               const fullFilePath = fileInfo.file || 'Unknown File';
               // Extract just the filename without folder path for display
               const filename = fullFilePath.includes('\\') ? fullFilePath.split('\\').pop() : fullFilePath;
+              
               // Prefer absolute path returned by backend if provided
               const fullPath = fileInfo.path || fileInfo.file_path || `${outputFolder}/${fullFilePath}`;
               
@@ -460,8 +476,13 @@ function GenerateSupplierFiles() {
                 console.warn('Could not get file size for:', fullPath);
               }
               
-              await window.api.markVendorFilesCreated(pr.id, supplierName, 'excel', filename, fullPath, fileSize);
-              console.log(`✅ Tracked Excel file: ${filename} for ${supplierName}`);
+              // Detect file type
+              let fileType = 'excel';
+              if ((filename && filename.endsWith('.html')) || (fileInfo.file_type === 'html')) {
+                fileType = 'html';
+              }
+              await window.api.markVendorFilesCreated(pr.id, supplierName, fileType, filename, fullPath, fileSize);
+              console.log(`✅ Tracked ${fileType} file: ${filename} for ${supplierName}`);
             }
           } catch (trackErr) {
             console.error('❌ Failed to track Excel files:', trackErr);
@@ -1207,8 +1228,6 @@ ${supplierSpecificSignature}
 </html>
         `.trim();
         
-        console.log('Final email for', cleanVendorName, ':', finalEmailMessage);
-        
         // Debug attachment logic - look specifically for Excel files, not OFT files
         // Use freshFiles if provided (for automatic workflow), otherwise use downloadLinks (for manual workflow)
         const filesToSearch = freshFiles || downloadLinks;
@@ -1637,6 +1656,7 @@ Website: www.goodlifeclinic.com`
       const oftFiles = result.createdOftFiles || result.oftFiles || [];
       console.log('📧 Using oftFiles array:', oftFiles);
       return oftFiles.map(oftFile => ({
+       
         vendor: oftFile.vendor || oftFile.vendorName,
         type: 'email',
         filename: oftFile.filename,

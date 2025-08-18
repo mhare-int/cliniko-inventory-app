@@ -133,7 +133,39 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
       }
 
       // Call the utility (assumed to return a Promise)
-      // createSupplierOrderFiles should support previewOnly and return a string/html when previewOnly=true
+  // Attempt to enrich items with supplier account numbers (SupplierAccountNumber) so the PO renderer
+  // can include account numbers in the generated documents.
+  try {
+    const supplierNames = Array.from(new Set((items || []).map(it => (it['Supplier Name'] || it.supplier_name || it.SupplierName || '').toString().trim()).filter(Boolean)));
+    if (supplierNames.length > 0) {
+      // Use case-insensitive match by comparing LOWER(name)
+      const lowerNames = supplierNames.map(s => s.toLowerCase());
+      const placeholders = lowerNames.map(() => '?').join(',');
+      try {
+        const rows = await new Promise((res, rej) => {
+          db.all(`SELECT name, account_number FROM suppliers WHERE LOWER(name) IN (${placeholders})`, lowerNames, (err, rows) => {
+            if (err) return rej(err);
+            return res(rows || []);
+          });
+        });
+        const acctMap = {};
+        (rows || []).forEach(r => { if (r && r.name) acctMap[String(r.name).toLowerCase()] = r.account_number || null; });
+        // Attach account number to each item under key SupplierAccountNumber (and supplier_account_number for compatibility)
+        items = (items || []).map(it => {
+          const rawName = (it['Supplier Name'] || it.supplier_name || it.SupplierName || '').toString().trim();
+          const acct = rawName ? (acctMap[rawName.toLowerCase()] || null) : null;
+          return Object.assign({}, it, { SupplierAccountNumber: acct, supplier_account_number: acct });
+        });
+        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Enriched items with supplier account numbers for ${Object.keys(acctMap).length} suppliers\n`); } catch (e) {}
+      } catch (e) {
+        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Failed to lookup supplier account numbers: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+      }
+    }
+  } catch (e) {
+    // non-fatal - continue without account numbers
+  }
+
+  // createSupplierOrderFiles should support previewOnly and return a string/html when previewOnly=true
   const result = await createSupplierOrderFiles(items, outputFolder, opts);
       if (isPreview) {
         // In preview mode, return whatever the generator returns directly

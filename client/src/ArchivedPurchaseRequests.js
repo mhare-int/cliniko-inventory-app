@@ -14,12 +14,6 @@ function ArchivedPurchaseRequests() {
   const [vendorSuggestions, setVendorSuggestions] = useState([]);
   const [suppliersMap, setSuppliersMap] = useState({});
 
-  const fmtCurrency = (n) => {
-    if (n === null || typeof n === 'undefined' || n === '') return '—';
-    const num = Number(n) || 0;
-    return `$${num.toFixed(2)}`;
-  };
-
   useEffect(() => {
     if (window.api && window.api.getAllSuppliers) {
       window.api.getAllSuppliers()
@@ -335,17 +329,6 @@ function ArchivedPurchaseRequests() {
                   fontWeight: 600,
                   color: "#246aa8"
                 }}>Items</th>
-                <th style={{ 
-                  padding: "12px 8px", 
-                  border: "1px solid #dee2e6",
-                  position: "sticky",
-                  top: 0,
-                  backgroundColor: "#f3f7fb",
-                  zIndex: 11,
-                  fontWeight: 600,
-                  color: "#246aa8",
-                  textAlign: 'center'
-                }}>Total</th>
               </tr>
             </thead>
             <tbody>
@@ -371,7 +354,6 @@ function ArchivedPurchaseRequests() {
                         <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{pr.date_created ? new Date(pr.date_created).toLocaleString() : "—"}</td>
                         <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{pr.date_received ? new Date(pr.date_received).toLocaleString() : "—"}</td>
                         <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{Array.isArray(pr.items) ? pr.items.length : 0}</td>
-                        <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{fmtCurrency(pr.total_cost ?? pr.totalCost ?? '')}</td>
                       </tr>
                       {expanded.includes(pr.id) && (
                         <tr>
@@ -421,28 +403,6 @@ function ArchivedPurchaseRequests() {
                                     fontWeight: 600,
                                     color: "#246aa8"
                                   }}>Total Received</th>
-                                  <th style={{ 
-                                    padding: "12px 8px", 
-                                    border: "1px solid #dee2e6", 
-                                    textAlign: "center",
-                                    position: "sticky",
-                                    top: 0,
-                                    backgroundColor: "#f3f7fb",
-                                    zIndex: 11,
-                                    fontWeight: 600,
-                                    color: "#246aa8"
-                                  }}>Unit Cost</th>
-                                  <th style={{ 
-                                    padding: "12px 8px", 
-                                    border: "1px solid #dee2e6", 
-                                    textAlign: "center",
-                                    position: "sticky",
-                                    top: 0,
-                                    backgroundColor: "#f3f7fb",
-                                    zIndex: 11,
-                                    fontWeight: 600,
-                                    color: "#246aa8"
-                                  }}>Line Total</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -452,8 +412,6 @@ function ArchivedPurchaseRequests() {
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["Supplier Name"]}</td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["No. to Order"]}</td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["received_so_far"] ?? item["No. to Order"]}</td>
-                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{fmtCurrency(item.unit_cost ?? item.unitCost ?? item.unit_price ?? '')}</td>
-                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{fmtCurrency(item.line_total ?? item.lineTotal ?? '')}</td>
                                   </tr>
                                 ))}
                               </tbody>
