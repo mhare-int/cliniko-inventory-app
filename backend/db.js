@@ -185,7 +185,7 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
               try {
                 // entry may be an object like { supplier, path, file, pdfPath } or a string path
                 const rawCandidate = (entry && (entry.path || entry.pdfPath || entry.file || entry.filename)) || (typeof entry === 'string' ? entry : null);
-                // Resolve relative paths against the outputFolder so we get an absolute path when possible
+                // Resolve relative paths against the outputFolder so we get a normalized absolute path when possible
                 let absPath = null;
                 if (rawCandidate) {
                   try {
@@ -194,7 +194,7 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
                     } else if (outputFolder) {
                       absPath = path.normalize(path.join(outputFolder, rawCandidate));
                     } else {
-                      absPath = path.normalize(rawCandidate);
+                      absPath = path.normalize(path.resolve(rawCandidate));
                     }
                   } catch (e) {
                     absPath = path.normalize(String(rawCandidate));
@@ -205,7 +205,7 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
                 const rawSupplier = (entry && (entry.supplier || entry.vendor || entry.vendorName || entry.supplierName)) || null;
                 let supplierName = rawSupplier ? String(rawSupplier).trim() : null;
 
-                const filename = absPath ? path.basename(absPath) : (entry && (entry.file || entry.filename)) || (typeof entry === 'string' ? path.basename(entry) : null) || null;
+                const filename = absPath ? path.basename(absPath) : ((entry && (entry.file || entry.filename)) || (typeof entry === 'string' ? path.basename(entry) : null)) || null;
                 if (!supplierName) {
                   if (filename && filename.indexOf('_') !== -1) {
                     supplierName = filename.split('_')[0];
@@ -231,8 +231,11 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
 
                 // Mark in DB (uses existing helper)
                 try {
-                  await markVendorFilesCreated(prId, supplierName, fileType, filename, absPath, size);
-                  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-marked vendor file for prId=${prId}, vendor=${supplierName}, filename=${filename}\n`); } catch (e) {}
+                  // Always pass normalized absolute path (or null) to DB helper to avoid mismatches later
+                  const storedPath = absPath ? path.normalize(absPath) : null;
+                  const storedFilename = filename ? path.basename(filename) : null;
+                  await markVendorFilesCreated(prId, supplierName, fileType, storedFilename, storedPath, size);
+                  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-marked vendor file for prId=${prId}, vendor=${supplierName}, filename=${storedFilename}\n`); } catch (e) {}
                 } catch (e) {
                   try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark vendor file ERROR: ${e && e.message ? e.message : e}\n`); } catch (e) {}
                 }

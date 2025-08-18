@@ -276,31 +276,34 @@ function GenerateSupplierFiles() {
 
   // Load existing files for the selected purchase request
   const loadExistingFiles = async (prId) => {
+    // Clear current links immediately so we don't show stale files while fetching
+    setDownloadLinks([]);
+
     if (!prId || !outputFolder) {
       console.log('🔍 loadExistingFiles called but missing prId or outputFolder:', { prId, outputFolder });
       return;
     }
-    
+
     console.log('🔍 loadExistingFiles called with:', { prId, outputFolder });
-    
+
     try {
       // Get all generated files for this PR (both Excel and .oft files)
       const generatedFiles = await window.api.getGeneratedFiles(prId);
       console.log('🔍 Raw generatedFiles from API:', generatedFiles);
-      
+
       if (generatedFiles && generatedFiles.length > 0) {
         console.log('📁 Found existing generated files:', generatedFiles);
-        
+
         // Create download links for existing files using stored filenames
         const existingFileLinks = [];
-        
+
         for (const fileRecord of generatedFiles) {
           console.log('🔍 Processing file record:', fileRecord);
-          
+
           if (fileRecord.filename) {
             // Use the stored filename and path
             const filePath = fileRecord.file_path || `${outputFolder}/${fileRecord.filename}`;
-            
+
             // Verify the file still exists
             try {
               const fileExists = await window.api.fileExists(filePath);
@@ -326,19 +329,25 @@ function GenerateSupplierFiles() {
             console.log('⚠️ File record has no filename stored:', fileRecord);
           }
         }
-        
+
         console.log('📎 Total existing file links found:', existingFileLinks.length);
         if (existingFileLinks.length > 0) {
           console.log('📎 Loading existing files into download links:', existingFileLinks);
           setDownloadLinks(existingFileLinks);
         } else {
           console.log('📎 No existing files found or verified');
+          // Ensure UI reflects there are no files for this PR
+          setDownloadLinks([]);
         }
       } else {
         console.log('📁 No existing generated files found in database');
+        // Ensure UI reflects there are no files for this PR
+        setDownloadLinks([]);
       }
     } catch (error) {
       console.error('Error loading existing files:', error);
+      // On error, clear any stale links so UI doesn't show previous PR files
+      setDownloadLinks([]);
     }
   };
 

@@ -36,7 +36,10 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
     const supplierNameSafe = sanitize(supplier);
     const supplierFolder = path.join(outputFolder, supplierNameSafe);
     fs.mkdirSync(supplierFolder, { recursive: true });
-    const orderFilename = `${supplierNameSafe}_PurchaseOrder_${dateStr}.html`;
+  // Prefer to include PR/PUR id in the filename when available so we can safely scope deletions
+  const prIdCandidate = (opts && opts.prId) || (orders[0] && (orders[0]['PUR Number'] || orders[0].pr_id || orders[0].PRNumber || orders[0].prId));
+  const prIdSafe = prIdCandidate ? String(prIdCandidate).replace(/[^a-zA-Z0-9-_]/g, '') : null;
+  const orderFilename = prIdSafe ? `${supplierNameSafe}_PurchaseOrder_${prIdSafe}.html` : `${supplierNameSafe}_PurchaseOrder_${dateStr}.html`;
     const orderPath = path.join(supplierFolder, orderFilename);
 
     // Allow overrides from opts.company and opts.template
@@ -188,29 +191,57 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
 
     const content = htmlHeader + rowHtml + htmlFooter;
 
-    // Remove any previous PO files for this supplier to avoid accumulating old files
+    // Collect existing PO files so we can remove them only after a successful write.
+    let existingFiles = [];
     try {
-      const existing = fs.readdirSync(supplierFolder).filter(f => {
-        const lower = f.toLowerCase();
-        return lower.startsWith(`${supplierNameSafe.toLowerCase()}_purchaseorder_`) && (lower.endsWith('.html') || lower.endsWith('.htm') || lower.endsWith('.pdf'));
-      });
-      existing.forEach(f => {
-        try {
-          fs.unlinkSync(path.join(supplierFolder, f));
-          console.log(`Removed old PO file for ${supplier}: ${f}`);
-        } catch (e) {
-          console.warn(`Failed to remove old PO file ${f} for ${supplier}:`, e && e.message ? e.message : e);
-        }
-      });
+      const allFiles = fs.readdirSync(supplierFolder);
+      if (prIdSafe) {
+        // Only target files for the same PR when a PR id is known
+        existingFiles = allFiles.filter(f => f.indexOf(`_PurchaseOrder_${prIdSafe}`) !== -1).map(f => path.join(supplierFolder, f));
+      } else {
+        // Fallback: previous behavior (delete previously date-stamped purchase orders for this supplier)
+        existingFiles = allFiles.filter(f => {
+          const lower = f.toLowerCase();
+          return lower.startsWith(`${supplierNameSafe.toLowerCase()}_purchaseorder_`) && (lower.endsWith('.html') || lower.endsWith('.htm') || lower.endsWith('.pdf'));
+        }).map(f => path.join(supplierFolder, f));
+      }
     } catch (e) {
       // If reading dir fails, log and continue; do not block generation
+      console.warn('Could not list old PO files for', supplier, e && e.message ? e.message : e);
+      existingFiles = [];
+    }
+
+    // Write atomically: write to a temp file then rename into place.
+    const tmpPath = orderPath + '.tmp';
+    try {
+      fs.writeFileSync(tmpPath, content, { encoding: 'utf8' });
+      // Windows: ensure any existing target is replaced by rename
+      try { fs.unlinkSync(orderPath); } catch (e) { /* ignore if doesn't exist */ }
+      fs.renameSync(tmpPath, orderPath);
+    } catch (e) {
+      // Cleanup temp file if present
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
+      // rethrow to let caller handle the error
+      throw e;
+    }
+
+    // After successful write, remove previous versions (except the new file)
+    try {
+      for (const fpath of existingFiles) {
+        try {
+          if (path.normalize(fpath) === path.normalize(orderPath)) continue;
+          fs.unlinkSync(fpath);
+          console.log(`Removed old PO file for ${supplier}: ${path.basename(fpath)}`);
+        } catch (e) {
+          console.warn(`Failed to remove old PO file ${path.basename(fpath)} for ${supplier}:`, e && e.message ? e.message : e);
+        }
+      }
+    } catch (e) {
       console.warn('Could not clean old PO files for', supplier, e && e.message ? e.message : e);
     }
 
-    fs.writeFileSync(orderPath, content, { encoding: 'utf8' });
-
-    const relative = path.relative(outputFolder, orderPath);
-    const entry = { supplier, file: relative, path: orderPath };
+    const relative = outputFolder ? path.relative(outputFolder, orderPath) : path.basename(orderPath);
+    const entry = { supplier, file: path.basename(orderPath), relative, path: path.normalize(orderPath) };
 
     // If PDF requested and running inside Electron main process, generate PDF using a headless BrowserWindow
     if (opts && String(opts.format).toLowerCase() === 'pdf') {
@@ -228,12 +259,23 @@ async function createSupplierOrderFiles(items, outputFolder, opts = { format: 'h
         const pdfBuffer = await win.webContents.printToPDF({ printBackground: true });
         const pdfFilename = orderFilename.replace(/\.html?$/i, '.pdf');
         const pdfPath = path.join(supplierFolder, pdfFilename);
-        fs.writeFileSync(pdfPath, pdfBuffer);
+
+        const tmpPdf = pdfPath + '.tmp';
+        try {
+          fs.writeFileSync(tmpPdf, pdfBuffer);
+          try { fs.unlinkSync(pdfPath); } catch (e) { /* ignore */ }
+          fs.renameSync(tmpPdf, pdfPath);
+        } catch (e) {
+          try { if (fs.existsSync(tmpPdf)) fs.unlinkSync(tmpPdf); } catch (_) {}
+          throw e;
+        }
+
         // Close the window
         try { win.close(); } catch (e) { /* ignore */ }
-        // Add PDF info to entry
-        entry.pdf = path.relative(outputFolder, pdfPath);
-        entry.pdfPath = pdfPath;
+        // Add PDF info to entry (normalized paths)
+        entry.pdf = path.basename(pdfPath);
+        entry.pdfRelative = outputFolder ? path.relative(outputFolder, pdfPath) : path.basename(pdfPath);
+        entry.pdfPath = path.normalize(pdfPath);
       } catch (e) {
         // Not running in Electron or PDF generation failed - keep HTML only
         console.warn('PDF generation unavailable or failed for', supplier, e && e.message ? e.message : e);

@@ -110,7 +110,8 @@ function PurchaseRequests() {
               const files = await window.api.getGeneratedFiles(pr.id);
               const hasExcel = Array.isArray(files) && files.some(f => (f.file_type === 'excel' || (f.type === 'file' && !(f.isOutlookTemplate)) || (f.file && /\.xlsx?$/.test(f.file))));
               const hasOft = Array.isArray(files) && files.some(f => (f.file_type === 'oft' || (f.type === 'email' && f.isOutlookTemplate) || (f.file && f.file.toLowerCase().endsWith('.oft'))));
-              return { ...pr, supplier_files_created: !!hasExcel || !!pr.supplier_files_created, oft_files_created: !!hasOft || !!pr.oft_files_created };
+              // Only set the flags true if files actually exist. If the API returned no files, ensure flags are false to avoid stale UI.
+              return { ...pr, supplier_files_created: !!hasExcel, oft_files_created: !!hasOft };
             } catch (err) {
               return pr;
             }
