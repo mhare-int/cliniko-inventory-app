@@ -101,20 +101,12 @@ function MasterStockList() {
   }, [sortField, sortDirection]);
 
   // Ensure proper initial sort when products are loaded
-  useEffect(() => {
-    if (products.length > 0) {
-      // Force a proper initial sort by triggering the sort function
-      setTimeout(() => {
-        setSortField('name');
-        setSortDirection('asc');
-      }, 100);
-    }
-  }, [products]);
+  // NOTE: don't reset sort when products update; initial sort is set via useState on mount
 
   const fetchProducts = async () => {
     setLoading(true);
     try {
-  // Fetch products and purchase orders in parallel
+      // Fetch products and purchase requests in parallel
       const [productsRes, pursRes, suppliersRes] = await Promise.all([
         window.api.getAllProducts(),
         window.api.getPurchaseRequests(true, false), // active only
@@ -168,8 +160,7 @@ function MasterStockList() {
       }
       
       // Ensure initial sort is properly applied
-      setSortField('name');
-      setSortDirection('asc');
+  // Preserve current sort; initial sort comes from useState on first render.
       
     } catch (error) {
       console.error("Failed to fetch products", error);
@@ -349,7 +340,7 @@ function MasterStockList() {
 
   const handleCreatePurchaseRequest = () => {
     if (selectedIds.length === 0) {
-  alert("Please select at least one product to create a purchase order.");
+      alert("Please select at least one product to create a purchase request.");
       return;
     }
 
@@ -366,7 +357,7 @@ function MasterStockList() {
         };
       });
 
-  // Navigate to Create Purchase Order with pre-selected items
+    // Navigate to Create Purchase Request with pre-selected items
     navigate("/create-pr", { 
       state: { 
         preSelectedItems: selectedProducts,
@@ -857,7 +848,7 @@ function MasterStockList() {
         </tbody>
       </table>
       
-  {/* Floating Create Purchase Order Button */}
+      {/* Floating Create Purchase Request Button */}
       <div
         style={{
           position: "fixed",
@@ -900,7 +891,7 @@ function MasterStockList() {
           }}
         >
           <span style={{ fontSize: "18px" }}>📝</span>
-          Create Purchase Order ({selectedIds.length})
+          Create Purchase Request ({selectedIds.length})
         </button>
       </div>
       
