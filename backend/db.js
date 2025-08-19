@@ -1546,7 +1546,7 @@ function createPurchaseRequest(data) {
     db.get('SELECT COUNT(*) as count FROM purchase_requests', (err, row) => {
       if (err) return reject(err);
       const pr_count = (row ? row.count : 0) + 1;
-      const pr_id = `PUR${String(pr_count).padStart(5, '0')}`;
+  const pr_id = `PO${String(pr_count).padStart(5, '0')}`;
       const date_created = new Date().toISOString();
       db.run('INSERT INTO purchase_requests (pr_id, date_created, received) VALUES (?, ?, ?)', [pr_id, date_created, 0], function (err2) {
         if (err2) return reject(err2);

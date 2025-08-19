@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 16;
+const CURRENT_DB_VERSION = 17;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -333,8 +333,7 @@ const migrations = [
         Promise.all(tasks).then(() => resolve()).catch(reject);
       });
     }
-  }
-  ,
+  },
   {
     version: 15,
     description: "Backfill created_at columns and ensure email_templates.name exists with unique index",
@@ -408,6 +407,93 @@ const migrations = [
     }
   }
 ];
+
+// Migration 17: rename existing stored PR identifiers from PUR##### to PO##### safely
+migrations.push({
+  version: 17,
+  description: "Rename stored PR identifiers from PUR##### -> PO##### with backup and conflict checks",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      try {
+        const backupPath = path.join(__dirname, `appdata.db.backup.migrate_pur_to_po.${Date.now()}.sqlite`);
+        try {
+          fs.copyFileSync(path.join(__dirname, 'appdata.db'), backupPath);
+          console.log('Created DB backup at', backupPath);
+        } catch (copyErr) {
+          console.warn('Could not create DB backup, aborting migration 17:', copyErr && copyErr.message ? copyErr.message : copyErr);
+          return reject(copyErr);
+        }
+
+        db.serialize(() => {
+          db.all("SELECT pr_id FROM purchase_requests WHERE pr_id LIKE 'PUR%'", (err, rows) => {
+            if (err) return reject(err);
+            const purRows = rows || [];
+            if (purRows.length === 0) {
+              console.log('Migration 17: no PUR... ids found; nothing to do');
+              return resolve();
+            }
+
+            // Check for conflicts where PO... already exists
+            const conflicts = [];
+            const renames = [];
+            const checkNext = () => {
+              if (purRows.length === 0) {
+                if (conflicts.length > 0) {
+                  console.error('Migration 17: conflicts detected, aborting. Conflicts:', conflicts);
+                  return reject(new Error('Conflicts detected'));
+                }
+
+                // Perform updates inside a transaction
+                db.run('BEGIN TRANSACTION');
+                try {
+                  // Update purchase_requests sequentially
+                  const applyNext = (idx) => {
+                    if (idx >= renames.length) {
+                      // Update referencing tables
+                      db.run("UPDATE purchase_request_items SET pr_id = REPLACE(pr_id, 'PUR', 'PO') WHERE pr_id LIKE 'PUR%'");
+                      db.run("UPDATE vendor_files SET pr_id = REPLACE(pr_id, 'PUR', 'PO') WHERE pr_id LIKE 'PUR%'");
+                      db.run('COMMIT', (cErr) => {
+                        if (cErr) return reject(cErr);
+                        console.log('Migration 17: PR id rename complete');
+                        return resolve();
+                      });
+                      return;
+                    }
+                    const item = renames[idx];
+                    db.run('UPDATE purchase_requests SET pr_id = ? WHERE pr_id = ?', [item.newId, item.oldId], (uErr) => {
+                      if (uErr) return reject(uErr);
+                      applyNext(idx + 1);
+                    });
+                  };
+                  applyNext(0);
+                } catch (e) {
+                  db.run('ROLLBACK', () => reject(e));
+                }
+                return;
+              }
+
+              const r = purRows.shift();
+              const oldId = r.pr_id;
+              const newId = 'PO' + oldId.slice(3);
+              db.get('SELECT COUNT(*) as c FROM purchase_requests WHERE pr_id = ?', [newId], (qErr, row) => {
+                if (qErr) return reject(qErr);
+                if (row && row.c > 0) {
+                  conflicts.push({ oldId, newId });
+                } else {
+                  renames.push({ oldId, newId });
+                }
+                checkNext();
+              });
+            };
+            checkNext();
+          });
+        });
+      } catch (e) {
+        return reject(e);
+      }
+    });
+  }
+});
 
 // Migration 16: add unit_price to products and backfill if possible
 migrations.push({
