@@ -71,6 +71,8 @@ const TABLES_TO_CLEAR = [
 const ADDITIONAL_TABLES_TO_CLEAR = [
   'email_templates',
   'vendor_oft_files',
+  'po_change_log',
+  'po_templates',
   'generated_files',
   'vendor_files'
 ];
@@ -186,14 +188,11 @@ function cleanSettings() {
       return;
     }
     
-    const settingsToRemove = settings.filter(s => 
-      SETTINGS_TO_REMOVE.includes(s.key) || 
-      (!keepApiKey && s.key.toLowerCase().includes('api_key')) ||
-      s.key.toLowerCase().includes('password')
-    );
-    
-    // Never remove GITHUB_TOKEN
-    const filtered = settingsToRemove.filter(s => s.key !== 'GITHUB_TOKEN');
+  // Remove any setting not explicitly listed in SETTINGS_TO_KEEP
+  const keepSet = new Set(SETTINGS_TO_KEEP);
+  const settingsToRemove = settings.filter(s => !keepSet.has(s.key));
+  // Never remove GITHUB_TOKEN even if not in keep list
+  const filtered = settingsToRemove.filter(s => s.key !== 'GITHUB_TOKEN');
     
     if (filtered.length === 0) {
       console.log('ℹ️  No sensitive settings found to remove (GITHUB_TOKEN preserved)');

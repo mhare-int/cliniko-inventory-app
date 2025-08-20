@@ -224,14 +224,22 @@ fi
 
 # Step 12: Create git tag
 print_step "Creating git tag..."
-git tag -a "v$new_version" -m "Release v$new_version"
-print_success "Git tag v$new_version created"
+if [ "$DRY_RUN" = "1" ]; then
+    print_warning "DRY_RUN enabled — skipping git tag creation"
+else
+    git tag -a "v$new_version" -m "Release v$new_version"
+    print_success "Git tag v$new_version created"
+fi
 
 # Step 13: Push changes and tags
 print_step "Pushing to GitHub..."
-git push origin main
-git push origin "v$new_version"
-print_success "Changes and tags pushed to GitHub"
+if [ "$DRY_RUN" = "1" ]; then
+    print_warning "DRY_RUN enabled — skipping git push and tag push"
+else
+    git push origin main
+    git push origin "v$new_version"
+    print_success "Changes and tags pushed to GitHub"
+fi
 
 # Step 14: Create GitHub release
 print_step "Creating GitHub release..."
@@ -292,13 +300,17 @@ for file in "${expected_files[@]}"; do
 done
 
 # Execute the release creation
-eval $gh_command
-
-if [ $? -eq 0 ]; then
-    print_success "GitHub release v$new_version created successfully!"
+if [ "$DRY_RUN" = "1" ]; then
+    print_warning "DRY_RUN enabled — skipping GitHub release creation"
+    echo "GH command would have been: $gh_command"
 else
-    print_error "Failed to create GitHub release!"
-    exit 1
+    eval $gh_command
+    if [ $? -eq 0 ]; then
+        print_success "GitHub release v$new_version created successfully!"
+    else
+        print_error "Failed to create GitHub release!"
+        exit 1
+    fi
 fi
 
 # Step 15: Summary
