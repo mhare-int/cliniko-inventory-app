@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 
@@ -63,10 +63,209 @@ function PurchaseRequests() {
     return total;
   };
 
+  const getSupplierName = (item) => {
+    if (!item) return "-";
+    const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
+    if (nameFromItem) return nameFromItem;
+    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || item.supplier || null;
+    if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
+    return "-";
+  };
 
+  // Modal-based reason prompt (replaces window.prompt which is not supported in Electron renderer)
+  const [reasonModalState, setReasonModalState] = useState({ visible: false, title: '', defaultText: '' });
+  const reasonResolveRef = useRef(null);
+  const [reasonText, setReasonText] = useState('');
+
+  // Helper: resolve a short identifier for the current user to store in change logs
+  const resolveCurrentUserIdentifier = async () => {
+    try {
+      if (window.api && window.api.getCurrentUser) {
+        const token = localStorage.getItem('token');
+        const u = await window.api.getCurrentUser(token);
+        if (u) {
+          // Prefer a username or display name; avoid falling back to numeric id-only values.
+          // Typical user object fields: { id, username, display_name, name, email }
+          return (u.username || u.display_name || u.name || u.email || null);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  };
+
+  // History modal state for viewing po_change_log entries
+  const [historyModalState, setHistoryModalState] = useState({ visible: false, prId: null, entries: [] });
+  const [editModalState, setEditModalState] = useState({ visible: false, prId: null, items: [] });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const requestReason = (title, defaultText = '') => {
+    return new Promise((resolve, reject) => {
+      reasonResolveRef.current = { resolve, reject };
+  setReasonModalState({ visible: true, title, defaultText });
+  setReasonText(defaultText || '');
+    });
+  };
+
+  const submitReasonModal = (value) => {
+    setReasonModalState({ visible: false, title: '', defaultText: '' });
+    if (reasonResolveRef.current) {
+      reasonResolveRef.current.resolve(value);
+      reasonResolveRef.current = null;
+    }
+  };
+
+  const cancelReasonModal = () => {
+    setReasonModalState({ visible: false, title: '', defaultText: '' });
+    if (reasonResolveRef.current) {
+      reasonResolveRef.current.reject(new Error('Cancelled'));
+      reasonResolveRef.current = null;
+    }
+  };
+
+  // Open history modal and load entries from backend
+  const openHistoryModal = async (prId) => {
+    setHistoryModalState({ visible: true, prId, entries: [] });
+    try {
+      if (!window.api) {
+        setHistoryModalState({ visible: true, prId, entries: [] });
+        return;
+      }
+
+      // Load change log rows (audited DB entries)
+      let rows = [];
+      if (window.api.getPoChangeLog) {
+        try {
+          rows = await window.api.getPoChangeLog(prId, 200);
+        } catch (e) {
+          console.warn('getPoChangeLog failed for', prId, e);
+          rows = [];
+        }
+      }
+
+      // Also load any generated files for this PR (PO HTML, .oft, etc.) and synthesize history entries
+      let fileEntries = [];
+      if (window.api.getGeneratedFiles) {
+        try {
+          const files = await window.api.getGeneratedFiles(prId);
+          if (Array.isArray(files)) {
+            fileEntries = files.map((f, idx) => {
+              const tsRaw = f.created || f.created_at || f.mtime || f.ts || f.timestamp || f.time || null;
+              const timestamp = tsRaw ? (new Date(tsRaw).toISOString()) : new Date().toISOString();
+              const name = f.file || f.filename || f.name || f.file_name || (`file-${idx}`);
+              const ftype = (String(f.file_type || f.type || '').toLowerCase());
+              const prettyType = ftype.includes('oft') ? '.oft' : (ftype.includes('html') ? 'PO (html)' : (ftype || 'file'));
+              const comment = `Generated ${prettyType} file: ${name}`;
+              return { id: `genfile-${idx}-${name}`, timestamp, changed_by: null, comment, before_json: null, after_json: null };
+            });
+          }
+        } catch (e) {
+          console.warn('getGeneratedFiles failed for', prId, e);
+          fileEntries = [];
+        }
+      }
+
+      // Merge and sort newest-first by timestamp
+      const merged = ([...(Array.isArray(rows) ? rows : []), ...fileEntries]).sort((a, b) => {
+        const ta = a && a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tb = b && b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return tb - ta;
+      });
+
+      setHistoryModalState({ visible: true, prId, entries: merged });
+    } catch (e) {
+      console.error('Failed to load PO change log:', e);
+      setHistoryModalState({ visible: true, prId, entries: [] });
+    }
+  };
+
+  const toggleHistoryRaw = (id) => {
+  // raw view removed
+  };
+
+  const closeHistoryModal = () => setHistoryModalState({ visible: false, prId: null, entries: [] });
+
+  const openEditModal = async (pr) => {
+    // load items from pr into modal state with editable fields
+    const items = (pr.items || []).map(i => ({ id: i.id, productName: i['Product Name'] || i.product_name || i.name, no_to_order: i['No. to Order'] ?? i.no_to_order ?? i.quantity ?? 0, unit_cost: Number(i.unit_cost ?? i.unitCost ?? i.UnitCost ?? 0) || 0, delete: false }));
+    setEditModalState({ visible: true, prId: pr.id, items });
+  };
+
+  const closeEditModal = () => setEditModalState({ visible: false, prId: null, items: [] });
+
+  const handleEditItemChange = (idx, field, value) => {
+    setEditModalState(s => {
+      const copy = { ...s, items: [...s.items] };
+      copy.items[idx] = { ...copy.items[idx], [field]: value };
+      return copy;
+    });
+  };
+
+  const saveEditModal = async () => {
+  const prId = editModalState.prId;
+  if (!prId) return;
+  console.log('saveEditModal invoked for prId=', prId);
+  setSavingEdit(true);
+    // Build edits array for backend
+    const edits = editModalState.items.map(it => ({ id: it.id, productName: it.productName, no_to_order: Number(it.no_to_order || 0), unit_cost: Number(it.unit_cost || 0), delete: !!it.delete }));
+
+    // Request reason
+    let reason;
+    try {
+      reason = await requestReason(`Enter reason for editing PO ${prId} (required):`, 'Edit PO');
+    } catch (e) {
+      alert('A short reason is required to edit the purchase order. Edit cancelled.');
+      return;
+    }
+    if (!reason || String(reason).trim().length < 3) {
+      alert('A short reason is required to edit the purchase order. Edit cancelled.');
+      return;
+    }
+
+    try {
+      console.log('Calling backend API to save edits, edits:', edits);
+      if (window.api && window.api.updatePurchaseRequestItemsEditWithComment) {
+        const changedBy = await resolveCurrentUserIdentifier();
+        const res = await window.api.updatePurchaseRequestItemsEditWithComment(prId, edits, changedBy, reason);
+        console.log('updatePurchaseRequestItemsEditWithComment response:', res);
+        if (res && res.error) {
+          alert('Failed to save edits: ' + (res.error || 'unknown'));
+        } else {
+          alert('PO edits saved.');
+          closeEditModal();
+          fetchData('pr');
+        }
+      } else if (window.api && window.api.updatePurchaseRequestItemsWithComment) {
+        // Fallback: try the receive API if edit API not available
+        console.warn('updatePurchaseRequestItemsEditWithComment not available, using fallback updatePurchaseRequestItemsWithComment');
+        const changedBy = await resolveCurrentUserIdentifier();
+        const res = await window.api.updatePurchaseRequestItemsWithComment(prId, edits.map(e => ({ productName: e.productName, newlyReceived: 0 })), changedBy, reason);
+        console.log('Fallback updatePurchaseRequestItemsWithComment response:', res);
+        if (res && res.error) {
+          alert('Failed to save edits (fallback): ' + (res.error || 'unknown'));
+        } else {
+          alert('PO edits saved (fallback).');
+          closeEditModal();
+          fetchData('pr');
+        }
+      } else {
+        console.error('API not available on window.api for edits');
+        alert('Unable to save edits: API not available (window.api.updatePurchaseRequestItemsEditWithComment missing)');
+      }
+    } catch (err) {
+      console.error('Failed to save PO edits:', err);
+      alert('Failed to save edits: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    }
+    finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Load data when tab changes or on mount
   useEffect(() => {
     fetchData(tab);
-    // eslint-disable-next-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   // Load suppliers map once on mount so we can resolve supplier_id -> name
@@ -84,15 +283,6 @@ function PurchaseRequests() {
         .catch(() => setSuppliersMap({}));
     }
   }, []);
-
-  const getSupplierName = (item) => {
-    if (!item) return "-";
-    const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
-    if (nameFromItem) return nameFromItem;
-    const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || item.supplier || null;
-    if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
-    return "-";
-  };
 
   const fetchData = async (tabType) => {
     setLoading(true);
@@ -151,19 +341,41 @@ function PurchaseRequests() {
       setSelectedLines(sel);
     } else {
       const res = await window.api.getPurchaseRequests(true, "vendor");
-      // Only show vendors with at least one item outstanding
+      // Support two backend shapes:
+      // - An object mapping vendor -> items (newer behavior)
+      // - An array of PRs with items (older behavior)
       const filteredVendorData = {};
-      Object.entries(res).forEach(([vendor, items]) => {
-        const hasOutstanding = items.some(item => {
-          const ordered = item["No. to Order"] ?? item.no_to_order ?? 0;
-          const received = item["received_so_far"] ?? item.received_so_far ?? 0;
-          return received < ordered;
+
+      if (res && typeof res === 'object' && !Array.isArray(res)) {
+        // Already grouped by vendor
+        Object.entries(res).forEach(([vendor, items]) => {
+          if (!Array.isArray(items)) return;
+          const outstandingItems = items.filter(item => {
+            const ordered = Number(item["No. to Order"] ?? item.no_to_order ?? 0);
+            const received = Number(item["received_so_far"] ?? item.received_so_far ?? 0);
+            return received < ordered;
+          });
+          if (outstandingItems.length > 0) filteredVendorData[vendor] = outstandingItems;
         });
-        if (hasOutstanding) {
-          filteredVendorData[vendor] = items;
-        }
-      });
+      } else if (Array.isArray(res)) {
+        // Older shape: array of PRs
+        (res || []).forEach(pr => {
+          const items = pr.items || [];
+          items.forEach(item => {
+            const ordered = Number(item["No. to Order"] ?? item.no_to_order ?? 0);
+            const received = Number(item["received_so_far"] ?? item.received_so_far ?? 0);
+            if (received < ordered) {
+              const vendor = item["Supplier Name"] || item.supplier_name || item.vendor_name || pr.supplier_name || pr.vendor_name || 'Unknown';
+              if (!filteredVendorData[vendor]) filteredVendorData[vendor] = [];
+              // Attach PR id and date for context if available
+              filteredVendorData[vendor].push({ ...item, pr_id: pr.id ?? pr.pr_id, date_created: pr.date_created });
+            }
+          });
+        });
+      }
+
       setVendorData(filteredVendorData);
+
       // Set editing state for all vendors and all lines, default to outstanding value
       const obj = {};
       Object.entries(filteredVendorData).forEach(([vendor, items]) => {
@@ -174,6 +386,7 @@ function PurchaseRequests() {
         );
       });
       setVendorEditing(obj);
+
       // Initialize per-line selection for vendors (default: select lines with outstanding > 0)
       const vsel = {};
       Object.entries(filteredVendorData).forEach(([vendor, items]) => {
@@ -274,7 +487,31 @@ function PurchaseRequests() {
       
       for (const prId of Object.keys(prGroups)) {
         console.log('Updating PR:', prId, 'with:', prGroups[prId]);
-        await window.api.updatePurchaseRequestReceived(prId, prGroups[prId]);
+        // Ask for reason once per PR (modal)
+        let reasonForPr;
+        try {
+          reasonForPr = await requestReason(`Enter reason for receiving items for PR ${prId} (required):`, 'Receiving vendor items');
+        } catch (e) {
+          alert('A short reason is required to update the purchase order. Update cancelled for this PR.');
+          continue;
+        }
+        if (!reasonForPr || String(reasonForPr).trim().length < 3) {
+          alert('A short reason is required to update the purchase order. Update cancelled for this PR.');
+          continue;
+        }
+        try {
+          const changedBy = await resolveCurrentUserIdentifier();
+          await window.api.updatePurchaseRequestItemsWithComment(prId, prGroups[prId].map(l => ({ productName: l.productName, newlyReceived: l.newlyReceived })), changedBy, reasonForPr);
+        } catch (e) {
+          console.warn('updatePurchaseRequestItemsWithComment failed, falling back to legacy:', e);
+          try {
+            const changedBy = await resolveCurrentUserIdentifier();
+            await window.api.updatePurchaseRequestReceived(prId, prGroups[prId], changedBy, reasonForPr);
+          } catch (e2) {
+            console.warn('Failed to include changedBy in fallback updatePurchaseRequestReceived:', e2);
+            await window.api.updatePurchaseRequestReceived(prId, prGroups[prId], null, reasonForPr);
+          }
+        }
       }
       
       // Update Cliniko stock for all received items
@@ -351,7 +588,6 @@ function PurchaseRequests() {
       fetchData('pr');
     }
   };
-
   const handleLineChange = (prId, idx, value) => {
     let v = Math.max(0, Number(value) || 0);
     setEditing((editing) => {
@@ -387,6 +623,135 @@ function PurchaseRequests() {
             : ((i["No. to Order"] ?? i.no_to_order ?? 0) - (i["received_so_far"] ?? i.received_so_far ?? 0))
         )
   );
+
+  // Summarize differences between two JSON blobs (before/after).
+  // Focused rules: detect quantity change (no_to_order / "No. to Order" / quantity)
+  // and deletions of line items. Return concise before/after strings.
+  const summarizeChange = (beforeJson, afterJson) => {
+    try {
+      const before = beforeJson ? JSON.parse(beforeJson) : null;
+      const after = afterJson ? JSON.parse(afterJson) : null;
+
+      const beforeItems = Array.isArray(before && before.items) ? before.items : [];
+      const afterItems = Array.isArray(after && after.items) ? after.items : [];
+
+      const keyFor = (it) => {
+        if (!it) return null;
+        return String(it.id ?? it.product_id ?? it.productId ?? it.product_name ?? it.productName ?? it['Product Name'] ?? it['product_name'] ?? it['productName'] ?? '').trim();
+      };
+
+      // Quantity ordered (what was requested)
+      const qtyFor = (it) => {
+        if (!it) return 0;
+        const possible = [it.no_to_order, it['No. to Order'], it.quantity, it['quantity'], it.qty, it['Qty']];
+        for (const p of possible) {
+          if (typeof p !== 'undefined' && p !== null && p !== '') return Number(p) || 0;
+        }
+        return 0;
+      };
+
+      // Quantity received so far (used to detect receive actions)
+      const receivedFor = (it) => {
+        if (!it) return 0;
+        const possible = [it.received_so_far, it.receivedSoFar, it.received, it['received_so_far']];
+        for (const p of possible) {
+          if (typeof p !== 'undefined' && p !== null && p !== '') return Number(p) || 0;
+        }
+        return 0;
+      };
+
+      const costFor = (it) => {
+        if (!it) return null;
+        const possible = [it.unit_cost, it.unitCost, it.unit_price, it.unitPrice, it.price, it.cost];
+        for (const p of possible) {
+          if (typeof p !== 'undefined' && p !== null && p !== '') return Number(p) || 0;
+        }
+        return null;
+      };
+
+      const nameFor = (it) => {
+        if (!it) return '';
+        return String(it.product_name ?? it.productName ?? it['Product Name'] ?? '').trim();
+      };
+
+      const beforeMap = {};
+      beforeItems.forEach(it => {
+        const k = keyFor(it) || nameFor(it) || JSON.stringify(it).slice(0, 40);
+        beforeMap[k] = it;
+      });
+
+      const afterMap = {};
+      afterItems.forEach(it => {
+        const k = keyFor(it) || nameFor(it) || JSON.stringify(it).slice(0, 40);
+        afterMap[k] = it;
+      });
+
+      const changes = [];
+
+      // Detect deletions, ordered quantity changes and received quantity changes
+      Object.keys(beforeMap).forEach(k => {
+        const b = beforeMap[k];
+        const a = afterMap[k];
+        const productLabel = nameFor(b) || k;
+        const beforeQty = qtyFor(b);
+        const label = productLabel;
+        if (!a) {
+          changes.push({ path: `${label}`, before: `${beforeQty} ${productLabel}`, after: 'DELETED' });
+        } else {
+          // Ordered quantity changed?
+          const afterQty = qtyFor(a);
+          if (Number(beforeQty) !== Number(afterQty)) {
+            changes.push({ path: `${label}`, before: `${beforeQty} ${productLabel}`, after: `${afterQty} ${productLabel}` });
+          }
+
+          // Received quantity changed? (this catches receipt operations)
+          const beforeReceived = receivedFor(b);
+          const afterReceived = receivedFor(a);
+          if (Number(beforeReceived) !== Number(afterReceived)) {
+            changes.push({ path: `${label} (received)`, before: `Received ${beforeReceived} ${productLabel}`, after: `Received ${afterReceived} ${productLabel}` });
+          }
+
+          // detect unit/cost price changes
+          const beforeCost = costFor(b);
+          const afterCost = costFor(a);
+          if (beforeCost !== null && afterCost !== null && Number(beforeCost) !== Number(afterCost)) {
+            const fmt = (v) => `$${Number(v || 0).toFixed(2)}`;
+            changes.push({ path: `${label} (cost)`, before: `Unit cost ${fmt(beforeCost)} ${productLabel}`, after: `Unit cost ${fmt(afterCost)} ${productLabel}` });
+          }
+        }
+      });
+
+      // Optionally detect added lines
+      Object.keys(afterMap).forEach(k => {
+        if (!beforeMap[k]) {
+            const a = afterMap[k];
+            const productLabel = nameFor(a) || k;
+            const afterQty = qtyFor(a);
+            const label = productLabel;
+            changes.push({ path: `${label}`, before: 'ADDED', after: `${afterQty} ${productLabel}` });
+            // if added line includes a unit cost, show it
+            const addedCost = costFor(a);
+            if (addedCost !== null) {
+              const fmt = (v) => `$${Number(v || 0).toFixed(2)}`;
+              changes.push({ path: `${label} (cost)`, before: '—', after: `Unit cost ${fmt(addedCost)} ${productLabel}` });
+            }
+          }
+      });
+
+    if (changes.length === 0) return { beforeSummary: '—', afterSummary: '—' };
+
+    const beforeLines = changes.map(c => `${c.before}`);
+    const afterLines = changes.map(c => `${c.after}`);
+    return { beforeSummary: beforeLines.join('\n'), afterSummary: afterLines.join('\n') };
+    } catch (e) {
+      // Fallback to raw trimmed JSON
+      const trim = (s) => {
+        if (!s) return '—';
+        try { return JSON.stringify(JSON.parse(s), null, 2).slice(0, 800); } catch (e) { return String(s).slice(0, 800); }
+      };
+      return { beforeSummary: trim(beforeJson), afterSummary: trim(afterJson) };
+    }
+  };
 
   // Helper: Determine if this is a full receive or partial
   const getReceiveType = (pr) => {
@@ -446,9 +811,36 @@ function PurchaseRequests() {
         return;
       }
       
-      // Update the purchase order received quantities
-      console.log('Updating purchase order received quantities...');
-      await window.api.updatePurchaseRequestReceived(pr.id, lines);
+      // Require a reason for making this change via modal
+      let reason;
+      try {
+        reason = await requestReason('Please enter a reason for this update (required):', 'Receiving items');
+      } catch (e) {
+        alert('A short reason is required to update the purchase order. Update cancelled.');
+        setSavingId(null);
+        return;
+      }
+      if (!reason || String(reason).trim().length < 3) {
+        alert('A short reason is required to update the purchase order. Update cancelled.');
+        setSavingId(null);
+        return;
+      }
+
+      // Update the purchase order item lines using the audited API
+      console.log('Updating purchase order received quantities (audited) ...');
+      try {
+        const changedBy = await resolveCurrentUserIdentifier();
+        await window.api.updatePurchaseRequestItemsWithComment(pr.id, lines.map(l => ({ productName: l.productName, newlyReceived: l.newlyReceived })), changedBy, reason);
+      } catch (e) {
+        console.warn('Audited update failed, falling back to legacy:', e);
+        try {
+          const changedBy = await resolveCurrentUserIdentifier();
+          await window.api.updatePurchaseRequestReceived(pr.id, lines, changedBy, reason);
+        } catch (e) {
+          console.warn('Failed to include changedBy for single-PR receive:', e);
+          await window.api.updatePurchaseRequestReceived(pr.id, lines, null, reason);
+        }
+      }
       
       // Also update Cliniko stock for each received item
       const stockUpdateResults = [];
@@ -573,6 +965,7 @@ function PurchaseRequests() {
   if (loading) return <div>Loading...</div>;
 
   return (
+    <>
     <div className="center-card">
       {/* Back to Home Button */}
       <button
@@ -800,7 +1193,7 @@ function PurchaseRequests() {
                   </span>
                   <span style={{ marginLeft: 6 }}>Email</span>
                 </th>
-                <th style={{ border: "1px solid #ccc", width: 44, textAlign: "center" }}></th>
+                {/* Removed trailing expand column to place expand control next to PO ID */}
               </tr>
             </thead>
             <tbody>
@@ -833,8 +1226,13 @@ function PurchaseRequests() {
                         onChange={e => handleSelect(pr.id, e.target.checked)}
                       />
                     </td>
-                    <td style={{ border: "1px solid #ccc", padding: 8, fontWeight: 700, color: "#1867c0", textAlign: "center" }}>
-                      {pr.id}
+                    <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center" }}>
+                      <span
+                        style={{ cursor: "pointer", color: "#1867c0", fontWeight: 700 }}
+                        onClick={e => { e.stopPropagation(); handleExpand(pr.id); }}
+                      >
+                        {pr.id} {expanded.includes(pr.id) ? '▲' : '▼'}
+                      </span>
                     </td>
                     <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center" }}>
                       {pr.date_created
@@ -854,13 +1252,11 @@ function PurchaseRequests() {
                         {pr.oft_files_created ? "✓" : "✗"}
                       </span>
                     </td>
-                    <td style={{ textAlign: "center", border: "1px solid #ccc", fontSize: 18, color: "#555" }}>
-                      {expanded.includes(pr.id) ? "▲" : "▼"}
-                    </td>
+                    {/* expand arrow moved into PO ID cell above; trailing column removed */}
                   </tr>
                   {expanded.includes(pr.id) && (
                     <tr>
-                      <td colSpan={7} style={{ padding: 0 }}>
+                      <td colSpan={6} style={{ padding: 0 }}>
                         <div style={{ padding: 12, background: "#fafdff" }}>
                           <table style={{ width: "100%", borderCollapse: "collapse" }}>
                             <thead>
@@ -869,11 +1265,11 @@ function PurchaseRequests() {
                                 <th style={{ border: "1px solid #ccc" }}>Product Name</th>
                                 <th style={{ border: "1px solid #ccc" }}>Supplier</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Ordered</th>
-                                <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Previously Received</th>
+                                <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Received</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Outstanding</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Unit Cost</th>
                                 <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Line Total</th>
-                                <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Newly Receiving</th>
+                                <th style={{ border: "1px solid #ccc", textAlign: "center" }}>Receiving</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -957,6 +1353,42 @@ function PurchaseRequests() {
                             >
                               {savingId === pr.id ? "Saving..." : getReceiveType(pr)}
                             </button>
+                            <button
+                              style={{
+                                marginTop: 16,
+                                marginLeft: 12,
+                                background: '#007bff',
+                                color: '#fff',
+                                border: 'none',
+                                padding: '9px 18px',
+                                borderRadius: 5,
+                                fontWeight: 600,
+                                fontSize: '1.02em',
+                                boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
+                                cursor: 'pointer'
+                              }}
+                              onClick={(e) => { e.stopPropagation(); openHistoryModal(pr.id); }}
+                            >
+                              View History
+                            </button>
+                            <button
+                              style={{
+                                marginTop: 16,
+                                marginLeft: 12,
+                                background: '#6c757d',
+                                color: '#fff',
+                                border: 'none',
+                                padding: '9px 18px',
+                                borderRadius: 5,
+                                fontWeight: 600,
+                                fontSize: '1.02em',
+                                boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
+                                cursor: 'pointer'
+                              }}
+                              onClick={(e) => { e.stopPropagation(); openEditModal(pr); }}
+                            >
+                              Edit PO
+                            </button>
                           </div>
                           </div>
                       </td>
@@ -1000,16 +1432,48 @@ function PurchaseRequests() {
                         newlyReceived: Number(receivedArr[idx]),
                       }));
                       
-                      // Update purchase order
-                      await window.api.updatePurchaseRequestReceived(pr.id, lines.map((item, idx) => ({
-                        productName: item.productName,
-                        ordered: pr.items[idx]["No. to Order"] ?? pr.items[idx].no_to_order ?? 0,
-                        receivedSoFar: pr.items[idx]["received_so_far"] ?? pr.items[idx].received_so_far ?? 0,
-                        outstanding: typeof pr.items[idx]["outstanding"] !== "undefined"
-                          ? pr.items[idx]["outstanding"]
-                          : ((pr.items[idx]["No. to Order"] ?? pr.items[idx].no_to_order ?? 0) - (pr.items[idx]["received_so_far"] ?? pr.items[idx].received_so_far ?? 0)),
-                        newlyReceived: item.newlyReceived,
-                      })));
+                      // Ask for a reason once per PR and use audited API
+                      let reasonForPrBulk;
+                      try {
+                        reasonForPrBulk = await requestReason(`Enter reason for receiving items for PR ${pr.id} (required):`, 'Bulk receive');
+                      } catch (e) {
+                        // Skip this PR if user cancelled the reason modal
+                        console.log('Bulk receive cancelled for PR', pr.id);
+                        continue;
+                      }
+                      if (!reasonForPrBulk || String(reasonForPrBulk).trim().length < 3) {
+                        console.log('Insufficient reason provided for PR', pr.id);
+                        continue;
+                      }
+                      try {
+                        const changedBy = await resolveCurrentUserIdentifier();
+                        await window.api.updatePurchaseRequestItemsWithComment(pr.id, lines.map(l => ({ productName: l.productName, newlyReceived: l.newlyReceived })), changedBy, reasonForPrBulk);
+                      } catch (e) {
+                        console.warn('Audited bulk update failed, falling back to legacy:', e);
+                        try {
+                          const changedBy = await resolveCurrentUserIdentifier();
+                          await window.api.updatePurchaseRequestReceived(pr.id, lines.map((item, idx) => ({
+                            productName: item.productName,
+                            ordered: pr.items[idx]["No. to Order"] ?? pr.items[idx].no_to_order ?? 0,
+                            receivedSoFar: pr.items[idx]["received_so_far"] ?? pr.items[idx].received_so_far ?? 0,
+                            outstanding: typeof pr.items[idx]["outstanding"] !== "undefined"
+                              ? pr.items[idx]["outstanding"]
+                              : ((pr.items[idx]["No. to Order"] ?? pr.items[idx].no_to_order ?? 0) - (pr.items[idx]["received_so_far"] ?? pr.items[idx].received_so_far ?? 0)),
+                            newlyReceived: item.newlyReceived,
+                          })), changedBy, reasonForPrBulk);
+                        } catch (e2) {
+                          console.warn('Failed to include changedBy for legacy bulk receive fallback:', e2);
+                          await window.api.updatePurchaseRequestReceived(pr.id, lines.map((item, idx) => ({
+                            productName: item.productName,
+                            ordered: pr.items[idx]["No. to Order"] ?? pr.items[idx].no_to_order ?? 0,
+                            receivedSoFar: pr.items[idx]["received_so_far"] ?? pr.items[idx].received_so_far ?? 0,
+                            outstanding: typeof pr.items[idx]["outstanding"] !== "undefined"
+                              ? pr.items[idx]["outstanding"]
+                              : ((pr.items[idx]["No. to Order"] ?? pr.items[idx].no_to_order ?? 0) - (pr.items[idx]["received_so_far"] ?? pr.items[idx].received_so_far ?? 0)),
+                            newlyReceived: item.newlyReceived,
+                          })), null, reasonForPrBulk);
+                        }
+                      }
                       
                       // Update Cliniko stock for this PR
                       for (const line of lines) {
@@ -1132,11 +1596,11 @@ function PurchaseRequests() {
                           <th style={{ border: "1px solid #ccc", textAlign: 'center' }}></th>
                           <th style={{ border: "1px solid #ccc" }}>Product Name</th>
                           <th style={{ border: "1px solid #ccc" }}>Ordered</th>
-                          <th style={{ border: "1px solid #ccc" }}>Previously Received</th>
+                          <th style={{ border: "1px solid #ccc" }}>Received</th>
                           <th style={{ border: "1px solid #ccc" }}>Outstanding</th>
                           <th style={{ border: "1px solid #ccc" }}>Unit Cost</th>
                           <th style={{ border: "1px solid #ccc" }}>Line Total</th>
-                          <th style={{ border: "1px solid #ccc" }}>Newly Receiving</th>
+                          <th style={{ border: "1px solid #ccc" }}>Receiving</th>
                           <th style={{ border: "1px solid #ccc" }}>Purchase Order ID</th>
                           <th style={{ border: "1px solid #ccc" }}>Date Created</th>
                         </tr>
@@ -1223,6 +1687,108 @@ function PurchaseRequests() {
         </>
       )}
     </div>
+    {/* History Modal */}
+    {historyModalState.visible && (
+      <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+        <div style={{ width: '80%', maxHeight: '80%', background: '#fff', borderRadius: 8, padding: 20, overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, position: 'relative' }}>
+            <h3 style={{ margin: 0 }}>PO Change History — {historyModalState.prId}</h3>
+            <button onClick={closeHistoryModal} title="Close" aria-label="Close history" style={{ marginLeft: 'auto', border: '1px solid #ccc', background: '#eee', width: 36, height: 36, borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, lineHeight: 1, color: '#000' }}>✕</button>
+          </div>
+          {historyModalState.entries.length === 0 ? (
+            <div style={{ color: '#666' }}>No history entries found for this PO.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f6f9fb' }}>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>When</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>By</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>Comment</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>Before (summary)</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>After (summary)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyModalState.entries.map((row) => (
+                  <tr key={row.id}>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top' }}>{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top' }}>{row.changed_by || 'System'}</td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top' }}>{row.comment}</td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top', maxWidth: 240 }}>
+                      <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{(() => { const s = summarizeChange(row.before_json, row.after_json); return s.beforeSummary; })()}</pre>
+                    </td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top', maxWidth: 240 }}>
+                      <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{(() => { const s = summarizeChange(row.before_json, row.after_json); return s.afterSummary; })()}</pre>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    )}
+    {/* Reason Modal (used by requestReason) */}
+    {reasonModalState.visible && (
+      <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000 }}>
+        <div style={{ width: '480px', maxHeight: '80%', background: '#fff', borderRadius: 8, padding: 18, overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <h3 style={{ margin: 0 }}>{(reasonModalState.title || 'Reason').replace(/\s*\(required\)\s*:?\s*$/i, '')}</h3>
+            <button onClick={() => { cancelReasonModal(); }} title="Close" aria-label="Close reason" style={{ border: '1px solid #ccc', background: '#eee', width: 36, height: 36, borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, lineHeight: 1, color: '#000', transform: 'translateY(-12px)' }}>✕</button>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <textarea value={reasonText} onChange={e => setReasonText(e.target.value)} rows={6} style={{ width: '100%', boxSizing: 'border-box', padding: 8, fontSize: 14 }} placeholder="Enter a short reason (required)"></textarea>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button onClick={() => { cancelReasonModal(); }} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', color: '#333', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={() => { submitReasonModal(reasonText); }} style={{ padding: '8px 12px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', cursor: 'pointer' }}>Submit</button>
+          </div>
+        </div>
+      </div>
+    )}
+    {/* Edit PO Modal */}
+    {editModalState.visible && (
+      <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+        <div style={{ width: '80%', maxHeight: '80%', background: '#fff', borderRadius: 8, padding: 20, overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, position: 'relative' }}>
+            <h3 style={{ margin: 0 }}>Edit Purchase Order — {editModalState.prId}</h3>
+            <button onClick={closeEditModal} title="Close" aria-label="Close edit" style={{ marginLeft: 'auto', border: '1px solid #ccc', background: '#eee', width: 36, height: 36, borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, lineHeight: 1, transform: 'translateY(-12px)', color: '#000' }}>✕</button>
+          </div>
+          <div style={{ color: '#666', marginBottom: 12 }}>Modify "No. to Order" or mark lines to delete. A required reason will be requested when saving.</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f6f9fb' }}>
+                <th style={{ border: '1px solid #ddd', padding: 8 }}>Delete</th>
+                <th style={{ border: '1px solid #ddd', padding: 8 }}>Product</th>
+                <th style={{ border: '1px solid #ddd', padding: 8 }}>No. to Order</th>
+                <th style={{ border: '1px solid #ddd', padding: 8 }}>Unit Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {editModalState.items.map((row, idx) => (
+                <tr key={row.id || idx}>
+                  <td style={{ border: '1px solid #eee', padding: 8, textAlign: 'center' }}>
+                    <input type="checkbox" checked={!!row.delete} onChange={e => handleEditItemChange(idx, 'delete', e.target.checked)} />
+                  </td>
+                  <td style={{ border: '1px solid #eee', padding: 8 }}>{row.productName}</td>
+                  <td style={{ border: '1px solid #eee', padding: 8, textAlign: 'center' }}>
+                    <input type="number" min={0} value={row.no_to_order} onChange={e => handleEditItemChange(idx, 'no_to_order', Number(e.target.value || 0))} style={{ width: 80, textAlign: 'center' }} />
+                  </td>
+                  <td style={{ border: '1px solid #eee', padding: 8, textAlign: 'center' }}>
+                    <input type="number" min={0} step="0.01" value={row.unit_cost} onChange={e => handleEditItemChange(idx, 'unit_cost', Number(e.target.value || 0))} style={{ width: 100, textAlign: 'center' }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 12 }}>
+            <button onClick={closeEditModal} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', color: '#333', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={saveEditModal} disabled={savingEdit} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', cursor: savingEdit ? 'wait' : 'pointer' }}>{savingEdit ? 'Saving...' : 'Save Changes'}</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

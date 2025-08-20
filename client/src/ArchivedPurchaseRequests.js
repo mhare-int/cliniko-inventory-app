@@ -13,6 +13,7 @@ function ArchivedPurchaseRequests() {
   const [prSuggestions, setPrSuggestions] = useState([]);
   const [vendorSuggestions, setVendorSuggestions] = useState([]);
   const [suppliersMap, setSuppliersMap] = useState({});
+  const [historyModalState, setHistoryModalState] = useState({ visible: false, prId: null, entries: [] });
 
   const fmtCurrency = (n) => {
     if (n === null || typeof n === 'undefined' || n === '') return '—';
@@ -42,6 +43,139 @@ function ArchivedPurchaseRequests() {
     const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || null;
     if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
     return "Unknown Vendor";
+  };
+
+  // History modal helpers
+  const openHistoryModal = async (prId) => {
+    setHistoryModalState({ visible: true, prId, entries: [] });
+    try {
+      if (!window.api || !window.api.getPoChangeLog) {
+        setHistoryModalState({ visible: true, prId, entries: [] });
+        return;
+      }
+      const rows = await window.api.getPoChangeLog(prId, 200);
+      setHistoryModalState({ visible: true, prId, entries: Array.isArray(rows) ? rows : [] });
+    } catch (e) {
+      console.error('Failed to load PO change log:', e);
+      setHistoryModalState({ visible: true, prId, entries: [] });
+    }
+  };
+
+  const closeHistoryModal = () => setHistoryModalState({ visible: false, prId: null, entries: [] });
+
+  // Summarize before/after JSON for History modal (similar to PurchaseRequests)
+  const summarizeChange = (beforeJson, afterJson) => {
+    try {
+      const before = beforeJson ? JSON.parse(beforeJson) : null;
+      const after = afterJson ? JSON.parse(afterJson) : null;
+
+      const beforeItems = Array.isArray(before && before.items) ? before.items : [];
+      const afterItems = Array.isArray(after && after.items) ? after.items : [];
+
+      const keyFor = (it) => {
+        if (!it) return null;
+        return String(it.id ?? it.product_id ?? it.productId ?? it.product_name ?? it.productName ?? it['Product Name'] ?? '').trim();
+      };
+
+      const qtyFor = (it) => {
+        if (!it) return 0;
+        const possible = [it.no_to_order, it['No. to Order'], it.quantity, it['quantity'], it.qty, it['Qty']];
+        for (const p of possible) {
+          if (typeof p !== 'undefined' && p !== null && p !== '') return Number(p) || 0;
+        }
+        return 0;
+      };
+
+      const receivedFor = (it) => {
+        if (!it) return 0;
+        const possible = [it.received_so_far, it.receivedSoFar, it.received, it['received_so_far']];
+        for (const p of possible) {
+          if (typeof p !== 'undefined' && p !== null && p !== '') return Number(p) || 0;
+        }
+        return 0;
+      };
+
+      const costFor = (it) => {
+        if (!it) return null;
+        const possible = [it.unit_cost, it.unitCost, it.unit_price, it.unitPrice, it.price, it.cost];
+        for (const p of possible) {
+          if (typeof p !== 'undefined' && p !== null && p !== '') return Number(p) || 0;
+        }
+        return null;
+      };
+
+      const nameFor = (it) => {
+        if (!it) return '';
+        return String(it.product_name ?? it.productName ?? it['Product Name'] ?? '').trim();
+      };
+
+      const beforeMap = {};
+      beforeItems.forEach(it => {
+        const k = keyFor(it) || nameFor(it) || JSON.stringify(it).slice(0, 40);
+        beforeMap[k] = it;
+      });
+
+      const afterMap = {};
+      afterItems.forEach(it => {
+        const k = keyFor(it) || nameFor(it) || JSON.stringify(it).slice(0, 40);
+        afterMap[k] = it;
+      });
+
+      const changes = [];
+
+      Object.keys(beforeMap).forEach(k => {
+        const b = beforeMap[k];
+        const a = afterMap[k];
+        const productLabel = nameFor(b) || k;
+        const beforeQty = qtyFor(b);
+        const label = productLabel;
+        if (!a) {
+          changes.push({ path: `${label}`, before: `${beforeQty} ${productLabel}`, after: 'DELETED' });
+        } else {
+          const afterQty = qtyFor(a);
+          if (Number(beforeQty) !== Number(afterQty)) {
+            changes.push({ path: `${label}`, before: `${beforeQty} ${productLabel}`, after: `${afterQty} ${productLabel}` });
+          }
+          const beforeReceived = receivedFor(b);
+          const afterReceived = receivedFor(a);
+          if (Number(beforeReceived) !== Number(afterReceived)) {
+            changes.push({ path: `${label} (received)`, before: `Received ${beforeReceived} ${productLabel}`, after: `Received ${afterReceived} ${productLabel}` });
+          }
+          const beforeCost = costFor(b);
+          const afterCost = costFor(a);
+          if (beforeCost !== null && afterCost !== null && Number(beforeCost) !== Number(afterCost)) {
+            const fmt = (v) => `$${Number(v || 0).toFixed(2)}`;
+            changes.push({ path: `${label} (cost)`, before: `Unit cost ${fmt(beforeCost)} ${productLabel}`, after: `Unit cost ${fmt(afterCost)} ${productLabel}` });
+          }
+        }
+      });
+
+      Object.keys(afterMap).forEach(k => {
+        if (!beforeMap[k]) {
+          const a = afterMap[k];
+          const productLabel = nameFor(a) || k;
+          const afterQty = qtyFor(a);
+          const label = productLabel;
+          changes.push({ path: `${label}`, before: 'ADDED', after: `${afterQty} ${productLabel}` });
+          const addedCost = costFor(a);
+          if (addedCost !== null) {
+            const fmt = (v) => `$${Number(v || 0).toFixed(2)}`;
+            changes.push({ path: `${label} (cost)`, before: '—', after: `Unit cost ${fmt(addedCost)} ${productLabel}` });
+          }
+        }
+      });
+
+      if (changes.length === 0) return { beforeSummary: '—', afterSummary: '—' };
+      const beforeLines = changes.map(c => `${c.before}`);
+      const afterLines = changes.map(c => `${c.after}`);
+      return { beforeSummary: beforeLines.join('\n'), afterSummary: afterLines.join('\n') };
+    } catch (e) {
+      const trim = (s) => {
+        if (!s) return '—';
+        try { return JSON.stringify(JSON.parse(s), null, 2).slice(0, 800); } catch (e) { return String(s).slice(0, 800); }
+      };
+      return { beforeSummary: trim(beforeJson), afterSummary: trim(afterJson) };
+    }
   };
 
   useEffect(() => {
@@ -375,7 +509,7 @@ function ArchivedPurchaseRequests() {
                       </tr>
                       {expanded.includes(pr.id) && (
                         <tr>
-                          <td colSpan={4} style={{ background: "#f6f9fb", padding: 0 }}>
+                          <td colSpan={5} style={{ background: "#f6f9fb", padding: 12 }}>
                             <table style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
                               <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
                                 <tr style={{ backgroundColor: "#f3f7fb" }}>
@@ -420,7 +554,7 @@ function ArchivedPurchaseRequests() {
                                     zIndex: 11,
                                     fontWeight: 600,
                                     color: "#246aa8"
-                                  }}>Total Received</th>
+                                    }}>Received</th>
                                   <th style={{ 
                                     padding: "12px 8px", 
                                     border: "1px solid #dee2e6", 
@@ -458,6 +592,23 @@ function ArchivedPurchaseRequests() {
                                 ))}
                               </tbody>
                             </table>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: 12 }}>
+                              <button
+                                style={{
+                                  marginTop: 8,
+                                  background: '#007bff',
+                                  color: '#fff',
+                                  border: 'none',
+                                  padding: '8px 14px',
+                                  borderRadius: 6,
+                                  fontWeight: 600,
+                                  cursor: 'pointer'
+                                }}
+                                onClick={(e) => { e.stopPropagation(); openHistoryModal(pr.id); }}
+                              >
+                                View History
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )}
@@ -509,6 +660,16 @@ function ArchivedPurchaseRequests() {
                           }}>Product Name</th>
                           <th style={{ 
                             padding: "12px 8px", 
+                            border: "1px solid #dee2e6",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Supplier Name</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
                             border: "1px solid #dee2e6", 
                             textAlign: "center",
                             position: "sticky",
@@ -528,7 +689,29 @@ function ArchivedPurchaseRequests() {
                             zIndex: 11,
                             fontWeight: 600,
                             color: "#246aa8"
-                          }}>Total Received</th>
+                          }}>Received</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6", 
+                            textAlign: "center",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Unit Cost</th>
+                          <th style={{ 
+                            padding: "12px 8px", 
+                            border: "1px solid #dee2e6", 
+                            textAlign: "center",
+                            position: "sticky",
+                            top: 0,
+                            backgroundColor: "#f3f7fb",
+                            zIndex: 11,
+                            fontWeight: 600,
+                            color: "#246aa8"
+                          }}>Line Total</th>
                           <th style={{ 
                             padding: "12px 8px", 
                             border: "1px solid #dee2e6", 
@@ -558,8 +741,11 @@ function ArchivedPurchaseRequests() {
                           items.map((item, idx) => (
                             <tr key={idx}>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["Product Name"]}</td>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["Supplier Name"] ?? getSupplierName(item)}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["No. to Order"]}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item["received_so_far"] ?? item["No. to Order"]}</td>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{fmtCurrency(item.unit_cost ?? item.unitCost ?? item.unit_price ?? '')}</td>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{fmtCurrency(item.line_total ?? item.lineTotal ?? '')}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item.pr_id}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item.date_created ? new Date(item.date_created).toLocaleString() : "—"}</td>
                             </tr>
@@ -578,6 +764,47 @@ function ArchivedPurchaseRequests() {
         )
       )}
         </>
+      )}
+    {/* History Modal */}
+    {historyModalState.visible && (
+      <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+        <div style={{ width: '80%', maxHeight: '80%', background: '#fff', borderRadius: 8, padding: 20, overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, position: 'relative' }}>
+            <h3 style={{ margin: 0 }}>PO Change History — {historyModalState.prId}</h3>
+            <button onClick={closeHistoryModal} title="Close" aria-label="Close history" style={{ marginLeft: 'auto', border: '1px solid #ccc', background: '#eee', width: 36, height: 36, borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, lineHeight: 1, color: '#000' }}>✕</button>
+          </div>
+          {historyModalState.entries.length === 0 ? (
+            <div style={{ color: '#666' }}>No history entries found for this PO.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f6f9fb' }}>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>When</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>By</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>Comment</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>Before (summary)</th>
+                  <th style={{ border: '1px solid #ddd', padding: 8 }}>After (summary)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyModalState.entries.map((row) => (
+                  <tr key={row.id}>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top' }}>{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top' }}>{row.changed_by || 'System'}</td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top' }}>{row.comment}</td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top', maxWidth: 240 }}>
+                      <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{(() => { const s = summarizeChange(row.before_json, row.after_json); return s.beforeSummary; })()}</pre>
+                    </td>
+                    <td style={{ border: '1px solid #eee', padding: 8, verticalAlign: 'top', maxWidth: 240 }}>
+                      <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{(() => { const s = summarizeChange(row.before_json, row.after_json); return s.afterSummary; })()}</pre>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
       )}
     </div>
   );

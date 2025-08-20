@@ -2722,54 +2722,172 @@ function getAllUsers() {
 
 
 // --- Update received quantities for a purchase request ---
-function updatePurchaseRequestReceived(pr_id, lines, receivedBy = null) {
+function updatePurchaseRequestReceived(pr_id, lines, receivedBy = null, comment = '') {
   return new Promise((resolve, reject) => {
     if (!pr_id || !Array.isArray(lines) || lines.length === 0) {
       return reject({ error: 'Missing PR ID or lines' });
     }
-    let pending = lines.length;
-    lines.forEach(line => {
-      // Find the item by product name and PR ID
-      const newlyReceived = Math.max(0, Number(line.newlyReceived) || 0);
-      db.get('SELECT received_so_far, no_to_order, product_id FROM purchase_request_items WHERE pr_id=? AND product_name=?', [pr_id, line.productName], (err, row) => {
-        if (err || !row) {
-          pending--;
-          if (pending === 0) resolve({ message: 'Updated with errors' });
-          return;
-        }
-        const totalReceived = Math.min(row.no_to_order, (row.received_so_far || 0) + newlyReceived);
-        const isFullyReceived = totalReceived >= row.no_to_order ? 1 : 0;
-        db.run('UPDATE purchase_request_items SET received_so_far=?, received=? WHERE pr_id=? AND product_name=?', [totalReceived, isFullyReceived, pr_id, line.productName], (err2) => {
-          // Log the receipt event
-          db.run('INSERT INTO item_receipt_log (pr_id, product_id, product_name, quantity_received, received_by, timestamp, extra_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [
-              pr_id,
-              row.product_id,
-              line.productName,
-              newlyReceived,
-              receivedBy || line.receivedBy || null,
-              new Date().toISOString(),
-              JSON.stringify(line)
-            ],
-            () => {
+    if (!comment || String(comment).trim().length < 3) return reject({ error: 'A reason/comment is required (min 3 chars)' });
+    // Capture before-snapshot for auditing
+    db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [pr_id], (preErr, prBefore) => {
+      // Even if we can't read the PR, continue with best-effort (prBefore may be null)
+      db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [pr_id], (preErr2, itemsBefore) => {
+        const beforeSnapshot = { purchase_request: prBefore || null, items: itemsBefore || [] };
+
+        let pending = lines.length;
+        lines.forEach(line => {
+          // Find the item by product name and PR ID
+          const newlyReceived = Math.max(0, Number(line.newlyReceived) || 0);
+          db.get('SELECT received_so_far, no_to_order, product_id FROM purchase_request_items WHERE pr_id=? AND product_name=?', [pr_id, line.productName], (err, row) => {
+            if (err || !row) {
               pending--;
-              if (pending === 0) {
-                // Check if ALL items in this PR are fully received
-                db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [pr_id], (err3, allItems) => {
-                  if (err3) return resolve({ message: 'Updated but could not check PR status' });
-                  
-                  const allFullyReceived = allItems.every(item => (item.received_so_far || 0) >= item.no_to_order);
-                  if (allFullyReceived) {
-                    db.run('UPDATE purchase_requests SET received=1, date_received=? WHERE pr_id=?', [new Date().toISOString(), pr_id], () => {
-                      resolve({ message: 'PR fully received' });
-                    });
-                  } else {
-                    resolve({ message: 'PR partially received' });
-                  }
-                });
-              }
+              if (pending === 0) resolve({ message: 'Updated with errors' });
+              return;
             }
-          );
+            const totalReceived = Math.min(row.no_to_order, (row.received_so_far || 0) + newlyReceived);
+            const isFullyReceived = totalReceived >= row.no_to_order ? 1 : 0;
+            db.run('UPDATE purchase_request_items SET received_so_far=?, received=? WHERE pr_id=? AND product_name=?', [totalReceived, isFullyReceived, pr_id, line.productName], (err2) => {
+              // Log the receipt event
+              db.run('INSERT INTO item_receipt_log (pr_id, product_id, product_name, quantity_received, received_by, timestamp, extra_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [
+                  pr_id,
+                  row.product_id,
+                  line.productName,
+                  newlyReceived,
+                  receivedBy || line.receivedBy || null,
+                  new Date().toISOString(),
+                  JSON.stringify(line)
+                ],
+                () => {
+                  pending--;
+                  if (pending === 0) {
+                    // After all lines processed, read after snapshot and insert a single po_change_log entry
+                    db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [pr_id], (gErr, prAfter) => {
+                      db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [pr_id], (err3, allItems) => {
+                        if (!err3) {
+                          const afterSnapshot = { purchase_request: prAfter || null, items: allItems || [] };
+                          try {
+                            db.run('INSERT INTO po_change_log (pr_id, changed_by, comment, before_json, after_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+                              [pr_id, receivedBy || null, String(comment).trim(), JSON.stringify(beforeSnapshot), JSON.stringify(afterSnapshot), new Date().toISOString()], (logErr) => {
+                                if (logErr) console.warn('Failed to insert po_change_log for receipt:', logErr);
+                              });
+                          } catch (e) {
+                            console.warn('Failed to write po_change_log for receipt:', e);
+                          }
+                        }
+
+                        // Check if ALL items in this PR are fully received
+                        if (err3) return resolve({ message: 'Updated but could not check PR status' });
+                        const allFullyReceived = (allItems || []).every(item => (item.received_so_far || 0) >= item.no_to_order);
+                        if (allFullyReceived) {
+                          db.run('UPDATE purchase_requests SET received=1, date_received=? WHERE pr_id=?', [new Date().toISOString(), pr_id], () => {
+                            resolve({ message: 'PR fully received' });
+                          });
+                        } else {
+                          resolve({ message: 'PR partially received' });
+                        }
+                      });
+                    });
+                  }
+                }
+              );
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
+/**
+ * Atomically update purchase_request_items (received quantities) with a required comment and record a single po_change_log entry
+ * This is used to ensure item-level changes are auditable.
+ * @param {string} prId
+ * @param {Array} lines - [{ productName, newlyReceived }]
+ * @param {string} changedBy
+ * @param {string} comment
+ */
+function updatePurchaseRequestItemsWithComment(prId, lines, changedBy = null, comment = '') {
+  return new Promise((resolve, reject) => {
+    if (!prId || !Array.isArray(lines) || lines.length === 0) return reject({ error: 'Missing parameters' });
+    if (!comment || String(comment).trim().length < 3) return reject({ error: 'A reason/comment is required (min 3 chars)' });
+
+    // Fetch full PR and items for before snapshot
+    db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (err, prRow) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      if (!prRow) return reject({ error: 'Purchase request not found' });
+
+      db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [prId], (iErr, itemsBefore) => {
+        if (iErr) return reject({ error: 'DB error', details: iErr.message });
+
+        const beforeSnapshot = { purchase_request: prRow, items: itemsBefore };
+
+        db.serialize(() => {
+          db.run('BEGIN TRANSACTION');
+
+          // Sequentially apply each line update
+          const applyLine = (idx) => {
+            if (idx >= lines.length) {
+              // After applying lines, compute after snapshot
+              db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (gErr, prAfter) => {
+                if (gErr) return db.run('ROLLBACK', () => reject({ error: 'Failed to read PR after update', details: gErr.message }));
+                db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [prId], (gErr2, itemsAfter) => {
+                  if (gErr2) return db.run('ROLLBACK', () => reject({ error: 'Failed to read items after update', details: gErr2.message }));
+
+                  const afterSnapshot = { purchase_request: prAfter, items: itemsAfter };
+
+                  // Insert single audit log
+                  db.run('INSERT INTO po_change_log (pr_id, changed_by, comment, before_json, after_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+                    [prId, changedBy || null, String(comment).trim(), JSON.stringify(beforeSnapshot), JSON.stringify(afterSnapshot), new Date().toISOString()], (logErr) => {
+                      if (logErr) console.warn('Failed to insert po_change_log:', logErr);
+
+                      // Update bookkeeping columns on purchase_requests
+                      db.run('UPDATE purchase_requests SET last_modified_at = ?, last_modified_by = ?, change_count = COALESCE(change_count,0) + 1 WHERE pr_id = ?',
+                        [new Date().toISOString(), changedBy || null, prId], (bErr) => {
+                          if (bErr) console.warn('Failed to update bookkeeping columns:', bErr);
+                          // If all items fully received, mark PR received/date
+                          const allFully = (itemsAfter || []).every(it => (it.received_so_far || 0) >= (it.no_to_order || 0));
+                          if (allFully) {
+                            db.run('UPDATE purchase_requests SET received=1, date_received=? WHERE pr_id = ?', [new Date().toISOString(), prId], () => {
+                              db.run('COMMIT', (cErr) => {
+                                if (cErr) return db.run('ROLLBACK', () => reject({ error: 'Commit failed', details: cErr.message }));
+                                return resolve({ success: true, pr: prAfter });
+                              });
+                            });
+                          } else {
+                            db.run('COMMIT', (cErr) => {
+                              if (cErr) return db.run('ROLLBACK', () => reject({ error: 'Commit failed', details: cErr.message }));
+                              return resolve({ success: true, pr: prAfter });
+                            });
+                          }
+                      });
+                  });
+                });
+              });
+              return;
+            }
+
+            const line = lines[idx];
+            const newlyReceived = Math.max(0, Number(line.newlyReceived) || 0);
+            db.get('SELECT id, received_so_far, no_to_order, product_id, product_name FROM purchase_request_items WHERE pr_id = ? AND (product_name = ? OR product_id = ?)', [prId, line.productName, line.productId || null], (qErr, row) => {
+              if (qErr || !row) {
+                // Skip missing rows but continue
+                return applyLine(idx + 1);
+              }
+              const totalReceived = Math.min(row.no_to_order, (row.received_so_far || 0) + newlyReceived);
+              const isFullyReceived = totalReceived >= row.no_to_order ? 1 : 0;
+              db.run('UPDATE purchase_request_items SET received_so_far = ?, received = ? WHERE id = ?', [totalReceived, isFullyReceived, row.id], (uErr) => {
+                // Log each item receipt
+                db.run('INSERT INTO item_receipt_log (pr_id, product_id, product_name, quantity_received, received_by, timestamp, extra_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                  [prId, row.product_id, row.product_name, newlyReceived, changedBy || null, new Date().toISOString(), JSON.stringify(line)], () => {
+                    // Continue to next
+                    applyLine(idx + 1);
+                  });
+              });
+            });
+          };
+
+          applyLine(0);
         });
       });
     });
@@ -3224,6 +3342,191 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
     } catch (error) {
       reject({ error: 'Failed to update Cliniko stock', details: error.message });
     }
+  });
+}
+
+/**
+ * Update a purchase request while requiring a comment and record an audit entry.
+ * @param {string} prId
+ * @param {object} updates - fields to update on purchase_requests (e.g., date_received, received)
+ * @param {string} changedBy - username or identifier
+ * @param {string} comment - required reason for change
+ */
+function updatePurchaseRequestWithComment(prId, updates = {}, changedBy = null, comment = '') {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing PR ID' });
+    if (!comment || String(comment).trim().length < 3) return reject({ error: 'A reason/comment is required (min 3 characters)' });
+
+    db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (err, beforeRow) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      if (!beforeRow) return reject({ error: 'Purchase request not found' });
+
+      const beforeJson = JSON.stringify(beforeRow);
+
+      // Build SET clause
+      const fields = Object.keys(updates || {}).filter(k => k !== 'pr_id');
+      const params = fields.map(k => updates[k]);
+      const setSql = fields.length > 0 ? fields.map(k => `${k} = ?`).join(', ') : null;
+
+      db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        const applyUpdate = (cb) => {
+          if (!setSql) return cb(null);
+          db.run(`UPDATE purchase_requests SET ${setSql} WHERE pr_id = ?`, [...params, prId], (uErr) => cb(uErr));
+        };
+
+        applyUpdate((uErr) => {
+          if (uErr) {
+            db.run('ROLLBACK', () => {});
+            return reject({ error: 'Failed to update PR', details: uErr.message });
+          }
+
+          // Read after-state
+          db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (gErr, afterRow) => {
+            if (gErr) {
+              db.run('ROLLBACK', () => {});
+              return reject({ error: 'Failed to read PR after update', details: gErr.message });
+            }
+
+            const afterJson = JSON.stringify(afterRow || {});
+
+            // Insert audit log
+            db.run('INSERT INTO po_change_log (pr_id, changed_by, comment, before_json, after_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+              [prId, changedBy || null, String(comment || '').trim(), beforeJson, afterJson, new Date().toISOString()], (iErr) => {
+                if (iErr) {
+                  // Non-fatal: try to continue but note logged failure
+                  console.warn('Failed to insert po_change_log:', iErr);
+                }
+
+                // Update bookkeeping columns
+                db.run('UPDATE purchase_requests SET last_modified_at = ?, last_modified_by = ?, change_count = COALESCE(change_count,0) + 1 WHERE pr_id = ?',
+                  [new Date().toISOString(), changedBy || null, prId], (bErr) => {
+                    if (bErr) {
+                      console.warn('Failed to update bookkeeping columns:', bErr);
+                    }
+                    db.run('COMMIT', (cErr) => {
+                      if (cErr) {
+                        db.run('ROLLBACK', () => {});
+                        return reject({ error: 'Failed to commit transaction', details: cErr.message });
+                      }
+                      return resolve({ success: true, pr: afterRow });
+                    });
+                });
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
+function getPoChangeLog(prId, limit = 50) {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing PR ID' });
+    db.all('SELECT id, pr_id, changed_by, comment, before_json, after_json, timestamp FROM po_change_log WHERE pr_id = ? ORDER BY timestamp DESC LIMIT ?', [prId, limit], (err, rows) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      resolve(rows || []);
+    });
+  });
+}
+
+/**
+ * Edit or delete purchase_request_items rows with an audit comment and bookkeeping.
+ * edits: [{ id, productName, no_to_order, unit_cost, delete: boolean }]
+ */
+function updatePurchaseRequestItemsEditWithComment(prId, edits = [], changedBy = null, comment = '') {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing PR ID' });
+    if (!Array.isArray(edits) || edits.length === 0) return reject({ error: 'No edits provided' });
+    if (!comment || String(comment).trim().length < 3) return reject({ error: 'A reason/comment is required (min 3 chars)' });
+
+    // Debug logging: record invocation
+    try {
+      fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestItemsEditWithComment called - prId=${prId} edits=${edits.length} changedBy=${changedBy} comment="${String(comment).replace(/\n/g,' ')}"\n`);
+    } catch (e) {
+      // ignore logging failures
+    }
+
+    // Fetch before snapshot
+    db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (err, prRow) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      if (!prRow) return reject({ error: 'Purchase request not found' });
+
+      db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [prId], (iErr, itemsBefore) => {
+        if (iErr) return reject({ error: 'DB error', details: iErr.message });
+
+        const beforeSnapshot = { purchase_request: prRow, items: itemsBefore };
+
+        db.serialize(() => {
+          db.run('BEGIN TRANSACTION');
+
+          const applyEdit = (idx) => {
+            if (idx >= edits.length) {
+              // After edits, read after snapshot and insert audit
+              db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (gErr, prAfter) => {
+                if (gErr) return db.run('ROLLBACK', () => reject({ error: 'Failed to read PR after edits', details: gErr.message }));
+                db.all('SELECT * FROM purchase_request_items WHERE pr_id = ?', [prId], (gErr2, itemsAfter) => {
+                  if (gErr2) return db.run('ROLLBACK', () => reject({ error: 'Failed to read items after edits', details: gErr2.message }));
+
+                  const afterSnapshot = { purchase_request: prAfter, items: itemsAfter };
+
+                  db.run('INSERT INTO po_change_log (pr_id, changed_by, comment, before_json, after_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+                    [prId, changedBy || null, String(comment).trim(), JSON.stringify(beforeSnapshot), JSON.stringify(afterSnapshot), new Date().toISOString()], (logErr) => {
+                      if (logErr) console.warn('Failed to insert po_change_log:', logErr);
+
+                      db.run('UPDATE purchase_requests SET last_modified_at = ?, last_modified_by = ?, change_count = COALESCE(change_count,0) + 1 WHERE pr_id = ?',
+                        [new Date().toISOString(), changedBy || null, prId], (bErr) => {
+                          if (bErr) console.warn('Failed to update bookkeeping columns:', bErr);
+                          db.run('COMMIT', (cErr) => {
+                            if (cErr) return db.run('ROLLBACK', () => reject({ error: 'Commit failed', details: cErr.message }));
+                            return resolve({ success: true, pr: prAfter });
+                          });
+                      });
+                  });
+                });
+              });
+              return;
+            }
+
+            const e = edits[idx];
+            if (e.delete) {
+              // Delete by item id if provided, otherwise by product name and pr_id
+              if (e.id) {
+                db.run('DELETE FROM purchase_request_items WHERE id = ? AND pr_id = ?', [e.id, prId], (dErr) => {
+                  // Continue regardless of individual delete failures
+                  applyEdit(idx + 1);
+                });
+              } else {
+                db.run('DELETE FROM purchase_request_items WHERE pr_id = ? AND product_name = ?', [prId, e.productName], (dErr) => {
+                  applyEdit(idx + 1);
+                });
+              }
+            } else {
+              // Update fields: no_to_order, unit_cost, product_name if present
+              const fields = [];
+              const params = [];
+              if (typeof e.no_to_order !== 'undefined') { fields.push('no_to_order = ?'); params.push(e.no_to_order); }
+              if (typeof e.unit_cost !== 'undefined') { fields.push('unit_cost = ?'); params.push(e.unit_cost); }
+              if (typeof e.productName !== 'undefined') { fields.push('product_name = ?'); params.push(e.productName); }
+
+              if (fields.length === 0) return applyEdit(idx + 1);
+
+              if (e.id) {
+                db.run(`UPDATE purchase_request_items SET ${fields.join(', ')} WHERE id = ? AND pr_id = ?`, [...params, e.id, prId], (uErr) => {
+                  applyEdit(idx + 1);
+                });
+              } else {
+                db.run(`UPDATE purchase_request_items SET ${fields.join(', ')} WHERE pr_id = ? AND product_name = ?`, [...params, prId, e.originalProductName || e.productName], (uErr) => {
+                  applyEdit(idx + 1);
+                });
+              }
+            }
+          };
+
+          applyEdit(0);
+        });
+      });
+    });
   });
 }
 
@@ -4013,6 +4316,8 @@ module.exports = {
   setSessionTimeout,
   updatePurchaseRequestReceived,
   receiveItemById,
+  updatePurchaseRequestItemsWithComment,
+  updatePurchaseRequestItemsEditWithComment,
   getActivePURsForBarcode,
   createSupplierOrderFilesForVendors,
   // User behavior logging functions
@@ -4049,6 +4354,8 @@ module.exports = {
   // App settings
   getAppSetting,
   setAppSetting,
+  updatePurchaseRequestWithComment,
+  getPoChangeLog,
   // Smart Prompts setting functions
   getSmartPromptsSetting,
   setSmartPromptsSetting,

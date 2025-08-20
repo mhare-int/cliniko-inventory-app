@@ -473,8 +473,54 @@ ipcMain.handle('changeUserPassword', async (event, userId, newPassword) => {
   return await db.changeUserPassword(userId, newPassword);
 });
 
-ipcMain.handle('updatePurchaseRequestReceived', async (event, prId, lines) => {
-  return await db.updatePurchaseRequestReceived(prId, lines);
+ipcMain.handle('updatePurchaseRequestReceived', async (event, prId, lines, receivedBy = null, comment = '') => {
+  try {
+    return await db.updatePurchaseRequestReceived(prId, lines, receivedBy, comment);
+  } catch (err) {
+    logErrorToFile('updatePurchaseRequestReceived error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err && err.error ? err.error : 'Failed to update purchase request received', details: err && err.message ? err.message : undefined };
+  }
+});
+
+// Update purchase request with required comment and create audit log
+ipcMain.handle('updatePurchaseRequestWithComment', async (event, prId, updates, changedBy, comment) => {
+  try {
+    return await db.updatePurchaseRequestWithComment(prId, updates, changedBy, comment);
+  } catch (err) {
+    logErrorToFile('updatePurchaseRequestWithComment error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err && err.error ? err.error : 'Failed to update purchase request with comment', details: err && err.details ? err.details : err };
+  }
+});
+
+ipcMain.handle('updatePurchaseRequestItemsWithComment', async (event, prId, lines, changedBy, comment) => {
+  try {
+    return await db.updatePurchaseRequestItemsWithComment(prId, lines, changedBy, comment);
+  } catch (err) {
+    logErrorToFile('updatePurchaseRequestItemsWithComment error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err && err.error ? err.error : 'Failed to update PR items with comment', details: err && err.details ? err.details : err };
+  }
+});
+
+ipcMain.handle('getPoChangeLog', async (event, prId, limit = 50) => {
+  try {
+    return await db.getPoChangeLog(prId, limit);
+  } catch (err) {
+    logErrorToFile('getPoChangeLog error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get PO change log' };
+  }
+});
+
+ipcMain.handle('updatePurchaseRequestItemsEditWithComment', async (event, prId, edits, changedBy, comment) => {
+  try {
+  // Log incoming IPC call for diagnostics
+  try { require('fs').appendFileSync(require('path').join(__dirname, 'backend.log'), `[${new Date().toISOString()}] IPC updatePurchaseRequestItemsEditWithComment invoked - prId=${prId} edits=${Array.isArray(edits)?edits.length:0} changedBy=${changedBy}\n`); } catch (e) {}
+  const res = await db.updatePurchaseRequestItemsEditWithComment(prId, edits, changedBy, comment);
+  try { require('fs').appendFileSync(require('path').join(__dirname, 'backend.log'), `[${new Date().toISOString()}] IPC updatePurchaseRequestItemsEditWithComment result - ${JSON.stringify(res).slice(0,200)}\n`); } catch (e) {}
+  return res;
+  } catch (err) {
+    logErrorToFile('updatePurchaseRequestItemsEditWithComment error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to apply item edits' };
+  }
 });
 
 ipcMain.handle('receiveItemById', async (event, itemId, quantityReceived) => {

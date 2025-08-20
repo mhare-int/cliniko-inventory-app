@@ -7,6 +7,54 @@ function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [passwordWarning, setPasswordWarning] = useState('');
 
+  // Normalize backend/login errors into concise, user-friendly messages
+  const normalizeLoginError = (err) => {
+    if (!err) return 'Login failed: unknown error';
+    if (typeof err === 'string') return `Login failed: ${err}`;
+
+    // Gather candidate messages from common fields
+    const candidates = [];
+    if (err.error) candidates.push(err.error);
+    if (err.message) candidates.push(err.message);
+    if (err.details && typeof err.details === 'string') candidates.push(err.details);
+    if (err.details && typeof err.details === 'object') {
+      if (err.details.error) candidates.push(err.details.error);
+      if (err.details.message) candidates.push(err.details.message);
+    }
+    if (err.response && err.response.data) {
+      const d = err.response.data;
+      if (d.error) candidates.push(d.error);
+      if (d.message) candidates.push(d.message);
+      try { candidates.push(JSON.stringify(d)); } catch (e) {}
+    }
+
+    const firstRaw = candidates.find(c => c && String(c).trim()) || (err.message || null);
+    if (firstRaw) {
+      const lc = String(firstRaw).toLowerCase();
+      if (lc.includes('invalid') || lc.includes('incorrect') || lc.includes('credentials') || lc.includes('username') || lc.includes('password')) {
+        return 'Incorrect username or password. Please check your credentials and try again.';
+      }
+      if (lc.includes('locked') || lc.includes('disabled')) return 'Your account appears locked or disabled — contact an administrator.';
+      if (lc.includes('timeout') || lc.includes('network') || lc.includes('unreachable') || lc.includes('failed to connect')) return 'Network error: unable to reach authentication service. Check your connection.';
+      // Handle Electron IPC remote errors that sometimes embed an object in the message
+      if (String(firstRaw).includes('[object Object]') || String(firstRaw).toLowerCase().includes('remote method')) {
+        console.error('Detailed login error object:', err);
+        return 'Authentication service returned an unexpected error. Check your credentials or contact an administrator (details in console).';
+      }
+      return `Login failed: ${firstRaw}`;
+    }
+
+    // Last resort - attempt to stringify the object; log details for developer debugging
+    try {
+      console.error('Login error (full object):', err);
+      const s = JSON.stringify(err);
+      if (s && s !== '{}') return `Login failed: ${s}`;
+    } catch (e) {
+      console.error('Failed to stringify login error', e);
+    }
+    return 'Login failed: Authentication service error (see console for details).';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -34,19 +82,12 @@ function Login({ onLogin }) {
         
         if (onLogin) onLogin();
       } else {
-        setError('Login failed: No token returned');
+        setError('Login failed: server did not return an authentication token. Please try again or contact support.');
       }
     } catch (err) {
-      console.error('Login error:', err);
-      let errMsg = '';
-      if (err && typeof err === 'object') {
-        if (err.error) errMsg = err.error;
-        else if (err.message) errMsg = err.message;
-        else errMsg = JSON.stringify(err);
-      } else {
-        errMsg = err?.toString() || 'Unknown error';
-      }
-      setError('Login failed: ' + errMsg);
+      // Always show simple mismatch message to users for failed authentication
+      setError('Incorrect username or password. Please check your credentials and try again.');
+      console.error('Login failed (raw error):', err);
     }
   };
 
@@ -75,7 +116,7 @@ function Login({ onLogin }) {
       <div style={{ marginBottom: 12 }}>
         <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ width: '100%', padding: 8 }} />
       </div>
-      {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
+  {error && <div style={{ color: 'red', marginBottom: 12 }}>{error}</div>}
       {passwordWarning && (
         <div style={{ 
           color: '#e65100', 

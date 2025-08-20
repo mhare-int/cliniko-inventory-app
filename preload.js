@@ -33,7 +33,10 @@ contextBridge.exposeInMainWorld('api', {
   logout: () => ipcRenderer.invoke('logout'),
   getApiKey: () => ipcRenderer.invoke('getApiKey'),
   setApiKey: (newKey) => ipcRenderer.invoke('setApiKey', newKey),
-  updatePurchaseRequestReceived: (pr_id, lines) => ipcRenderer.invoke('updatePurchaseRequestReceived', pr_id, lines),
+  updatePurchaseRequestReceived: (pr_id, lines, receivedBy = null, comment = '') => ipcRenderer.invoke('updatePurchaseRequestReceived', pr_id, lines, receivedBy, comment),
+  updatePurchaseRequestWithComment: (pr_id, updates, changedBy, comment) => ipcRenderer.invoke('updatePurchaseRequestWithComment', pr_id, updates, changedBy, comment),
+  updatePurchaseRequestItemsWithComment: (pr_id, lines, changedBy, comment) => ipcRenderer.invoke('updatePurchaseRequestItemsWithComment', pr_id, lines, changedBy, comment),
+  updatePurchaseRequestItemsEditWithComment: (pr_id, edits, changedBy, comment) => ipcRenderer.invoke('updatePurchaseRequestItemsEditWithComment', pr_id, edits, changedBy, comment),
   receiveItemById: (itemId, quantityReceived) => ipcRenderer.invoke('receiveItemById', itemId, quantityReceived),
   updateStockFromCliniko: () => {
     console.log('updateStockFromCliniko called from frontend');
@@ -64,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
   
   // File management APIs for supplier files
   getGeneratedFiles: (prId, fileType) => ipcRenderer.invoke('getGeneratedFiles', prId, fileType),
+  getPoChangeLog: (prId, limit) => ipcRenderer.invoke('getPoChangeLog', prId, limit),
   deleteGeneratedFile: (prId, vendorName, fileType, filename) => ipcRenderer.invoke('deleteGeneratedFile', prId, vendorName, fileType, filename),
   markVendorFilesCreated: (prId, vendorName, fileType, filename, filePath, fileSize) => ipcRenderer.invoke('markVendorFilesCreated', prId, vendorName, fileType, filename, filePath, fileSize),
   hasVendorFilesCreated: (prId, vendorName, fileType) => ipcRenderer.invoke('hasVendorFilesCreated', prId, vendorName, fileType),

@@ -519,6 +519,54 @@ migrations.push({
   }
 });
 
+// Migration 18: add po_change_log table and bookkeeping columns on purchase_requests
+migrations.push({
+  version: 18,
+  description: "Add po_change_log audit table and bookkeeping columns for PO edits",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      const tasks = [];
+
+      // 1) Create po_change_log table
+      tasks.push(new Promise((res, rej) => {
+        db.run(`CREATE TABLE IF NOT EXISTS po_change_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          pr_id TEXT NOT NULL,
+          changed_by TEXT,
+          comment TEXT NOT NULL,
+          before_json TEXT,
+          after_json TEXT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => err ? rej(err) : res());
+      }));
+
+      // 2) Add bookkeeping columns to purchase_requests if missing
+      tasks.push(new Promise((res, rej) => {
+        db.all("PRAGMA table_info(purchase_requests)", (err, cols) => {
+          if (err) return rej(err);
+          const names = new Set((cols || []).map(c => c.name));
+          const alters = [];
+          if (!names.has('last_modified_at')) alters.push('ALTER TABLE purchase_requests ADD COLUMN last_modified_at DATETIME');
+          if (!names.has('last_modified_by')) alters.push('ALTER TABLE purchase_requests ADD COLUMN last_modified_by TEXT');
+          if (!names.has('change_count')) alters.push('ALTER TABLE purchase_requests ADD COLUMN change_count INTEGER DEFAULT 0');
+
+          const runNext = () => {
+            const next = alters.shift();
+            if (!next) return res();
+            db.run(next, (e) => {
+              if (e && !String(e.message || '').includes('duplicate column name')) return rej(e);
+              runNext();
+            });
+          };
+          runNext();
+        });
+      }));
+
+      Promise.all(tasks).then(() => resolve()).catch(reject);
+    });
+  }
+});
+
 /**
  * Get current database version
  */
@@ -605,3 +653,4 @@ module.exports = {
   backupDatabase,
   CURRENT_DB_VERSION
 };
+
