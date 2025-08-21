@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 
 function GenerateSupplierFiles() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [activePRs, setActivePRs] = useState([]);
   const [selectedPRId, setSelectedPRId] = useState("");
   const [prSearch, setPrSearch] = useState("");
@@ -58,8 +59,11 @@ function GenerateSupplierFiles() {
       setOutputFolder(savedFolder);
     }
 
-    if (!window.api || !window.api.getPurchaseRequests) return;
-    window.api.getPurchaseRequests(true, undefined)
+  // Read prId from query params (if present) so we can auto-open a specific PR
+  const queryPrId = location ? new URLSearchParams(location.search).get('prId') : null;
+
+  if (!window.api || !window.api.getPurchaseRequests) return;
+  window.api.getPurchaseRequests(true, undefined)
       .then(res => {
         // Sort PRs so the biggest PO number appears first in the select.
         // We try to extract a numeric portion from pr.pr_id / pr.name / pr.id and sort by that.
@@ -77,6 +81,17 @@ function GenerateSupplierFiles() {
 
         setActivePRs(sortedPRs);
 
+        // If prId was passed in the querystring, select that PR (prefer exact matches)
+        if (queryPrId) {
+          const match = sortedPRs.find(p => ((p.id || p._id) || '').toString() === queryPrId.toString());
+          if (match) {
+            const label = match.name ? match.name : `PO #${match.id || match._id}`;
+            setSelectedPRId((match.id || match._id || '').toString());
+            setPrSearch(label);
+            return;
+          }
+        }
+
         // Auto-select the highest PR if none selected and populate search text
         if (sortedPRs && sortedPRs.length > 0) {
           const highestPR = sortedPRs[0];
@@ -86,6 +101,22 @@ function GenerateSupplierFiles() {
         }
       })
       .catch(() => setActivePRs([]));
+  }, []);
+
+  // Listen for external changes to purchase requests and refresh the activePRs list
+  useEffect(() => {
+    const handler = async (e) => {
+      try {
+        if (window.api && window.api.getPurchaseRequests) {
+          const refreshed = await window.api.getPurchaseRequests(true);
+          setActivePRs(refreshed || []);
+        }
+      } catch (err) {
+        console.warn('Failed to refresh active PRs after external change', err);
+      }
+    };
+    window.addEventListener('purchaseRequestsChanged', handler);
+    return () => window.removeEventListener('purchaseRequestsChanged', handler);
   }, []);
 
   // Load vendor emails for the selected Purchase Request
@@ -211,6 +242,85 @@ function GenerateSupplierFiles() {
     }
   }, [selectedPRId, activePRs]);
 
+  // Helper to toggle emails_sent flag for the selected PR
+  const toggleEmailsSentForSelectedPR = async (value) => {
+    if (!selectedPRId) return;
+    const prId = selectedPRId;
+    // remember previous value so we can revert on failure
+    const prevPRs = activePRs.slice();
+    const prev = (activePRs.find(p => (p.id || p._id).toString() === (prId || '').toString()) || {}).emails_sent;
+    const newVal = !!value;
+    // optimistic UI update
+    setActivePRs(prevList => prevList.map(p => {
+      if ((p.id || p._id).toString() === (prId || '').toString()) {
+        return { ...p, emails_sent: newVal };
+      }
+      return p;
+    }));
+
+    try {
+      if (window.api && (window.api.updatePurchaseRequestEmailsSentStatus || window.api.updatePurchaseRequestEmailsSentStatusForce)) {
+        // Normalize and log the PR id to help correlate with backend logs
+        const normalizedPrId = (prId == null) ? prId : String(prId).trim();
+        try { console.log('CALL ipc updatePurchaseRequestEmailsSentStatus (prId -> backend):', { prId: normalizedPrId, typeof: typeof normalizedPrId }); } catch (e) {}
+        // Try simple API first, fall back to force if available
+        let res = null;
+        if (window.api.updatePurchaseRequestEmailsSentStatus) {
+          try {
+            res = await window.api.updatePurchaseRequestEmailsSentStatus(normalizedPrId, newVal);
+          } catch (e) {
+            console.warn('Simple updatePurchaseRequestEmailsSentStatus failed', e);
+          }
+        }
+        if ((!res || (res === false) || (res && res.success === false)) && window.api.updatePurchaseRequestEmailsSentStatusForce) {
+          try {
+            console.log('Falling back to updatePurchaseRequestEmailsSentStatusForce for', normalizedPrId);
+            res = await window.api.updatePurchaseRequestEmailsSentStatusForce(normalizedPrId, newVal);
+            console.log('Force update response', res);
+          } catch (e) {
+            console.warn('Force update failed', e);
+          }
+        }
+
+        // If backend reports failure, revert by refreshing from backend
+        if (!res || (res === false) || (res && res.success === false)) {
+          try {
+            const refreshed = await window.api.getPurchaseRequests(true);
+            setActivePRs(refreshed || prevPRs);
+          } catch (e) {
+            setActivePRs(prevPRs);
+          }
+        } else {
+          // success: notify other renderer components to refresh their PR lists
+          try {
+            // Quietly refresh backend cache (best-effort)
+            await window.api.getPurchaseRequests(false);
+          } catch (e) { /* ignore */ }
+          try {
+            // Persist a local override so other views reflect the optimistic change immediately
+            try {
+              const key = 'prEmailsSentOverrides';
+              const raw = localStorage.getItem(key);
+              const map = raw ? JSON.parse(raw) : {};
+              map[prId] = !!newVal;
+              localStorage.setItem(key, JSON.stringify(map));
+            } catch (ee) { /* ignore localStorage errors */ }
+            window.dispatchEvent(new CustomEvent('purchaseRequestsChanged', { detail: { prId, emails_sent: newVal } }));
+          } catch (e) { /* ignore */ }
+        }
+      } else {
+        // no backend available: leave optimistic state and inform user
+        alert('Change applied locally; backend API not available to persist change.');
+      }
+    } catch (e) {
+      console.warn('Failed to update emails_sent status for PR', prId, e);
+      // revert to previous
+      setActivePRs(prevPRs);
+    }
+  };
+
+  // ...existing code...
+
   // Compute vendor suggestion options for the vendor search datalist
   useEffect(() => {
     try {
@@ -271,6 +381,59 @@ function GenerateSupplierFiles() {
       }
     } else {
       alert("Folder picker not available in this build.");
+    }
+  };
+
+  // Quick toggle button for emails_sent: updates DB and UI optimistically
+  const handleToggleEmailsSentClick = async () => {
+    if (!selectedPRId) {
+      alert('Please select a Purchase Order first');
+      return;
+    }
+    try {
+      const pr = activePRs.find(p => (p.id || p._id).toString() === (selectedPRId || '').toString());
+      const newVal = !Boolean(pr && pr.emails_sent);
+      console.log('Toggling emails_sent for', selectedPRId, '->', newVal);
+      // Optimistic UI update
+      setActivePRs(prev => prev.map(p => {
+        if ((p.id || p._id).toString() === (selectedPRId || '').toString()) {
+          return { ...p, emails_sent: newVal };
+        }
+        return p;
+      }));
+
+      if (window.api && window.api.updatePurchaseRequestEmailsSentStatus) {
+  // Normalize and log the PR id to help correlate with backend logs
+  const normalizedSelectedPrId = (selectedPRId == null) ? selectedPRId : String(selectedPRId).trim();
+  try { console.log('CALL ipc updatePurchaseRequestEmailsSentStatus (selectedPRId -> backend):', { selectedPRId: normalizedSelectedPrId, typeof: typeof normalizedSelectedPrId }); } catch (e) {}
+        // Try the simpler API first, then fall back to the force update if needed
+        let res = await window.api.updatePurchaseRequestEmailsSentStatus(normalizedSelectedPrId, newVal);
+        if ((!res || (res === false) || (res && res.success === false)) && window.api.updatePurchaseRequestEmailsSentStatusForce) {
+          try {
+            console.log('Falling back to updatePurchaseRequestEmailsSentStatusForce for', normalizedSelectedPrId);
+            res = await window.api.updatePurchaseRequestEmailsSentStatusForce(normalizedSelectedPrId, newVal);
+            console.log('Force update response', res);
+          } catch (e) {
+            console.warn('Force update failed', e);
+          }
+        }
+  console.log('Update response', res);
+        // Refresh PRs from backend if API returned success flag false or unknown
+        try {
+          if (!res || (res.success === false)) {
+            const refreshed = await window.api.getPurchaseRequests(true);
+            setActivePRs(refreshed || []);
+          }
+        } catch (e) {
+          console.warn('Could not refresh PRs after toggle', e);
+        }
+      } else {
+        // If no API available, inform user and keep optimistic state
+        alert('Toggled locally. Backend API not available to persist change.');
+      }
+    } catch (e) {
+      console.error('Failed to toggle emails_sent', e);
+      alert('Failed to toggle sent status: ' + (e?.message || e));
     }
   };
 
@@ -1863,6 +2026,8 @@ Website: www.goodlifeclinic.com`
               ))}
             </select>
 
+            {/* removed Sent indicator label as requested */}
+
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input
@@ -1981,35 +2146,76 @@ Website: www.goodlifeclinic.com`
             );
           })()}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: 6, flexDirection: 'column', gap: 6 }}>
+            {/* Checkbox to mark PR as Sent (mirror of the Email Setup checkbox) */}
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: 48, marginBottom: 0 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 16, height: '100%', cursor: 'pointer' }}
+                onClick={(e) => {
+                  try {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const pr = activePRs.find(p => (p.id || p._id).toString() === (selectedPRId || '').toString());
+                    const current = !!(pr && pr.emails_sent);
+                    toggleEmailsSentForSelectedPR(!current);
+                  } catch (err) {
+                    console.warn('Label toggle click failed', err);
+                  }
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={(() => {
+                    try {
+                      const pr = activePRs.find(p => (p.id || p._id).toString() === (selectedPRId || '').toString());
+                      return !!(pr && pr.emails_sent);
+                    } catch (e) { return false; }
+                  })()}
+                  onChange={e => toggleEmailsSentForSelectedPR(e.target.checked)}
+                  style={{ width: 18, height: 18, pointerEvents: 'auto', zIndex: 2002 }}
+                />
+                <span style={{ fontSize: 16, fontWeight: 600 }}>Mark Purchase Order as "Sent"</span>
+              </label>
+            </div>
+
+            {/* Tick button removed for a cleaner UI; use the checkbox above to mark as Sent */}
+
             {createFiles && (
-              <button style={{ width: '100%', background: '#006bb6', color: '#fff', fontWeight: 600, padding: '10px 12px', border: 'none', borderRadius: '5px', cursor: 'pointer' }} onClick={handleDownloadAll} type="button">Open All Supplier emails</button>
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+                <button style={{ width: '60%', background: '#006bb6', color: '#fff', fontWeight: 600, padding: '12px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: 15 }} onClick={handleDownloadAll} type="button">Open All Supplier emails</button>
+              </div>
             )}
           </div>
         </div>
       )}
 
-      <div style={{ display: "flex", marginTop: 10 }}>
+      <div style={{ display: "flex", marginTop: 10, justifyContent: 'center' }}>
         <button
           type="button"
-          disabled={loading || !selectedPRId || !outputFolder || !apiKeySet}
-          onClick={handleCreateSupplierOrderFilesFromPR}
+          disabled={loading || !selectedPRId || !outputFolder}
+          onClick={() => handleCreateSupplierOrderFilesFromPR()}
           style={{
             fontWeight: 600,
-            backgroundColor: loading || !selectedPRId || !outputFolder || !apiKeySet ? "#eee" : "#22b573",
-            color: loading || !selectedPRId || !outputFolder || !apiKeySet ? "#888" : "white",
-            padding: "14px 0",
+            backgroundColor: loading || !selectedPRId || !outputFolder ? "#eee" : "#22b573",
+            color: loading || !selectedPRId || !outputFolder ? "#888" : "white",
+            padding: "12px 16px",
             border: "none",
             borderRadius: "6px",
-            cursor: loading || !selectedPRId || !outputFolder || !apiKeySet ? "not-allowed" : "pointer",
+            cursor: loading || !selectedPRId || !outputFolder ? "not-allowed" : "pointer",
             fontSize: "1.1em",
-            width: "100%",
+            width: '60%',
             transition: "background 0.2s"
           }}
         >
           {createButtonLabel}
         </button>
       </div>
+      {/* Small inline note: API key optional for generating files, but required for some email flows */}
+      {!apiKeySet && (
+        <div style={{ textAlign: 'center', marginTop: 8, color: '#92400e', fontSize: 13 }}>
+          Note: API key not set — creating supplier files is allowed, but automated email sending may be unavailable until API key is configured.
+        </div>
+      )}
       
       {/* Email Setup Section - Shows immediately when PUR is selected */}
       {selectedPRId && emailMode && Object.keys(emailSettings.vendorEmails || {}).length > 0 && (
@@ -2034,16 +2240,18 @@ Website: www.goodlifeclinic.com`
               <strong>📝 Note:</strong> Review and edit vendor email addresses below. These are auto-populated from your supplier database.
             </div>
 
+              {/* Sent checkbox removed - use the PR list to view sent status */}
+
             {/* Vendor Email Addresses */}
             <div>
               <h6 style={{ margin: "0 0 10px 0", color: "#374151" }}>Vendor Email Addresses:</h6>
-              {Object.keys(emailSettings.vendorEmails || {}).map((vendorName, idx) => {
+        {Object.keys(emailSettings.vendorEmails || {}).map((vendorName, idx) => {
                 const vendorInfo = emailSettings.vendorEmails[vendorName] || {};
                 const email = typeof vendorInfo === 'string' ? vendorInfo : (vendorInfo.email || "");
                 const contactName = typeof vendorInfo === 'object' ? vendorInfo.contactName : "";
                 
                 return (
-                  <div key={idx} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 10 }}>
+          <div key={vendorName} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 10 }}>
                     <div style={{ minWidth: 120, fontWeight: 500, color: "#4b5563" }}>
                       <div>{vendorName}:</div>
                       {contactName && (
@@ -2054,9 +2262,11 @@ Website: www.goodlifeclinic.com`
                     </div>
                     <input
                       type="email"
-                      placeholder="vendor@email.com"
-                      value={email}
-                      onChange={(e) => updateVendorEmail(vendorName, e.target.value)}
+            name={vendorName}
+            autoComplete="off"
+            placeholder="vendor@email.com"
+            value={email}
+            onChange={(e) => updateVendorEmail(vendorName, e.target.value)}
                       style={{
                         flex: 1,
                         padding: "6px 10px",

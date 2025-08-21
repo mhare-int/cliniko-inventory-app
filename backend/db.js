@@ -538,15 +538,35 @@ function syncProductsFromCliniko() {
                         })
                         .then((supplierResult) => {
                           console.log(`Supplier auto-population completed: ${supplierResult.inserted} new suppliers added`);
-                          resolve({ 
-                            message: 'Products synced from Cliniko', 
-                            products_synced: total,
-                            inserted: inserted,
-                            updated: updated,
-                            suppliers_added: supplierResult.inserted,
-                            suppliers_reactivated: supplierResult.reactivated || 0,
-                            suppliers_deactivated: supplierResult.deactivated || 0
-                          });
+                          // Post-auto-populate backfill: set products.supplier_id where supplier_name now matches suppliers.name
+                          try {
+                            db.run(`UPDATE products SET supplier_id = (
+                              SELECT id FROM suppliers WHERE LOWER(TRIM(suppliers.name)) = LOWER(TRIM(products.supplier_name)) LIMIT 1
+                            ) WHERE supplier_name IS NOT NULL AND TRIM(supplier_name) != ''`, (uErr) => {
+                              if (uErr) console.warn('Post-sync supplier_id backfill error (products):', uErr);
+                              else console.log('Post-sync supplier_id backfill (products) completed');
+                              resolve({ 
+                                message: 'Products synced from Cliniko', 
+                                products_synced: total,
+                                inserted: inserted,
+                                updated: updated,
+                                suppliers_added: supplierResult.inserted,
+                                suppliers_reactivated: supplierResult.reactivated || 0,
+                                suppliers_deactivated: supplierResult.deactivated || 0
+                              });
+                            });
+                          } catch (e) {
+                            console.warn('Failed to run post-sync supplier_id backfill:', e);
+                            resolve({ 
+                              message: 'Products synced from Cliniko', 
+                              products_synced: total,
+                              inserted: inserted,
+                              updated: updated,
+                              suppliers_added: supplierResult.inserted,
+                              suppliers_reactivated: supplierResult.reactivated || 0,
+                              suppliers_deactivated: supplierResult.deactivated || 0
+                            });
+                          }
                         })
                         .catch((supplierError) => {
                           console.error('Error auto-populating suppliers:', supplierError);
@@ -668,9 +688,21 @@ function updateStockFromCliniko() {
                         const inserted = supplierResult && supplierResult.inserted ? supplierResult.inserted : 0;
                         const reactivated = supplierResult && supplierResult.reactivated ? supplierResult.reactivated : 0;
                         const deactivated = supplierResult && supplierResult.deactivated ? supplierResult.deactivated : 0;
-                        // Count both newly inserted and reactivated suppliers as 'suppliers_updated'
-                        const suppliersUpdatedTotal = inserted + reactivated;
-                        resolve({ message: 'Stock and barcode updated from Cliniko', total, suppliers_updated: suppliersUpdatedTotal, suppliers_inserted: inserted, suppliers_reactivated: reactivated, suppliers_deactivated: deactivated });
+                        // Post-auto-populate backfill for products.supplier_id after suppliers inserted/reactivated
+                        try {
+                          db.run(`UPDATE products SET supplier_id = (
+                            SELECT id FROM suppliers WHERE LOWER(TRIM(suppliers.name)) = LOWER(TRIM(products.supplier_name)) LIMIT 1
+                          ) WHERE supplier_name IS NOT NULL AND TRIM(supplier_name) != ''`, (uErr) => {
+                            if (uErr) console.warn('Post-update supplier_id backfill error (products):', uErr);
+                            else console.log('Post-update supplier_id backfill (products) completed');
+                            const suppliersUpdatedTotal = inserted + reactivated;
+                            resolve({ message: 'Stock and barcode updated from Cliniko', total, suppliers_updated: suppliersUpdatedTotal, suppliers_inserted: inserted, suppliers_reactivated: reactivated, suppliers_deactivated: deactivated });
+                          });
+                        } catch (e) {
+                          console.warn('Failed to run post-update supplier_id backfill:', e);
+                          const suppliersUpdatedTotal = inserted + reactivated;
+                          resolve({ message: 'Stock and barcode updated from Cliniko', total, suppliers_updated: suppliersUpdatedTotal, suppliers_inserted: inserted, suppliers_reactivated: reactivated, suppliers_deactivated: deactivated });
+                        }
                       })
                       .catch(supplierErr => {
                         console.error('Error auto-populating suppliers from updateStockFromCliniko:', supplierErr);
@@ -1673,9 +1705,10 @@ function getPurchaseRequests(active_only, group_by) {
               'date_received': pr.date_received
             }));
             resolve2({
-              id: pr.pr_id,
+                  id: pr.pr_id,
               date_created: pr.date_created,
               date_received: pr.date_received,
+                  emails_sent: pr.emails_sent || 0,
               received: pr.received,
               total_cost: pr.total_cost || 0,
               items
@@ -1738,6 +1771,7 @@ function getPurchaseRequests(active_only, group_by) {
             });
             pr_list.push({
               id: pr.pr_id,
+              emails_sent: pr.emails_sent || 0,
               date_created: pr.date_created,
               date_received: pr.date_received,
               received: pr.received,
@@ -2046,7 +2080,7 @@ function generateReorderLevelsTemplate() {
 
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
-const { runMigrations, backupDatabase } = require('./migrations');
+const { runMigrations, backupDatabase, getCurrentVersion, CURRENT_DB_VERSION } = require('./migrations');
 
 // Encryption configuration
 const ENCRYPTION_ALGORITHM = 'aes-256-cbc';
@@ -2092,11 +2126,24 @@ const db = new sqlite3.Database(dbPath, async (err) => {
     console.log('Connected to SQLite database at', dbPath);
     
     try {
-      // Create backup before running migrations
-      await backupDatabase(dbPath);
-      
-      // Run any pending migrations
-      await runMigrations(db);
+      // Conditional migrations: only run if on-disk DB schema version is older than expected
+      try {
+        const diskVersion = await getCurrentVersion(db);
+        if (typeof diskVersion === 'number' && diskVersion < CURRENT_DB_VERSION) {
+          console.log(`Database version ${diskVersion} < expected ${CURRENT_DB_VERSION} — running migrations`);
+          await backupDatabase(dbPath);
+          await runMigrations(db);
+        } else if (typeof diskVersion === 'number' && diskVersion > CURRENT_DB_VERSION) {
+          console.warn(`Database version ${diskVersion} is newer than app expected ${CURRENT_DB_VERSION}; skipping migrations to avoid potential downgrade`);
+        } else {
+          console.log('Database schema version matches expected; no migrations needed');
+        }
+      } catch (mErr) {
+        console.error('Failed to determine DB version or run conditional migrations, falling back to running migrations:', mErr);
+        // As a last resort attempt to run migrations (this preserves previous behavior)
+        try { await backupDatabase(dbPath); } catch (e) {}
+        await runMigrations(db);
+      }
       
       // Ensure settings table exists
       db.run(`CREATE TABLE IF NOT EXISTS settings (
@@ -4220,6 +4267,78 @@ function updatePurchaseRequestOftFilesStatus(prId, hasFiles) {
 }
 
 /**
+ * Update purchase request emails_sent status
+ * @param {string} prId - Purchase request ID
+ * @param {boolean} sent - Whether emails were sent
+ * @returns {Promise<boolean>} Success status
+ */
+function updatePurchaseRequestEmailsSentStatus(prId, sent) {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing purchase request ID' });
+    try {
+      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus called prId=${prId} sent=${sent}\n`); } catch (e) {}
+      db.run(
+        'UPDATE purchase_requests SET emails_sent = ? WHERE pr_id = ?',
+        [sent ? 1 : 0, prId],
+        function(err) {
+          if (err) {
+            console.error('Error updating emails_sent status:', err);
+            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus ERROR prId=${prId} err=${err && err.message}\n`); } catch (e) {}
+            return reject({ error: 'Failed to update emails_sent status', details: err.message });
+          }
+          try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus result prId=${prId} changes=${this.changes}\n`); } catch (e) {}
+          resolve(this.changes > 0);
+        }
+      );
+    } catch (e) {
+      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus EXCEPTION prId=${prId} err=${e && e.message}\n`); } catch (ee) {}
+      return reject({ error: 'Failed to update emails_sent status', details: e.message });
+    }
+  });
+}
+
+/**
+ * More robust update: try exact match, then trimmed match, then LIKE match to handle id formatting differences.
+ * Returns { success: boolean, changes: number }
+ */
+function updatePurchaseRequestEmailsSentStatusForce(prId, sent) {
+  return new Promise((resolve, reject) => {
+    if (!prId) return reject({ error: 'Missing purchase request ID' });
+    const val = sent ? 1 : 0;
+    const tryUpdates = [
+      { sql: 'UPDATE purchase_requests SET emails_sent = ? WHERE pr_id = ?', params: [val, prId] },
+      { sql: 'UPDATE purchase_requests SET emails_sent = ? WHERE TRIM(pr_id) = TRIM(?)', params: [val, prId] },
+      { sql: 'UPDATE purchase_requests SET emails_sent = ? WHERE pr_id LIKE ?', params: [val, `%${prId}%`] }
+    ];
+
+    let idx = 0;
+    const attempt = () => {
+      if (idx >= tryUpdates.length) return resolve({ success: false, changes: 0 });
+      const q = tryUpdates[idx++];
+      try {
+        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce attempt sql=${q.sql} params=${JSON.stringify(q.params)}\n`); } catch (e) {}
+        db.run(q.sql, q.params, function (err) {
+          if (err) {
+            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce ERROR prId=${prId} err=${err && err.message}\n`); } catch (e) {}
+            return reject({ error: 'Failed to update emails_sent status', details: err.message });
+          }
+          try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce result prId=${prId} changes=${this.changes}\n`); } catch (e) {}
+          if (this.changes && this.changes > 0) {
+            return resolve({ success: true, changes: this.changes });
+          }
+          // try next strategy
+          attempt();
+        });
+      } catch (e) {
+        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce EXCEPTION prId=${prId} err=${e && e.message}\n`); } catch (ee) {}
+        return reject({ error: 'Failed to update emails_sent status', details: e.message });
+      }
+    };
+    attempt();
+  });
+}
+
+/**
  * Check whether a file exists on disk. Accepts absolute paths and normalizes separators.
  * Returns a Promise<boolean>.
  */
@@ -4366,6 +4485,7 @@ module.exports = {
   hasVendorFilesCreated,
   updatePurchaseRequestSupplierFilesStatus,
   updatePurchaseRequestOftFilesStatus,
+  updatePurchaseRequestEmailsSentStatus,
   // First time setup functions
   isFirstTimeSetup,
   createFirstAdminUser,

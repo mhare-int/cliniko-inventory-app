@@ -139,5 +139,10 @@ contextBridge.exposeInMainWorld('api', {
   ,
   // Open a file on disk (uses main process to call shell.openPath)
   openOftFile: (filePath) => ipcRenderer.invoke('openOftFile', filePath)
+  ,
+  // Update emails_sent flag on a purchase request
+  updatePurchaseRequestEmailsSentStatus: (prId, sent) => ipcRenderer.invoke('updatePurchaseRequestEmailsSentStatus', prId, sent),
+  // More robust update which tries trimmed / LIKE matches
+  updatePurchaseRequestEmailsSentStatusForce: (prId, sent) => ipcRenderer.invoke('updatePurchaseRequestEmailsSentStatusForce', prId, sent)
   // Add more functions here as you expose them in main.js
 });

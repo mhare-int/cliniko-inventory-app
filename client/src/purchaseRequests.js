@@ -268,6 +268,21 @@ function PurchaseRequests() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // Listen for cross-component updates to purchase requests (e.g. emails_sent toggled elsewhere)
+  useEffect(() => {
+    const handler = async (e) => {
+      try {
+        // Simple re-fetch of PR data when notified
+        await fetchData('pr');
+      } catch (err) {
+        console.warn('Failed to refresh PRs after external change', err);
+      }
+    };
+    window.addEventListener('purchaseRequestsChanged', handler);
+    return () => window.removeEventListener('purchaseRequestsChanged', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load suppliers map once on mount so we can resolve supplier_id -> name
   useEffect(() => {
     if (window.api && window.api.getAllSuppliers) {
@@ -292,6 +307,20 @@ function PurchaseRequests() {
     }
     if (tabType === "pr") {
       const res = await window.api.getPurchaseRequests(true, undefined);
+      // Apply any local overrides saved by other components (optimistic UI)
+      try {
+        const raw = localStorage.getItem('prEmailsSentOverrides');
+        if (raw) {
+          const overrides = JSON.parse(raw);
+          if (Array.isArray(res)) {
+            res.forEach(pr => {
+              if (overrides && typeof overrides[pr.id] !== 'undefined') {
+                pr.emails_sent = overrides[pr.id] ? 1 : 0;
+              }
+            });
+          }
+        }
+      } catch (e) { /* ignore */ }
       // Ensure supplier_files_created and oft_files_created reflect actual generated files
       try {
         if (window.api && window.api.getGeneratedFiles) {
@@ -994,7 +1023,9 @@ function PurchaseRequests() {
         ←
       </button>
       
-      <h2 style={{ textAlign: "center", color: "#1867c0", fontWeight: 700 }}>Active Purchase Orders</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <h2 style={{ margin: 0, color: "#1867c0", fontWeight: 700 }}>Active Purchase Orders</h2>
+      </div>
       {/* Tab Navigation */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}>
         <button
@@ -1178,21 +1209,28 @@ function PurchaseRequests() {
                     }
                   />
                 </th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8" }}>PO ID</th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8" }}>Date</th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: 'center' }}>Total Cost</th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
+                <th style={{ border: "1px solid #ccc", padding: 6, fontWeight: 600, color: "#246aa8" }}>PO ID</th>
+                <th style={{ border: "1px solid #ccc", padding: 6, fontWeight: 600, color: "#246aa8" }}>Date</th>
+                <th style={{ border: "1px solid #ccc", padding: 6, fontWeight: 600, color: "#246aa8", textAlign: 'center' }}>Total Cost</th>
+                <th style={{ border: "1px solid #ccc", padding: 6, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
                   <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
                     📄
                   </span>
                   <span style={{ marginLeft: 6 }}>PO</span>
                 </th>
-                <th style={{ border: "1px solid #ccc", padding: 8, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
+                <th style={{ border: "1px solid #ccc", padding: 6, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 120 }}>
                   <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
                     📧
                   </span>
-                  <span style={{ marginLeft: 6 }}>Email</span>
+                  <span style={{ marginLeft: 6 }}>Created</span>
                 </th>
+                <th style={{ border: "1px solid #ccc", padding: 6, fontWeight: 600, color: "#246aa8", textAlign: "center", width: 80 }}>
+                  <span style={{ fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }} aria-hidden>
+                    ✉️
+                  </span>
+                  <span style={{ marginLeft: 6 }}>Sent</span>
+                </th>
+                <th style={{ width: 44, textAlign: 'center', border: '1px solid #ccc', padding: 4 }} aria-hidden></th>
                 {/* Removed trailing expand column to place expand control next to PO ID */}
               </tr>
             </thead>
@@ -1252,11 +1290,43 @@ function PurchaseRequests() {
                         {pr.oft_files_created ? "✓" : "✗"}
                       </span>
                     </td>
+                    <td style={{ border: "1px solid #ccc", padding: 8, textAlign: "center", fontSize: 18, backgroundColor: pr.emails_sent ? "#e8f5e8" : "#ffeaea" }}>
+                      <span style={{ color: pr.emails_sent ? "#28a745" : "#dc3545", fontWeight: "bold", fontFamily: '"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }}>
+                        {pr.emails_sent ? "✓" : "✗"}
+                      </span>
+                    </td>
+                    <td style={{ border: '1px solid #ccc', padding: 8, textAlign: "center", width: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle' }} onClick={e => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        title="Open in Generate Supplier Files"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/generate-supplier-files?prId=${encodeURIComponent(pr.id)}`); }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: 18,
+                          color: '#0369a1',
+                          padding: '0 2px',
+                          lineHeight: 1,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          outline: 'none',
+                          transform: 'translateY(-14px)',
+                          boxShadow: 'none',
+                          borderRadius: 0,
+                          appearance: 'none',
+                          WebkitAppearance: 'none'
+                        }}
+                      >
+                        ›
+                      </button>
+                    </td>
                     {/* expand arrow moved into PO ID cell above; trailing column removed */}
                   </tr>
                   {expanded.includes(pr.id) && (
                     <tr>
-                      <td colSpan={6} style={{ padding: 0 }}>
+                      <td colSpan={8} style={{ padding: 0 }}>
                         <div style={{ padding: 12, background: "#fafdff" }}>
                           <table style={{ width: "100%", borderCollapse: "collapse" }}>
                             <thead>
