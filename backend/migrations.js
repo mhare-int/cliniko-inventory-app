@@ -415,9 +415,31 @@ migrations.push({
   up: (db) => {
     return new Promise((resolve, reject) => {
       try {
-        const backupPath = path.join(__dirname, `appdata.db.backup.migrate_pur_to_po.${Date.now()}.sqlite`);
+        // Determine a writable backup directory. When packaged, prefer Electron's userData path.
+        let backupDir = __dirname;
         try {
-          fs.copyFileSync(path.join(__dirname, 'appdata.db'), backupPath);
+          const { app } = require('electron');
+          if (app && typeof app.getPath === 'function') {
+            backupDir = app.getPath('userData') || backupDir;
+          }
+        } catch (e) {
+          // not running under electron or cannot access app; fall back to process.cwd()
+          backupDir = process.cwd() || backupDir;
+        }
+
+        // Ensure backup directory exists
+        try {
+          if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+        } catch (e) {
+          // If we can't create the preferred dir, fall back to __dirname
+          backupDir = __dirname;
+        }
+
+        // Use the actual DB path if set (main.js sets process.env.DB_PATH for packaged apps)
+        const currentDbPath = process.env.DB_PATH || path.join(__dirname, 'appdata.db');
+        const backupPath = path.join(backupDir, `appdata.db.backup.migrate_pur_to_po.${Date.now()}.sqlite`);
+        try {
+          fs.copyFileSync(currentDbPath, backupPath);
           console.log('Created DB backup at', backupPath);
         } catch (copyErr) {
           console.warn('Could not create DB backup, aborting migration 17:', copyErr && copyErr.message ? copyErr.message : copyErr);
