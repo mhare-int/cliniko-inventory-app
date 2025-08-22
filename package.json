@@ -1,7 +1,7 @@
 {
   "name": "goodlife-stockapp",
   "productName": "Good Life Clinic - Inventory Management",
-  "version": "3.0.0",
+  "version": "3.0.2",
   "description": "Cliniko App packaged with Electron.",
   "author": "The Good Life Stok App",
   "type": "commonjs",
@@ -19,13 +19,16 @@
   "main": "main.js",
   "scripts": {
     "electron": "electron .",
-    "package": "electron-builder --win --x64",
+  "package": "npm run migrate-dist-db && electron-builder --win --x64",
+  "build-client": "cd client && npm install && npm run build",
+  "build-installer": "npm run build-client && npm run migrate-dist-db && electron-builder --config package-electron.json --win --x64",
     "dist": "electron-builder",
     "rebuild": "npx electron-rebuild",
     "validate-db": "node validate-database.js",
-    "validate-dist-db": "node validate-dist-db.js",
+  "validate-dist-db": "node validate-dist-db.js",
+  "migrate-dist-db": "node tools/run_migrations_dev.js",
     "clean-db": "node clean-database-for-dist.js",
-    "pre-dist": "npm run validate-db && npm run validate-dist-db",
+  "pre-dist": "npm run validate-db && npm run migrate-dist-db && npm run validate-dist-db",
     "build-validated": "./build-with-validation.sh",
     "build-clean": "npm run clean-db && npm run build-validated"
   },
@@ -37,7 +40,7 @@
       "provider": "github",
       "owner": "mhare-int",
       "repo": "cliniko-inventory-app",
-      "private": true,
+      "private": false,
       "releaseType": "release"
     },
     "files": [
@@ -73,13 +76,7 @@
       "createStartMenuShortcut": true
     },
     "asarUnpack": [
-      "backend/*.js",
-      "node_modules/express/**",
-      "node_modules/cors/**",
-      "node_modules/jsonwebtoken/**",
-      "node_modules/sqlite3/**",
-      "node_modules/bcryptjs/**",
-      "node_modules/body-parser/**"
+      "node_modules/sqlite3/**"
     ]
   },
   "devDependencies": {
