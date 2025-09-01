@@ -4815,6 +4815,7 @@ module.exports = {
   getProductOptions,
   downloadFile,
   getApiKey,
+  setApiKey,
   getProductAudit,
   getActualApiKey,
   getAverageDailyDemand,
