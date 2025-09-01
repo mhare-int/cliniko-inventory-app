@@ -8,7 +8,7 @@ const path = require('path');
 
 // Current database version
 // NOTE: bump this when adding new migrations so the DB initialization runner will execute them.
-const CURRENT_DB_VERSION = 22;
+const CURRENT_DB_VERSION = 23;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -491,6 +491,145 @@ const migrations = [
               });
             });
           } else resolve();
+        });
+      });
+    }
+  },
+  {
+    version: 23,
+    description: "Hotfix for 2.0.1 to 3.0.4 compatibility - Handle legacy schema migration",
+    up: (db) => {
+      return new Promise((resolve, reject) => {
+        console.log('🔧 Running 2.0.1 → 3.0.4 compatibility migration...');
+        
+        // First, check if we have the old schema (version 6 from 2.0.1)
+        db.all("PRAGMA table_info(products)", (err, columns) => {
+          if (err) return reject(err);
+          
+          const columnNames = new Set(columns.map(c => c.name));
+          const hasOldSchema = columnNames.has('stock') && !columnNames.has('current_stock');
+          const hasIntegerClinikoId = columns.find(c => c.name === 'cliniko_id' && c.type === 'INTEGER');
+          
+          if (!hasOldSchema && !hasIntegerClinikoId) {
+            console.log('✅ Modern schema detected, no 2.0.1 compatibility needed');
+            return resolve();
+          }
+          
+          console.log('🔄 Legacy 2.0.1 schema detected, applying compatibility fixes...');
+          
+          const tasks = [];
+          
+          // Task 1: Handle stock → current_stock column rename
+          if (hasOldSchema) {
+            tasks.push(new Promise((res, rej) => {
+              console.log('  📝 Migrating stock → current_stock...');
+              
+              // Add current_stock column if it doesn't exist
+              db.run("ALTER TABLE products ADD COLUMN current_stock INTEGER DEFAULT 0", (addErr) => {
+                if (addErr && !addErr.message.includes('duplicate column name')) {
+                  return rej(addErr);
+                }
+                
+                // Copy data from stock to current_stock
+                db.run("UPDATE products SET current_stock = stock WHERE current_stock = 0 OR current_stock IS NULL", (copyErr) => {
+                  if (copyErr) return rej(copyErr);
+                  console.log('  ✅ stock → current_stock migration complete');
+                  res();
+                });
+              });
+            }));
+          }
+          
+          // Task 2: Handle cliniko_id INTEGER → TEXT conversion (proper table recreation)
+          if (hasIntegerClinikoId) {
+            tasks.push(new Promise((res, rej) => {
+              console.log('  📝 Converting cliniko_id from INTEGER to TEXT (recreating table)...');
+              
+              // Step 1: Create backup table
+              db.run("CREATE TABLE products_backup AS SELECT * FROM products", (backupErr) => {
+                if (backupErr) return rej(backupErr);
+                
+                // Step 2: Drop original table
+                db.run("DROP TABLE products", (dropErr) => {
+                  if (dropErr) return rej(dropErr);
+                  
+                  // Step 3: Create new table with TEXT cliniko_id
+                  db.run(`CREATE TABLE products (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cliniko_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    supplier_id INTEGER,
+                    stock INTEGER DEFAULT 0,
+                    reorder_level INTEGER DEFAULT 0,
+                    barcode TEXT,
+                    supplier_name TEXT,
+                    created_at TEXT,
+                    unit_price REAL,
+                    current_stock INTEGER DEFAULT 0
+                  )`, (createErr) => {
+                    if (createErr) return rej(createErr);
+                    
+                    // Step 4: Copy data back with TEXT cliniko_id
+                    db.run(`INSERT INTO products (id, cliniko_id, name, supplier_id, stock, reorder_level, barcode, supplier_name, created_at, unit_price, current_stock)
+                             SELECT id, CAST(cliniko_id AS TEXT), name, supplier_id, stock, reorder_level, barcode, supplier_name, created_at, unit_price, current_stock 
+                             FROM products_backup`, (copyErr) => {
+                      if (copyErr) return rej(copyErr);
+                      
+                      // Step 5: Drop backup table
+                      db.run("DROP TABLE products_backup", (cleanupErr) => {
+                        if (cleanupErr) return rej(cleanupErr);
+                        console.log('  ✅ cliniko_id precision fix complete (INTEGER → TEXT)');
+                        res();
+                      });
+                    });
+                  });
+                });
+              });
+            }));
+          }
+          
+          // Task 3: Ensure other required columns exist for 3.0.4
+          tasks.push(new Promise((res, rej) => {
+            console.log('  📝 Adding missing columns for 3.0.4 compatibility...');
+            
+            const requiredColumns = [
+              { name: 'barcode', type: 'TEXT', defaultValue: "''" },
+              { name: 'supplier_name', type: 'TEXT', defaultValue: "''" },
+              { name: 'reorder_level', type: 'INTEGER', defaultValue: '0' }
+            ];
+            
+            let completed = 0;
+            const total = requiredColumns.length;
+            
+            requiredColumns.forEach(col => {
+              if (!columnNames.has(col.name)) {
+                db.run(`ALTER TABLE products ADD COLUMN ${col.name} ${col.type} DEFAULT ${col.defaultValue}`, (colErr) => {
+                  if (colErr && !colErr.message.includes('duplicate column name')) {
+                    return rej(colErr);
+                  }
+                  completed++;
+                  if (completed === total) {
+                    console.log('  ✅ Required columns added');
+                    res();
+                  }
+                });
+              } else {
+                completed++;
+                if (completed === total) {
+                  console.log('  ✅ All required columns present');
+                  res();
+                }
+              }
+            });
+          }));
+          
+          // Execute all tasks
+          Promise.all(tasks)
+            .then(() => {
+              console.log('🎉 2.0.1 → 3.0.4 compatibility migration completed successfully!');
+              resolve();
+            })
+            .catch(reject);
         });
       });
     }
