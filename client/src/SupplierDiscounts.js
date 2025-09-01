@@ -174,8 +174,8 @@ export default function SupplierDiscounts() {
   }
 
   async function onDelete(id) {
-    // use globalThis.confirm to satisfy ESLint (no-restricted-globals)
-    const proceed = (typeof globalThis.confirm === 'function') ? globalThis.confirm('Delete this discount?') : true
+    // use window.confirm to satisfy ESLint (no-restricted-globals)
+    const proceed = window.confirm('Delete this discount?')
     if (!proceed) return
     if (!window.api || !window.api.deleteSupplierProductDiscount) {
       alert('API unavailable')
