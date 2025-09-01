@@ -251,7 +251,8 @@ function SuppliersManagement() {
     email: '',
     contactName: '',
     specialInstructions: '',
-    accountNumber: ''
+  accountNumber: '',
+  leadTimeDays: ''
   });
   const editFormRef = useRef(null);
 
@@ -347,7 +348,21 @@ function SuppliersManagement() {
       if (result.error) {
         setError(result.error);
       } else {
-        setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '' });
+        // Persist lead time if provided
+        try {
+          const daysVal = formData.leadTimeDays;
+          if (daysVal !== undefined && daysVal !== null && String(daysVal).trim() !== '') {
+            const daysNum = Number(daysVal);
+            if (!isNaN(daysNum) && window.api && window.api.setSupplierLeadTime) {
+              const supplierNameToUse = editingSupplier ? editingSupplier.name : payload.name;
+              await window.api.setSupplierLeadTime(supplierNameToUse, daysNum);
+            }
+          }
+        } catch (leadErr) {
+          console.debug('Failed to save lead time:', leadErr);
+        }
+
+        setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '', leadTimeDays: '' });
         setEditingSupplier(null);
         setShowAddForm(false);
         loadSuppliers();
@@ -365,6 +380,7 @@ function SuppliersManagement() {
       contactName: supplier.contact_name || '',
       specialInstructions: supplier.special_instructions || supplier.comments || '',
       accountNumber: supplier.account_number || ''
+  ,leadTimeDays: supplier.lead_time_days || supplier.leadTimeDays || ''
     });
     setShowAddForm(true);
     
@@ -396,8 +412,9 @@ function SuppliersManagement() {
     } catch (err) {
       setError(`Error deleting supplier: ${err.message}`);
     }
-  };  const handleCancel = () => {
-    setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '' });
+  };
+  const handleCancel = () => {
+    setFormData({ name: '', email: '', contactName: '', specialInstructions: '', accountNumber: '', leadTimeDays: '' });
     setEditingSupplier(null);
     setShowAddForm(false);
     setError('');
@@ -755,6 +772,33 @@ function SuppliersManagement() {
                 onBlur={(e) => e.target.style.borderColor = '#e1e5e9'}
               />
             </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', marginBottom: 5, color: '#555', fontWeight: 500 }}>
+                Lead Time (days)
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={formData.leadTimeDays}
+                onChange={(e) => handleInputChange('leadTimeDays', e.target.value)}
+                placeholder="Leave blank to auto-calculate"
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: 8,
+                  fontSize: 16,
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                  boxSizing: 'border-box'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#667eea'}
+                onBlur={(e) => e.target.style.borderColor = '#e1e5e9'}
+              />
+              <small style={{ color: '#6b7280', display: 'block', marginTop: 6 }}>
+                Optional: specify supplier lead time in days. If empty, the app will calculate an average from past orders.
+              </small>
+            </div>
             
             <div style={{ marginBottom: 25 }}>
               <label style={{ display: 'block', marginBottom: 5, color: '#555', fontWeight: 500 }}>
@@ -919,6 +963,15 @@ function SuppliersManagement() {
                   color: '#246aa8',
                   borderBottom: '1px solid #e2e8f0'
                 }}>
+                  Lead Time (days)
+                </th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  color: '#246aa8',
+                  borderBottom: '1px solid #e2e8f0'
+                }}>
                   Special Instructions
                 </th>
                 <th style={{ 
@@ -959,6 +1012,9 @@ function SuppliersManagement() {
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     {supplier.account_number || '-'}
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    {typeof supplier.lead_time_days !== 'undefined' && supplier.lead_time_days !== null && supplier.lead_time_days !== '' ? String(supplier.lead_time_days) : '-'}
                   </td>
                   <td style={{ padding: '12px 16px', maxWidth: '200px' }}>
                     <div style={{ 

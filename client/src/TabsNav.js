@@ -71,6 +71,14 @@ const TabsNav = ({ user, onLogout }) => {
           Master Stock List
         </NavLink>
         <NavLink
+          to="/product-audit"
+          className={({ isActive }) =>
+            isActive ? "tabsnav__link active" : "tabsnav__link"
+          }
+        >
+          Product Audit
+        </NavLink>
+        <NavLink
           to="/sales-insights"
           className={({ isActive }) =>
             isActive ? "tabsnav__link active" : "tabsnav__link"
@@ -86,6 +94,7 @@ const TabsNav = ({ user, onLogout }) => {
         >
           📚 Knowledge Base
         </NavLink>
+  {/* Supplier Discounts removed from top-level nav; managed under Admin -> Email & Supplier Management */}
         {/* Admin tab always visible in open mode */}
         <NavLink
           to="/admin"

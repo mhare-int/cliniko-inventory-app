@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('api', {
   createFirstAdminUser: (username, password) => ipcRenderer.invoke('createFirstAdminUser', username, password),
   resetFirstTimeSetup: () => ipcRenderer.invoke('resetFirstTimeSetup'),
   getProductOptions: (term) => ipcRenderer.invoke('getProductOptions', term),
+  // Product audit timeline for a product (by cliniko_id or product name)
+  getProductAudit: (productId, opts) => ipcRenderer.invoke('getProductAudit', productId, opts),
   downloadFile: (filename) => ipcRenderer.invoke('downloadFile', filename),
   getProductSales: (start_date, end_date) => ipcRenderer.invoke('getProductSales', start_date, end_date),
   getSalesInsights: (limit, offset) => ipcRenderer.invoke('getSalesInsights', limit, offset),
@@ -106,6 +108,19 @@ contextBridge.exposeInMainWorld('api', {
   getInactiveSuppliers: () => ipcRenderer.invoke('getInactiveSuppliers'),
   reactivateSupplier: (supplierId) => ipcRenderer.invoke('reactivateSupplier', supplierId),
   deactivateSupplier: (supplierId) => ipcRenderer.invoke('deactivateSupplier', supplierId),
+  // Demand and supplier lead-time helpers
+  getAverageDailyDemand: (productId, days = 90) => ipcRenderer.invoke('getAverageDailyDemand', productId, days),
+  getSupplierLeadTime: (supplierName) => ipcRenderer.invoke('getSupplierLeadTime', supplierName),
+  setSupplierLeadTime: (supplierName, days) => ipcRenderer.invoke('setSupplierLeadTime', supplierName, days),
+  getSuppliersWithLeadTime: () => ipcRenderer.invoke('getSuppliersWithLeadTime'),
+  getReorderSuggestion: (productId, opts = {}) => ipcRenderer.invoke('getReorderSuggestion', productId, opts),
+  getVendorConsolidation: (windowDays = 14, opts = {}) => ipcRenderer.invoke('getVendorConsolidation', windowDays, opts),
+  // Discounts
+  addSupplierProductDiscount: (discount) => ipcRenderer.invoke('addSupplierProductDiscount', discount),
+  updateSupplierProductDiscount: (id, updates) => ipcRenderer.invoke('updateSupplierProductDiscount', id, updates),
+  deleteSupplierProductDiscount: (id) => ipcRenderer.invoke('deleteSupplierProductDiscount', id),
+  listSupplierProductDiscounts: (filter) => ipcRenderer.invoke('listSupplierProductDiscounts', filter),
+  findApplicableDiscount: (query) => ipcRenderer.invoke('findApplicableDiscount', query),
   
   // Email template management APIs
   saveEmailTemplate: (templateData) => ipcRenderer.invoke('saveEmailTemplate', templateData),

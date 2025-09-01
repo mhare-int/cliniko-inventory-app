@@ -26,6 +26,9 @@ function MasterStockList() {
 
   const [productFilter, setProductFilter] = useState(null);
   const [supplierFilter, setSupplierFilter] = useState(null);
+  // Cached suggestions per product (cliniko_id => suggestion object)
+  const [suggestions, setSuggestions] = useState({});
+  const [suggestLoading, setSuggestLoading] = useState({});
 
   const handleFileChange = (e) => {
     setFileInput(e.target.files[0]);
@@ -189,6 +192,26 @@ function MasterStockList() {
       .filter(s => s.toLowerCase().includes(inputValue.toLowerCase()))
       .map(s => ({ label: s, value: s }));
     return filtered;
+  };
+
+  const fetchSuggestion = async (cliniko_id, product) => {
+    // Avoid re-fetching if we already have a suggestion
+    if (suggestions && suggestions[cliniko_id]) return;
+    setSuggestLoading(s => ({ ...(s||{}), [cliniko_id]: true }));
+    try {
+      if (!window.api || !window.api.getReorderSuggestion) throw new Error('getReorderSuggestion not available');
+      const res = await window.api.getReorderSuggestion(cliniko_id, { historyDays: 90, reviewDays: 7, serviceLevelPct: 95 });
+      setSuggestions(s => ({ ...(s||{}), [cliniko_id]: res }));
+    } catch (err) {
+      setSuggestions(s => ({ ...(s||{}), [cliniko_id]: { error: err?.message || String(err) } }));
+    } finally {
+      setSuggestLoading(s => ({ ...(s||{}), [cliniko_id]: false }));
+    }
+  };
+
+  const handleCreatePOForProduct = (product, qty) => {
+    const item = { ...product, ["No. to Order"]: qty || 1 };
+    navigate('/create-pr', { state: { preSelectedItems: [item], fromMasterList: true } });
   };
 
   const filteredProducts = products.filter(p => {
@@ -764,6 +787,15 @@ function MasterStockList() {
               backgroundColor: "#f0f0f0",
               zIndex: 11
             }}>Actions</th>
+            <th style={{ 
+              padding: 8, 
+              border: "1px solid #ccc", 
+              textAlign: "center",
+              position: "sticky",
+              top: 0,
+              backgroundColor: "#f0f0f0",
+              zIndex: 11
+            }}>Suggestion</th>
           </tr>
         </thead>
         <tbody>
@@ -841,6 +873,38 @@ function MasterStockList() {
                   >
                     ×
                   </button>
+                </td>
+                <td style={{ padding: 8, border: "1px solid #ccc", textAlign: "center", minWidth: 180 }}>
+                  {/* Suggestion area */}
+                  {suggestLoading[p.cliniko_id] ? (
+                    <div style={{ fontSize: 12, color: '#666' }}>Loading...</div>
+                  ) : suggestions[p.cliniko_id] ? (
+                    suggestions[p.cliniko_id].error ? (
+                      <div style={{ fontSize: 12, color: 'red' }}>Error</div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: '#333' }}>
+                        <div style={{ fontWeight: 600 }}>{suggestions[p.cliniko_id].recommendedQty} to order</div>
+                        <div style={{ fontSize: 11, color: '#666' }}>ROP: {suggestions[p.cliniko_id].reorderPoint}</div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 6, justifyContent: 'center' }}>
+                          <button
+                            onClick={() => handleCreatePOForProduct(p, suggestions[p.cliniko_id].recommendedQty)}
+                            style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, background: '#006bb6', color: 'white', border: 'none', cursor: 'pointer' }}
+                          >
+                            Create PO
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                      <button
+                        onClick={() => fetchSuggestion(p.cliniko_id, p)}
+                        style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, background: '#f0f0f0', color: '#333', border: '1px solid #ddd', cursor: 'pointer' }}
+                      >
+                        Suggest
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             );

@@ -3610,11 +3610,38 @@ function addSupplier(name, email, contactName, comments, accountNumber = '', sou
     }
     
     const now = new Date().toISOString();
-    db.run(
-  'INSERT INTO suppliers (name, email, contact_name, account_number, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-  [name.trim(), email || '', contactName || '', accountNumber || '', comments || '', source, now, now],
-      function (err) {
+    // Check if suppliers table has lead_time_days column; if so, insert default lead time = 7
+    db.all("PRAGMA table_info('suppliers')", (pragmaErr, cols) => {
+      let hasLeadCol = false;
+      try { hasLeadCol = Array.isArray(cols) && cols.some(c => c && c.name === 'lead_time_days'); } catch (e) { hasLeadCol = false; }
+
+      const insertWithLead = 'INSERT INTO suppliers (name, email, contact_name, account_number, special_instructions, source, created_at, updated_at, lead_time_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      const insertWithoutLead = 'INSERT INTO suppliers (name, email, contact_name, account_number, special_instructions, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+
+      const paramsWithLead = [name.trim(), email || '', contactName || '', accountNumber || '', comments || '', source, now, now, 7];
+      const paramsWithoutLead = [name.trim(), email || '', contactName || '', accountNumber || '', comments || '', source, now, now];
+
+      const sql = hasLeadCol ? insertWithLead : insertWithoutLead;
+      const params = hasLeadCol ? paramsWithLead : paramsWithoutLead;
+
+      db.run(sql, params, function (err) {
         if (err) {
+          // If insert failed because column missing (schema drift), try fallback insert without lead_time_days
+          if (hasLeadCol && err.message && err.message.toLowerCase().includes('no such column')) {
+            // Attempt fallback insert without lead column
+            db.run(insertWithoutLead, paramsWithoutLead, function (err2) {
+              if (err2) {
+                if (err2.message && err2.message.includes('UNIQUE constraint failed')) {
+                  return reject({ error: 'A supplier with this name already exists' });
+                }
+                console.error('Error adding supplier (fallback):', err2);
+                return reject({ error: 'Database error', details: err2.message || err2 });
+              }
+              return resolve({ id: this.lastID, success: true });
+            });
+            return;
+          }
+
           if (err.message && err.message.includes('UNIQUE constraint failed')) {
             return reject({ error: 'A supplier with this name already exists' });
           }
@@ -3622,8 +3649,8 @@ function addSupplier(name, email, contactName, comments, accountNumber = '', sou
           return reject({ error: 'Database error', details: err.message || err });
         }
         resolve({ id: this.lastID, success: true });
-      }
-    );
+      });
+    });
   });
 }
 
@@ -4398,6 +4425,371 @@ function getFileStats(filePath) {
   });
 }
 
+/**
+ * Get a chronological audit/timeline for a product across PRs, receipts, manual changes and sales.
+ * productId may be a cliniko_id or product_name (function matches against both columns).
+ * opts: { includePRs, includeReceipts, includeChanges, includeSales, limit }
+ */
+function getProductAudit(productId, opts = {}) {
+  return new Promise((resolve, reject) => {
+    if (!productId) return reject({ error: 'Missing productId' });
+
+    const includePRs = opts.includePRs !== false;
+    const includeReceipts = opts.includeReceipts !== false;
+    const includeChanges = opts.includeChanges !== false;
+    const includeSales = opts.includeSales !== false;
+    const limit = Number(opts.limit || 1000) || 1000;
+
+    const parts = [];
+    const params = [];
+
+    // Purchase request items (when the product was requested)
+    if (includePRs) {
+      parts.push(`SELECT pri.created_at AS date, 'purchase_request' AS action, pri.no_to_order AS qty_change, pri.id AS ref_id, pri.pr_id AS pr_id, pri.supplier_name AS supplier_name, NULL AS user_name, NULL AS location, NULL AS notes, pri.product_id, pri.product_name FROM purchase_request_items pri` +
+        ` WHERE (pri.product_id = ? OR pri.product_name = ?)`);
+      params.push(productId, productId);
+    }
+
+    // Item receipt log (when items were received)
+    if (includeReceipts) {
+      parts.push(`SELECT ir.timestamp AS date, 'receipt' AS action, ir.quantity_received AS qty_change, ir.id AS ref_id, ir.pr_id AS pr_id, NULL AS supplier_name, ir.received_by AS user_name, NULL AS location, ir.extra_json AS notes, ir.product_id, ir.product_name FROM item_receipt_log ir` +
+        ` WHERE (ir.product_id = ? OR ir.product_name = ?)`);
+      params.push(productId, productId);
+    }
+
+    // Product change log (manual edits)
+    if (includeChanges) {
+      parts.push(`SELECT pcl.timestamp AS date, 'change' AS action, NULL AS qty_change, pcl.rowid AS ref_id, NULL AS pr_id, NULL AS supplier_name, NULL AS user_name, NULL AS location, json_object('field', pcl.field_changed, 'before', pcl.before_value, 'after', pcl.after_value) AS notes, pcl.product_id, NULL AS product_name FROM product_change_log pcl` +
+        ` WHERE pcl.product_id = ?`);
+      params.push(productId);
+    }
+
+    // Product sales (sales reduce stock) - negative quantity to indicate outflow
+    if (includeSales) {
+      parts.push(`SELECT ps.invoice_date AS date, 'sale' AS action, (ps.quantity * -1) AS qty_change, ps.invoice_id AS ref_id, NULL AS pr_id, NULL AS supplier_name, NULL AS user_name, NULL AS location, NULL AS notes, ps.product_id, ps.product_name FROM product_sales ps` +
+        ` WHERE (ps.product_id = ? OR ps.product_name = ?)`);
+      params.push(productId, productId);
+    }
+
+    if (parts.length === 0) return resolve([]);
+
+    const sql = parts.join('\nUNION ALL\n') + `\nORDER BY date DESC LIMIT ${limit}`;
+
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+
+      const normalized = (rows || []).map(r => {
+        return {
+          date: r.date || null,
+          action: r.action || null,
+          qty_change: (typeof r.qty_change !== 'undefined' && r.qty_change !== null) ? Number(r.qty_change) : null,
+          ref_id: r.ref_id || null,
+          pr_id: r.pr_id || null,
+          supplier_name: r.supplier_name || null,
+          user_name: r.user_name || null,
+          location: r.location || null,
+          notes: r.notes || null,
+          product_id: r.product_id || null,
+          product_name: r.product_name || null
+        };
+      });
+
+      resolve(normalized);
+    });
+  });
+}
+
+// --- Demand & Reorder helpers ---
+function getAverageDailyDemand(productId, days = 90) {
+  return new Promise((resolve, reject) => {
+    if (!productId) return resolve(0);
+    const daysInt = Number(days) || 90;
+    const sql = `SELECT COALESCE(SUM(quantity),0) AS total FROM product_sales WHERE product_id = ? AND invoice_date >= date('now', ?)`;
+    const since = `-` + String(daysInt) + ` day`;
+    db.get(sql, [productId, since], (err, row) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      const total = (row && row.total) ? Number(row.total) : 0;
+      const avg = total / daysInt;
+      resolve(avg);
+    });
+  });
+}
+
+function getSupplierLeadTime(supplierName) {
+  return new Promise((resolve, reject) => {
+    if (!supplierName) return resolve(null);
+    // Prefer stored supplier field lead_time_days if present
+    db.get('PRAGMA table_info(suppliers)', (err, cols) => {
+      // PRAGMA returns rows via db.all normally; check column existence synchronously via a simple query
+      db.all("PRAGMA table_info('suppliers')", (err2, rows) => {
+        if (err2) return reject({ error: 'DB error', details: err2.message });
+        const hasLeadCol = Array.isArray(rows) && rows.some(c => c && c.name === 'lead_time_days');
+        if (hasLeadCol) {
+          db.get('SELECT lead_time_days FROM suppliers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [supplierName], (err3, row3) => {
+            if (err3) return reject({ error: 'DB error', details: err3.message });
+            if (row3 && row3.lead_time_days !== null && typeof row3.lead_time_days !== 'undefined') {
+              return resolve(Number(row3.lead_time_days));
+            }
+            // otherwise fallthrough to calculated lead time
+            calcLeadTime();
+          });
+        } else {
+          // no column, calculate
+          calcLeadTime();
+        }
+        function calcLeadTime() {
+          const sql = `SELECT AVG(julianday(ir.timestamp) - julianday(pr.date_created)) AS avg_lead_days
+                       FROM item_receipt_log ir
+                       JOIN purchase_requests pr ON pr.pr_id = ir.pr_id
+                       JOIN purchase_request_items pri ON pri.pr_id = pr.pr_id AND (pri.product_id = ir.product_id OR pri.product_name = ir.product_name)
+                       WHERE LOWER(TRIM(pri.supplier_name)) = LOWER(TRIM(?)) AND ir.timestamp IS NOT NULL AND pr.date_created IS NOT NULL`;
+          db.get(sql, [supplierName], (err4, row4) => {
+            if (err4) return reject({ error: 'DB error', details: err4.message });
+            const avg = row4 && row4.avg_lead_days ? Number(row4.avg_lead_days) : null;
+            resolve(avg);
+          });
+        }
+      });
+    });
+  });
+}
+
+function setSupplierLeadTime(supplierName, days) {
+  return new Promise((resolve, reject) => {
+    if (!supplierName) return reject({ error: 'Missing supplierName' });
+    const daysNum = Number(days);
+    if (isNaN(daysNum) || daysNum < 0) return reject({ error: 'Invalid days' });
+
+    // Ensure suppliers table has lead_time_days column
+    db.all("PRAGMA table_info('suppliers')", (err, rows) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      const hasLeadCol = Array.isArray(rows) && rows.some(c => c && c.name === 'lead_time_days');
+      const ensureCol = (cb) => {
+        if (hasLeadCol) return cb();
+        db.run('ALTER TABLE suppliers ADD COLUMN lead_time_days INTEGER DEFAULT NULL', (alterErr) => {
+          // ignore errors from duplicate column attempts
+          cb();
+        });
+      };
+      ensureCol(() => {
+        db.run('UPDATE suppliers SET lead_time_days = ? WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [daysNum, supplierName], function (uErr) {
+          if (uErr) return reject({ error: 'DB error', details: uErr.message });
+          if (this.changes === 0) {
+            // Insert supplier row if not exists
+            db.run('INSERT INTO suppliers (name, lead_time_days) VALUES (?, ?)', [supplierName, daysNum], function (insErr) {
+              if (insErr) return reject({ error: 'DB error', details: insErr.message });
+              resolve({ supplier: supplierName, lead_time_days: daysNum, created: true });
+            });
+          } else {
+            resolve({ supplier: supplierName, lead_time_days: daysNum, updated: true });
+          }
+        });
+      });
+    });
+  });
+}
+
+function getSuppliersWithLeadTime() {
+  return new Promise((resolve, reject) => {
+    db.all("PRAGMA table_info('suppliers')", (err, rows) => {
+      if (err) return reject({ error: 'DB error', details: err.message });
+      const hasLeadCol = Array.isArray(rows) && rows.some(c => c && c.name === 'lead_time_days');
+      if (!hasLeadCol) {
+        // return supplier names with calculated lead times only
+        db.all('SELECT DISTINCT supplier_name FROM purchase_request_items WHERE supplier_name IS NOT NULL', [], async (err2, supRows) => {
+          if (err2) return reject({ error: 'DB error', details: err2.message });
+          const result = [];
+          for (const s of (supRows || [])) {
+            const name = s.supplier_name || s.name;
+            const calc = await getSupplierLeadTime(name).catch(() => null);
+            result.push({ name, lead_time_days: calc });
+          }
+          resolve(result);
+        });
+      } else {
+        db.all('SELECT id, name, lead_time_days FROM suppliers ORDER BY name', [], (err3, supRows2) => {
+          if (err3) return reject({ error: 'DB error', details: err3.message });
+          resolve(supRows2 || []);
+        });
+      }
+    });
+  });
+}
+
+function getReorderSuggestion(productId, opts = {}) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!productId) return reject({ error: 'Missing productId' });
+      const days = Number(opts.historyDays || 90);
+      const avgDaily = await getAverageDailyDemand(productId, days).catch(() => 0);
+      // Get product row for current stock and supplier
+      db.get('SELECT cliniko_id, name, stock, supplier_name FROM products WHERE cliniko_id = ? OR cliniko_id = ? LIMIT 1', [productId, productId], async (err, prod) => {
+        if (err) return reject({ error: 'DB error', details: err.message });
+        const currentStock = (prod && typeof prod.stock !== 'undefined') ? Number(prod.stock) : 0;
+        const supplierName = prod ? prod.supplier_name : null;
+        // Determine lead time (days): prefer supplied value, else supplier average, else default 7
+        let leadTime = Number(opts.leadTimeDays || 0) || null;
+        if (!leadTime) {
+          if (supplierName) {
+            const supLead = await getSupplierLeadTime(supplierName).catch(() => null);
+            if (supLead) leadTime = Math.max(1, Math.round(supLead));
+          }
+        }
+        if (!leadTime) leadTime = Number(opts.defaultLead || 7);
+
+        // Safety stock: use z for service level (default 95% -> z=1.65) and sigma ~ assume sqrt(daily*days) as rough proxy when history sparse
+        const serviceLevel = Number(opts.serviceLevelPct || 95);
+        const z = serviceLevel >= 99 ? 2.33 : (serviceLevel >= 95 ? 1.65 : 1.28);
+        // Estimate sigma_daily as sqrt(avgDaily) (Poisson-like) fallback
+        const sigmaDaily = Math.sqrt(Math.max(0, avgDaily));
+        const safetyStock = Math.ceil(z * sigmaDaily * Math.sqrt(leadTime));
+
+        // Recommended order qty: simple cover for leadTime + review period (default 7 days)
+        const reviewDays = Number(opts.reviewDays || 7);
+        let recommendedQty = Math.ceil(avgDaily * (leadTime + reviewDays));
+        if (recommendedQty <= 0) recommendedQty = Math.max(1, Math.ceil((avgDaily || 0) + safetyStock));
+
+        const reorderPoint = Math.ceil(avgDaily * leadTime + safetyStock);
+
+        resolve({ productId, productName: prod && prod.name, currentStock, avgDaily, leadTime, safetyStock, reorderPoint, recommendedQty, supplierName });
+      });
+    } catch (e) {
+      reject({ error: 'Failed to compute reorder suggestion', details: e && e.message ? e.message : e });
+    }
+  });
+}
+
+function getVendorConsolidation(windowDays = 14, opts = {}) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Find products likely to need reorder within windowDays
+      const days = Number(opts.historyDays || 90);
+      // Get all products with avg daily demand
+      db.all('SELECT cliniko_id, name, stock, supplier_name FROM products', async (err, rows) => {
+        if (err) return reject({ error: 'DB error', details: err.message });
+        const candidates = [];
+        for (const r of (rows || [])) {
+          const avg = await getAverageDailyDemand(r.cliniko_id, days).catch(() => 0);
+          const lead = await (r.supplier_name ? getSupplierLeadTime(r.supplier_name).catch(() => null) : Promise.resolve(null));
+          const leadDays = lead ? Math.max(1, Math.round(lead)) : (opts.defaultLead || 7);
+          const daysCover = avg > 0 ? (r.stock / avg) : Infinity;
+          // if projected days of cover <= windowDays + leadDays then candidate
+          if (daysCover <= (windowDays + leadDays)) {
+            const recommendedQty = Math.ceil(avg * (leadDays + (opts.reviewDays || 7)));
+            candidates.push({ productId: r.cliniko_id, productName: r.name, supplier: r.supplier_name, currentStock: r.stock, avgDaily: avg, leadDays, recommendedQty });
+          }
+        }
+
+        // Group by supplier
+        const bySupplier = {};
+        for (const c of candidates) {
+          const s = c.supplier || 'Unknown Supplier';
+          if (!bySupplier[s]) bySupplier[s] = { supplier: s, items: [] };
+          bySupplier[s].items.push(c);
+        }
+
+        resolve(Object.values(bySupplier));
+      });
+    } catch (e) {
+      reject({ error: 'Failed to compute vendor consolidation', details: e && e.message ? e.message : e });
+    }
+  });
+}
+
+// --- Supplier/Product volume discount helpers ---
+function addSupplierProductDiscount(discount) {
+  return new Promise((resolve, reject) => {
+    const {
+      supplier_id = null,
+      product_cliniko_id = null,
+      min_qty = 1,
+      price_per_unit = null,
+      percent_discount = null,
+      currency = null,
+      effective_from = null,
+      effective_to = null,
+      notes = null
+    } = discount || {};
+
+    db.run(`INSERT INTO supplier_product_discounts (supplier_id, product_cliniko_id, min_qty, price_per_unit, percent_discount, currency, effective_from, effective_to, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [supplier_id, product_cliniko_id, min_qty, price_per_unit, percent_discount, currency, effective_from, effective_to, notes], function (err) {
+        if (err) return reject(err);
+        resolve({ id: this.lastID });
+      });
+  });
+}
+
+function updateSupplierProductDiscount(id, updates) {
+  return new Promise((resolve, reject) => {
+    if (!id) return reject({ error: 'Missing id' });
+    const fields = [];
+    const params = [];
+    const keys = ['supplier_id','product_cliniko_id','min_qty','price_per_unit','percent_discount','currency','effective_from','effective_to','notes'];
+    keys.forEach(k => { if (typeof updates[k] !== 'undefined') { fields.push(`${k} = ?`); params.push(updates[k]); } });
+    if (fields.length === 0) return resolve({ success: true });
+    params.push(id);
+    const sql = `UPDATE supplier_product_discounts SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+    db.run(sql, params, function (err) { if (err) return reject(err); resolve({ changes: this.changes }); });
+  });
+}
+
+function deleteSupplierProductDiscount(id) {
+  return new Promise((resolve, reject) => {
+    if (!id) return reject({ error: 'Missing id' });
+    db.run('DELETE FROM supplier_product_discounts WHERE id = ?', [id], function (err) { if (err) return reject(err); resolve({ deleted: this.changes }); });
+  });
+}
+
+function listSupplierProductDiscounts({ supplier_id = null, product_cliniko_id = null } = {}) {
+  return new Promise((resolve, reject) => {
+    let sql = 'SELECT * FROM supplier_product_discounts WHERE 1=1';
+    const params = [];
+    if (supplier_id !== null) { sql += ' AND supplier_id = ?'; params.push(supplier_id); }
+    if (product_cliniko_id !== null) { sql += ' AND product_cliniko_id = ?'; params.push(product_cliniko_id); }
+    sql += ' ORDER BY min_qty DESC, supplier_id';
+    db.all(sql, params, (err, rows) => { if (err) return reject(err); resolve(rows || []); });
+  });
+}
+
+/**
+ * Find the best applicable discount for a given supplier/product/quantity and date.
+ * Priority: exact product-level discounts (supplier+product), then supplier-wide discounts, then global product-only discounts.
+ * Returns the best discount row or null.
+ */
+function findApplicableDiscount({ supplier_id = null, product_cliniko_id = null, qty = 1, onDate = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const dateClause = (onDate ? `AND (effective_from IS NULL OR DATE(effective_from) <= DATE(?)) AND (effective_to IS NULL OR DATE(effective_to) >= DATE(?))` : '');
+    const params = [];
+    if (onDate) { params.push(onDate, onDate); }
+
+    // Query product-level for this supplier
+    let sqls = [];
+    if (supplier_id && product_cliniko_id) {
+      sqls.push({ sql: `SELECT * FROM supplier_product_discounts WHERE supplier_id = ? AND product_cliniko_id = ? AND min_qty <= ? ${dateClause} ORDER BY min_qty DESC LIMIT 1`, params: [supplier_id, product_cliniko_id, qty].concat(onDate ? [onDate, onDate] : []) });
+    }
+    // Supplier-wide discounts
+    if (supplier_id) {
+      sqls.push({ sql: `SELECT * FROM supplier_product_discounts WHERE supplier_id = ? AND product_cliniko_id IS NULL AND min_qty <= ? ${dateClause} ORDER BY min_qty DESC LIMIT 1`, params: [supplier_id, qty].concat(onDate ? [onDate, onDate] : []) });
+    }
+    // Product-only (global) discounts
+    if (product_cliniko_id) {
+      sqls.push({ sql: `SELECT * FROM supplier_product_discounts WHERE supplier_id IS NULL AND product_cliniko_id = ? AND min_qty <= ? ${dateClause} ORDER BY min_qty DESC LIMIT 1`, params: [product_cliniko_id, qty].concat(onDate ? [onDate, onDate] : []) });
+    }
+
+    const tryNext = (idx) => {
+      if (idx >= sqls.length) return resolve(null);
+      const q = sqls[idx];
+      db.get(q.sql, q.params, (err, row) => {
+        if (err) return reject(err);
+        if (row) return resolve(row);
+        tryNext(idx + 1);
+      });
+    };
+
+    tryNext(0);
+  });
+}
+
 module.exports = {
   gatherPoTemplateOptions,
   getAllProducts,
@@ -4423,8 +4815,20 @@ module.exports = {
   getProductOptions,
   downloadFile,
   getApiKey,
-  setApiKey,
+  getProductAudit,
   getActualApiKey,
+  getAverageDailyDemand,
+  getSupplierLeadTime,
+  getReorderSuggestion,
+  getVendorConsolidation,
+  // discounts
+  addSupplierProductDiscount,
+  updateSupplierProductDiscount,
+  deleteSupplierProductDiscount,
+  listSupplierProductDiscounts,
+  findApplicableDiscount,
+  setSupplierLeadTime,
+  getSuppliersWithLeadTime,
   getGitHubToken,
   setGitHubToken,
   syncProductsFromCliniko,

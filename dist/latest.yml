@@ -1,8 +1,8 @@
-version: 3.0.0
+version: 3.0.3
 files:
-  - url: "Good.Life.Clinic.-.Inventory.Management.exe"
-    sha512: YM60ajP6wqDWnO4snuph5r0sE0mYzyJqBDcboClf9Bed1qeZ+8NKZNjvdAVGyjYsLMcW3KSVYEKGYckWlVGC2A==
-    size: 205683712
-path: "Good.Life.Clinic.-.Inventory.Management.exe"
-sha512: YM60ajP6wqDWnO4snuph5r0sE0mYzyJqBDcboClf9Bed1qeZ+8NKZNjvdAVGyjYsLMcW3KSVYEKGYckWlVGC2A==
-releaseDate: '2025-08-21T08:01:49.273Z'
+  - url: Good.Life.Clinic.-.Inventory.Management.Setup.3.0.3.exe
+    sha512: aB6AjdM+0SwaMDJS/rK9txRGJ+clQhdxPccURLhD7/ZOFCJI2ZrBgDh8eIi4wvxt71gY42EwIZ1vJR38gEtotw==
+    size: 105274127
+path: Good.Life.Clinic.-.Inventory.Management.Setup.3.0.3.exe
+sha512: aB6AjdM+0SwaMDJS/rK9txRGJ+clQhdxPccURLhD7/ZOFCJI2ZrBgDh8eIi4wvxt71gY42EwIZ1vJR38gEtotw==
+releaseDate: '2025-08-22T11:05:21.544Z'

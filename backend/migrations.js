@@ -7,17 +7,67 @@ const fs = require('fs');
 const path = require('path');
 
 // Current database version
-const CURRENT_DB_VERSION = 17;
+// NOTE: bump this when adding new migrations so the DB initialization runner will execute them.
+const CURRENT_DB_VERSION = 22;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
   {
     version: 1,
-    description: "Initial database setup",
+    description: "Initial database setup and ensure core tables exist",
     up: (db) => {
       return new Promise((resolve, reject) => {
-        // Initial tables already created in db.js
-        resolve();
+        const tasks = [];
+        
+        // Ensure core tables exist (for compatibility with very old versions)
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS products (
+            cliniko_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            current_stock INTEGER DEFAULT 0,
+            reorder_level INTEGER DEFAULT 0
+          )`, (err) => err ? rej(err) : res());
+        }));
+        
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS suppliers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            email TEXT,
+            phone TEXT
+          )`, (err) => err ? rej(err) : res());
+        }));
+        
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS purchase_requests (
+            pr_id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'Active',
+            notes TEXT,
+            items_json TEXT
+          )`, (err) => err ? rej(err) : res());
+        }));
+        
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            role TEXT DEFAULT 'user',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`, (err) => err ? rej(err) : res());
+        }));
+        
+        tasks.push(new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+          )`, (err) => err ? rej(err) : res());
+        }));
+        
+        Promise.all(tasks).then(() => {
+          console.log('Core tables ensured');
+          resolve();
+        }).catch(reject);
       });
     }
   },
@@ -36,8 +86,8 @@ const migrations = [
             return resolve();
           }
           
-          // Add the updated_at column
-          db.run('ALTER TABLE settings ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP', (err) => {
+          // Add the updated_at column without default (SQLite limitation)
+          db.run('ALTER TABLE settings ADD COLUMN updated_at DATETIME', (err) => {
             if (err) return reject(err);
             
             // Update existing rows to have a timestamp
@@ -248,9 +298,9 @@ const migrations = [
             if (err) return rej(err);
             const names = new Set(cols.map(c => c.name));
             const alters = [];
-            if (!names.has('source')) alters.push(["ALTER TABLE suppliers ADD COLUMN source TEXT DEFAULT 'Manual'"]);
+            if (!names.has('source')) alters.push(["ALTER TABLE suppliers ADD COLUMN source TEXT"]);
             if (!names.has('special_instructions')) alters.push(["ALTER TABLE suppliers ADD COLUMN special_instructions TEXT"]);
-            if (!names.has('active')) alters.push(["ALTER TABLE suppliers ADD COLUMN active INTEGER DEFAULT 1"]);
+            if (!names.has('active')) alters.push(["ALTER TABLE suppliers ADD COLUMN active INTEGER"]);
             if (!names.has('account_number')) alters.push(["ALTER TABLE suppliers ADD COLUMN account_number TEXT"]);
 
             // Execute ALTERs sequentially to avoid locked DB
@@ -258,14 +308,16 @@ const migrations = [
               const next = alters.shift();
               if (!next) {
                 // Post-alter fixups
-                // Initialize active if NULL
+                // Initialize active if NULL and source to Manual
                 db.run("UPDATE suppliers SET active = 1 WHERE active IS NULL", () => {
-                  // If a legacy 'comments' column exists, migrate to special_instructions
-                  if (names.has('comments')) {
-                    db.run("UPDATE suppliers SET special_instructions = comments WHERE comments IS NOT NULL AND comments != ''", () => res());
-                  } else {
-                    res();
-                  }
+                  db.run("UPDATE suppliers SET source = 'Manual' WHERE source IS NULL", () => {
+                    // If a legacy 'comments' column exists, migrate to special_instructions
+                    if (names.has('comments')) {
+                      db.run("UPDATE suppliers SET special_instructions = comments WHERE comments IS NOT NULL AND comments != ''", () => res());
+                    } else {
+                      res();
+                    }
+                  });
                 });
                 return;
               }
@@ -285,11 +337,17 @@ const migrations = [
             if (err) return rej(err);
             const names = new Set(cols.map(c => c.name));
             const alters = [];
-            if (!names.has('supplier_files_created')) alters.push(["ALTER TABLE purchase_requests ADD COLUMN supplier_files_created INTEGER DEFAULT 0"]);
-            if (!names.has('oft_files_created')) alters.push(["ALTER TABLE purchase_requests ADD COLUMN oft_files_created INTEGER DEFAULT 0"]);
+            if (!names.has('supplier_files_created')) alters.push(["ALTER TABLE purchase_requests ADD COLUMN supplier_files_created INTEGER"]);
+            if (!names.has('oft_files_created')) alters.push(["ALTER TABLE purchase_requests ADD COLUMN oft_files_created INTEGER"]);
             const runNext = () => {
               const next = alters.shift();
-              if (!next) return res();
+              if (!next) {
+                // Backfill defaults after adding columns
+                db.run("UPDATE purchase_requests SET supplier_files_created = 0 WHERE supplier_files_created IS NULL", () => {
+                  db.run("UPDATE purchase_requests SET oft_files_created = 0 WHERE oft_files_created IS NULL", () => res());
+                });
+                return;
+              }
               db.run(next[0], (e) => {
                 if (e && !String(e.message || e).includes('duplicate column name')) return rej(e);
                 runNext();
@@ -325,9 +383,17 @@ const migrations = [
           )`, (err) => err ? rej(err) : res());
         }));
 
-        // 5) Ensure unique index on product_sales(invoice_id, product_id)
+        // 5) Ensure unique index on product_sales(invoice_id, product_id) - only if table exists
         tasks.push(new Promise((res, rej) => {
-          db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_product_sales_invoice_product ON product_sales (invoice_id, product_id)`, (err) => err ? rej(err) : res());
+          // First check if product_sales table exists
+          db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='product_sales'", (err, row) => {
+            if (err) return rej(err);
+            if (!row) {
+              console.log('product_sales table does not exist, skipping index creation');
+              return res();
+            }
+            db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_product_sales_invoice_product ON product_sales (invoice_id, product_id)`, (err) => err ? rej(err) : res());
+          });
         }));
 
         Promise.all(tasks).then(() => resolve()).catch(reject);
@@ -406,6 +472,29 @@ const migrations = [
       });
     }
   }
+  ,
+  {
+    version: 20,
+    description: "Add emails_sent column to purchase_requests",
+    up: (db) => {
+      return new Promise((resolve, reject) => {
+        db.all("PRAGMA table_info(purchase_requests)", (err, cols) => {
+          if (err) return reject(err);
+          const names = new Set((cols || []).map(c => c.name));
+          if (!names.has('emails_sent')) {
+            db.run("ALTER TABLE purchase_requests ADD COLUMN emails_sent INTEGER", (e) => {
+              if (e && !String(e.message || '').includes('duplicate column name')) return reject(e);
+              // backfill to 0 where null
+              db.run("UPDATE purchase_requests SET emails_sent = 0 WHERE emails_sent IS NULL", (uErr) => {
+                if (uErr) console.warn('Migration 20 backfill warning:', uErr);
+                resolve();
+              });
+            });
+          } else resolve();
+        });
+      });
+    }
+  }
 ];
 
 // Migration 17: rename existing stored PR identifiers from PUR##### to PO##### safely
@@ -414,39 +503,26 @@ migrations.push({
   description: "Rename stored PR identifiers from PUR##### -> PO##### with backup and conflict checks",
   up: (db) => {
     return new Promise((resolve, reject) => {
+      // Determine DB path and attempt backup next to the DB (non-fatal)
+      const currentDbPath = process.env.DB_PATH || path.join(__dirname, 'appdata.db');
+      const backupDir = path.dirname(currentDbPath) || __dirname;
+      const backupPath = path.join(backupDir, `appdata.db.backup.migrate_pur_to_po.${Date.now()}.sqlite`);
       try {
-        // Determine a writable backup directory. When packaged, prefer Electron's userData path.
-        let backupDir = __dirname;
-        try {
-          const { app } = require('electron');
-          if (app && typeof app.getPath === 'function') {
-            backupDir = app.getPath('userData') || backupDir;
+        fs.copyFileSync(currentDbPath, backupPath);
+        console.log('Created DB backup at', backupPath);
+      } catch (copyErr) {
+        console.warn('Migration 17: could not create DB backup (continuing):', copyErr && copyErr.message ? copyErr.message : copyErr);
+      }
+
+      db.serialize(() => {
+        // Ensure purchase_requests exists
+        db.all("PRAGMA table_info(purchase_requests)", (piErr, piCols) => {
+          if (piErr) return reject(piErr);
+          if (!piCols || piCols.length === 0) {
+            console.log('Migration 17: purchase_requests table does not exist, skipping PR id rename');
+            return resolve();
           }
-        } catch (e) {
-          // not running under electron or cannot access app; fall back to process.cwd()
-          backupDir = process.cwd() || backupDir;
-        }
 
-        // Ensure backup directory exists
-        try {
-          if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-        } catch (e) {
-          // If we can't create the preferred dir, fall back to __dirname
-          backupDir = __dirname;
-        }
-
-        // Use the actual DB path if set (main.js sets process.env.DB_PATH for packaged apps)
-        const currentDbPath = process.env.DB_PATH || path.join(__dirname, 'appdata.db');
-        const backupPath = path.join(backupDir, `appdata.db.backup.migrate_pur_to_po.${Date.now()}.sqlite`);
-        try {
-          fs.copyFileSync(currentDbPath, backupPath);
-          console.log('Created DB backup at', backupPath);
-        } catch (copyErr) {
-          console.warn('Could not create DB backup, aborting migration 17:', copyErr && copyErr.message ? copyErr.message : copyErr);
-          return reject(copyErr);
-        }
-
-        db.serialize(() => {
           db.all("SELECT pr_id FROM purchase_requests WHERE pr_id LIKE 'PUR%'", (err, rows) => {
             if (err) return reject(err);
             const purRows = rows || [];
@@ -455,9 +531,9 @@ migrations.push({
               return resolve();
             }
 
-            // Check for conflicts where PO... already exists
             const conflicts = [];
             const renames = [];
+
             const checkNext = () => {
               if (purRows.length === 0) {
                 if (conflicts.length > 0) {
@@ -465,32 +541,70 @@ migrations.push({
                   return reject(new Error('Conflicts detected'));
                 }
 
-                // Perform updates inside a transaction
-                db.run('BEGIN TRANSACTION');
-                try {
-                  // Update purchase_requests sequentially
+                // Apply renames inside a transaction
+                db.run('BEGIN TRANSACTION', (beginErr) => {
+                  if (beginErr) return reject(beginErr);
+
                   const applyNext = (idx) => {
                     if (idx >= renames.length) {
-                      // Update referencing tables
-                      db.run("UPDATE purchase_request_items SET pr_id = REPLACE(pr_id, 'PUR', 'PO') WHERE pr_id LIKE 'PUR%'");
-                      db.run("UPDATE vendor_files SET pr_id = REPLACE(pr_id, 'PUR', 'PO') WHERE pr_id LIKE 'PUR%'");
-                      db.run('COMMIT', (cErr) => {
-                        if (cErr) return reject(cErr);
-                        console.log('Migration 17: PR id rename complete');
-                        return resolve();
+                      // Update referencing tables then commit
+                      const updateTasks = [];
+                      
+                      // Check if purchase_request_items exists before updating
+                      updateTasks.push(new Promise((ures, urej) => {
+                        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='purchase_request_items'", (err, row) => {
+                          if (err) return urej(err);
+                          if (!row) {
+                            console.log('purchase_request_items table does not exist, skipping PR id update');
+                            return ures();
+                          }
+                          db.run("UPDATE purchase_request_items SET pr_id = REPLACE(pr_id, 'PUR', 'PO') WHERE pr_id LIKE 'PUR%'", (uErr) => {
+                            if (uErr) return urej(uErr);
+                            ures();
+                          });
+                        });
+                      }));
+                      
+                      // Check if vendor_files exists before updating
+                      updateTasks.push(new Promise((ures, urej) => {
+                        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='vendor_files'", (err, row) => {
+                          if (err) return urej(err);
+                          if (!row) {
+                            console.log('vendor_files table does not exist, skipping PR id update');
+                            return ures();
+                          }
+                          db.run("UPDATE vendor_files SET pr_id = REPLACE(pr_id, 'PUR', 'PO') WHERE pr_id LIKE 'PUR%'", (uErr) => {
+                            if (uErr) return urej(uErr);
+                            ures();
+                          });
+                        });
+                      }));
+                      
+                      Promise.all(updateTasks).then(() => {
+                        db.run('COMMIT', (cErr) => {
+                          if (cErr) return reject(cErr);
+                          console.log('Migration 17: PR id rename complete');
+                          return resolve();
+                        });
+                      }).catch(err => {
+                        db.run('ROLLBACK', () => reject(err));
                       });
                       return;
                     }
+
                     const item = renames[idx];
                     db.run('UPDATE purchase_requests SET pr_id = ? WHERE pr_id = ?', [item.newId, item.oldId], (uErr) => {
-                      if (uErr) return reject(uErr);
+                      if (uErr) {
+                        db.run('ROLLBACK', () => reject(uErr));
+                        return;
+                      }
                       applyNext(idx + 1);
                     });
                   };
+
                   applyNext(0);
-                } catch (e) {
-                  db.run('ROLLBACK', () => reject(e));
-                }
+                });
+
                 return;
               }
 
@@ -504,15 +618,15 @@ migrations.push({
                 } else {
                   renames.push({ oldId, newId });
                 }
+                // Continue checking
                 checkNext();
               });
             };
+
             checkNext();
           });
         });
-      } catch (e) {
-        return reject(e);
-      }
+      });
     });
   }
 });
@@ -527,13 +641,13 @@ migrations.push({
         if (err) return reject(err);
         const names = new Set(cols.map(c => c.name));
         if (!names.has('unit_price')) {
-          db.run('ALTER TABLE products ADD COLUMN unit_price REAL DEFAULT 0', (e) => {
+          db.run('ALTER TABLE products ADD COLUMN unit_price REAL', (e) => {
             if (e && !String(e.message||e).includes('duplicate column name')) return reject(e);
             // Try to backfill from any legacy price columns if they exist
             const candidates = ['cost_price', 'sell_price', 'price', 'unit_price', 'standard_price'];
             // If any of those columns exist, copy into unit_price where unit_price is NULL or 0
             // Most likely none exist in products table, so this is a noop
-            db.run("UPDATE products SET unit_price = COALESCE(unit_price, 0) WHERE unit_price IS NULL", () => resolve());
+            db.run("UPDATE products SET unit_price = 0 WHERE unit_price IS NULL", () => resolve());
           });
         } else resolve();
       });
@@ -570,11 +684,15 @@ migrations.push({
           const alters = [];
           if (!names.has('last_modified_at')) alters.push('ALTER TABLE purchase_requests ADD COLUMN last_modified_at DATETIME');
           if (!names.has('last_modified_by')) alters.push('ALTER TABLE purchase_requests ADD COLUMN last_modified_by TEXT');
-          if (!names.has('change_count')) alters.push('ALTER TABLE purchase_requests ADD COLUMN change_count INTEGER DEFAULT 0');
+          if (!names.has('change_count')) alters.push('ALTER TABLE purchase_requests ADD COLUMN change_count INTEGER');
 
           const runNext = () => {
             const next = alters.shift();
-            if (!next) return res();
+            if (!next) {
+              // Backfill defaults after adding columns
+              db.run("UPDATE purchase_requests SET change_count = 0 WHERE change_count IS NULL", () => res());
+              return;
+            }
             db.run(next, (e) => {
               if (e && !String(e.message || '').includes('duplicate column name')) return rej(e);
               runNext();
@@ -585,6 +703,105 @@ migrations.push({
       }));
 
       Promise.all(tasks).then(() => resolve()).catch(reject);
+    });
+  }
+});
+
+// Migration 19: add supplier_id to products and backfill from suppliers table where possible
+migrations.push({
+  version: 19,
+  description: "Add supplier_id to products and backfill from suppliers by matching supplier_name",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      db.all("PRAGMA table_info(products)", (err, cols) => {
+        if (err) return reject(err);
+        const names = new Set((cols || []).map(c => c.name));
+        if (names.has('supplier_id')) return resolve();
+
+        db.run('ALTER TABLE products ADD COLUMN supplier_id INTEGER', (e) => {
+          if (e && !String(e.message || '').includes('duplicate column name')) return reject(e);
+
+          // Backfill supplier_id by matching suppliers.name (case-insensitive)
+          try {
+            db.run(`UPDATE products SET supplier_id = (
+              SELECT id FROM suppliers WHERE LOWER(TRIM(suppliers.name)) = LOWER(TRIM(products.supplier_name)) LIMIT 1
+            ) WHERE supplier_name IS NOT NULL AND TRIM(supplier_name) != ''`, (uErr) => {
+              if (uErr) console.warn('Migration 19: supplier_id backfill encountered error:', uErr);
+              else console.log('Migration 19: supplier_id backfill completed');
+              resolve();
+            });
+          } catch (backErr) {
+            // Non-fatal - resolve so migration doesn't block upgrades; log error
+            console.warn('Migration 19: supplier_id backfill failed:', backErr);
+            resolve();
+          }
+        });
+      });
+    });
+  }
+});
+
+// Migration 21: add lead_time_days column to suppliers so lead-times can be stored and edited
+migrations.push({
+  version: 21,
+  description: "Add lead_time_days INTEGER to suppliers for persisted supplier lead times",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      db.all("PRAGMA table_info(suppliers)", (err, cols) => {
+        if (err) return reject(err);
+        const names = new Set((cols || []).map(c => c.name));
+        if (names.has('lead_time_days')) return resolve();
+
+        db.run('ALTER TABLE suppliers ADD COLUMN lead_time_days INTEGER', (e) => {
+          // SQLite returns an error if column already exists in some cases; tolerate duplicate column errors
+          if (e && !String(e.message || '').toLowerCase().includes('duplicate column')) return reject(e);
+          // Backfill NULL lead times to a sensible default (7 days) so calculations can use a consistent value
+          db.run("UPDATE suppliers SET lead_time_days = 7 WHERE lead_time_days IS NULL", (uErr) => {
+            if (uErr) {
+              console.warn('Migration 21 backfill warning:', uErr && uErr.message ? uErr.message : uErr);
+            } else {
+              console.log('Migration 21: backfilled lead_time_days to 7 for suppliers with NULL');
+            }
+            console.log('Migration 21: added lead_time_days column to suppliers');
+            return resolve();
+          });
+        });
+      });
+    });
+  }
+});
+
+// Migration 22: create supplier_product_discounts table to store volume/price discounts
+migrations.push({
+  version: 22,
+  description: "Create supplier_product_discounts table for supplier- and product-level volume discounts",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      db.run(`CREATE TABLE IF NOT EXISTS supplier_product_discounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        supplier_id INTEGER, -- nullable: when NULL it can represent global/product-only discounts
+        product_cliniko_id TEXT, -- nullable: when NULL it represents supplier-wide discount
+        min_qty INTEGER DEFAULT 1,
+        price_per_unit REAL DEFAULT NULL,
+        percent_discount REAL DEFAULT NULL,
+        currency TEXT DEFAULT NULL,
+        effective_from DATE DEFAULT NULL,
+        effective_to DATE DEFAULT NULL,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+      )`, (err) => {
+        if (err) return reject(err);
+        // Indexes to speed up lookups by supplier and product
+        db.run(`CREATE INDEX IF NOT EXISTS idx_spd_supplier_product ON supplier_product_discounts(supplier_id, product_cliniko_id)` , (iErr) => {
+          if (iErr) return reject(iErr);
+          db.run(`CREATE INDEX IF NOT EXISTS idx_spd_minqty ON supplier_product_discounts(min_qty)` , (iErr2) => {
+            if (iErr2) return reject(iErr2);
+            resolve();
+          });
+        });
+      });
     });
   }
 });
@@ -618,7 +835,22 @@ async function runMigrations(db) {
     console.log(`Current database version: ${currentVersion}`);
     
     // Run all migrations newer than current version
-    for (const migration of migrations) {
+    // Validate migration metadata: unique, numeric versions
+    const seen = new Map();
+    for (const m of migrations) {
+      if (!m || typeof m.version !== 'number' || !Number.isInteger(m.version) || m.version <= 0) {
+        throw new Error(`Invalid migration version detected: ${JSON.stringify(m && m.version)}`);
+      }
+      if (seen.has(m.version)) {
+        throw new Error(`Duplicate migration version detected: ${m.version}`);
+      }
+      seen.set(m.version, true);
+    }
+
+    // Ensure migrations run in numeric order regardless of how they were added to the array
+    const ordered = migrations.slice().sort((a, b) => (a.version || 0) - (b.version || 0));
+    console.log('Migrations to consider (in order):', ordered.map(m => m.version).join(', '));
+    for (const migration of ordered) {
       if (migration.version > currentVersion) {
         console.log(`Running migration ${migration.version}: ${migration.description}`);
         

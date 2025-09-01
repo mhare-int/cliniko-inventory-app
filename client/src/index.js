@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from "react";
+import setupApiFallback from './setupApiFallback';
 import ReactDOM from "react-dom/client";
 import { HashRouter, Routes, Route, useNavigate } from "react-router-dom";
 
@@ -16,10 +17,12 @@ import AdminUsersPage from "./AdminUsersPage";
 import AdminLayout from "./AdminLayout";
 import UserBehaviorAnalytics from "./UserBehaviorAnalytics";
 import SalesInsights from "./SalesInsights";
+import LeadTimeInsights from "./LeadTimeInsights";
 import ReceiveItemsPage from "./ReceiveItemsPage";
 import KnowledgeBase from "./KnowledgeBase";
 import ApiKeyModal from "./ApiKeyModal";
 import FirstTimeSetup from "./FirstTimeSetup";
+import ProductAudit from "./ProductAudit";
 import PageWrapper from "./PageWrapper";
 import { useBehaviorTracking } from "./hooks/useBehaviorTracking";
 import { SmartPromptsProvider } from "./contexts/SmartPromptsContext";
@@ -30,6 +33,8 @@ const API_BASE_URL = window?.process?.versions?.electron
   : (window.API_BASE_URL || "");
 
 function MainApp() {
+  // Ensure a browser-friendly fallback for window.api when not running under Electron
+  setupApiFallback();
   const [isAuthed, setIsAuthed] = useState(false);
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
@@ -746,6 +751,14 @@ function MainApp() {
           }
         />
         <Route
+          path="/lead-time-insights"
+          element={
+            <RequireAuth isAuthed={isAuthed} loadingUser={loadingUser}>
+              <LeadTimeInsights />
+            </RequireAuth>
+          }
+        />
+        <Route
           path="/knowledge-base"
           element={
             <RequireAuth isAuthed={isAuthed} loadingUser={loadingUser}>
@@ -761,6 +774,15 @@ function MainApp() {
             </RequireAuth>
           }
         />
+        <Route
+          path="/product-audit"
+          element={
+            <RequireAuth isAuthed={isAuthed} loadingUser={loadingUser}>
+              <ProductAudit />
+            </RequireAuth>
+          }
+        />
+  {/* Supplier Discounts feature temporarily removed from navigation */}
       </Routes>
     </>
   );

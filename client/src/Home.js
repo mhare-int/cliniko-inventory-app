@@ -88,21 +88,7 @@ function Home() {
         }}
       />
       
-      {/* Version Indicator */}
-      <div style={{
-        textAlign: "center",
-        margin: "0 0 24px 0",
-        padding: "8px 16px",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        color: "white",
-        borderRadius: "20px",
-        fontSize: "14px",
-        fontWeight: "600",
-        display: "inline-block",
-        boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)"
-      }}>
-                ✨ Version 1.2.1 - v1.1.5 Config + Auto-updater Fix! ✨
-      </div>
+  {/* Version Indicator removed */}
       
       {/* Dashboard Summary */}
       <div style={{

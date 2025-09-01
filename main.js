@@ -62,6 +62,49 @@ if (isElectron && app && app.isPackaged) {
   if (!process.env.DB_PATH) process.env.DB_PATH = path.join(__dirname, 'backend', 'appdata.db');
 }
 
+  // Support a CLI-only migrate mode so installers (or CI) can run migrations immediately after files are installed.
+  // Usage (Windows installer / PowerShell):
+  //   "C:\Program Files\...\Good Life Clinic - Inventory Management.exe" --migrate-only
+  if (process.argv && process.argv.includes('--migrate-only')) {
+    (async () => {
+      try {
+        console.log('[Installer] Starting migrate-only mode');
+        const sqlite3 = require('sqlite3').verbose();
+        const { runMigrations, backupDatabase } = require('./backend/migrations');
+        const dbPath = process.env.DB_PATH || path.join(__dirname, 'backend', 'appdata.db');
+
+        try {
+          await backupDatabase(dbPath);
+        } catch (bkErr) {
+          console.warn('[Installer] Database backup failed (continuing):', bkErr && bkErr.message ? bkErr.message : bkErr);
+        }
+
+        const dbForMigrate = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, async (err) => {
+          if (err) {
+            console.error('[Installer] Failed to open DB for migrations:', err);
+            process.exit(1);
+            return;
+          }
+
+          try {
+            console.log('[Installer] Running migrations against', dbPath);
+            await runMigrations(dbForMigrate);
+            dbForMigrate.close(() => {
+              console.log('[Installer] Migrations completed successfully (migrate-only). Exiting.');
+              process.exit(0);
+            });
+          } catch (migErr) {
+            console.error('[Installer] Migration failed:', migErr && migErr.message ? migErr.message : migErr);
+            try { dbForMigrate.close(() => process.exit(1)); } catch (e) { process.exit(1); }
+          }
+        });
+      } catch (e) {
+        console.error('[Installer] migrate-only unexpected error:', e && e.message ? e.message : e);
+        process.exit(1);
+      }
+    })();
+  }
+
 // Import backend logic (after setting DB_PATH)
 const db = require('./backend/db');
 
@@ -450,6 +493,61 @@ ipcMain.handle('install-update', async () => {
 
 app.on('ready', async () => {
   console.log('[Electron] App ready. Starting backend...');
+  // In production, ensure any outstanding DB migrations are applied before creating the UI
+  if (app && app.isPackaged) {
+    try {
+      const sqlite3 = require('sqlite3').verbose();
+      const { runMigrations, backupDatabase, getCurrentVersion, CURRENT_DB_VERSION } = require('./backend/migrations');
+      const dbPath = process.env.DB_PATH || path.join(__dirname, 'backend', 'appdata.db');
+
+      console.log('[Startup] Checking database migration state for', dbPath);
+      try {
+        // Quick check of disk version
+        const tmpDb = new sqlite3.Database(dbPath);
+        const diskVersion = await getCurrentVersion(tmpDb);
+        try { tmpDb.close(); } catch (e) {}
+
+        if (typeof diskVersion === 'number' && diskVersion < CURRENT_DB_VERSION) {
+          console.log(`[Startup] Database version ${diskVersion} < expected ${CURRENT_DB_VERSION} — running migrations now`);
+          try { await backupDatabase(dbPath); } catch (bkErr) { console.warn('[Startup] Database backup failed (continuing):', bkErr && bkErr.message ? bkErr.message : bkErr); }
+
+          // Open DB for migrations and run
+          await new Promise((resolve) => {
+            const migrateDb = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, async (err) => {
+              if (err) {
+                console.error('[Startup] Failed to open DB for migrations:', err);
+                return resolve();
+              }
+              try {
+                await runMigrations(migrateDb);
+              } catch (migErr) {
+                console.error('[Startup] Migration error:', migErr && migErr.message ? migErr.message : migErr);
+              } finally {
+                try { migrateDb.close(() => resolve()); } catch (e) { resolve(); }
+              }
+            });
+          });
+        } else {
+          console.log('[Startup] No migrations needed');
+        }
+      } catch (checkErr) {
+        console.warn('[Startup] Could not determine DB version or run migrations gracefully:', checkErr && checkErr.message ? checkErr.message : checkErr);
+        // Fallback: attempt backup and run migrations (best-effort)
+        try { await backupDatabase(dbPath); } catch (e) { /* ignore backup failures */ }
+        try {
+          const migrateDb = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, async (err) => {
+            if (err) return console.error('[Startup] Fallback: failed to open DB for migrations:', err);
+            try { await runMigrations(migrateDb); } catch (e2) { console.error('[Startup] Fallback migration failed:', e2); } finally { try { migrateDb.close(); } catch (e) {} }
+          });
+        } catch (e) {
+          console.error('[Startup] Unexpected error during fallback migration attempt:', e);
+        }
+      }
+    } catch (e) {
+      console.error('[Startup] Unexpected error running startup migrations:', e && e.message ? e.message : e);
+    }
+  }
+
   createWindow();
   
   // Initialize auto-updater after app is ready and database is available
@@ -576,6 +674,16 @@ ipcMain.handle('getSalesInsightsWithCustomRanges', async (event, customRanges, l
 
 ipcMain.handle('getProductOptions', async (event, term) => {
   return await db.getProductOptions(term);
+});
+
+// --- Product Audit (timeline) ---
+ipcMain.handle('getProductAudit', async (event, productId, opts = {}) => {
+  try {
+    return await db.getProductAudit(productId, opts);
+  } catch (err) {
+    logErrorToFile('getProductAudit error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: err && err.error ? err.error : 'Failed to get product audit', details: err && err.details ? err.details : err && err.message };
+  }
 });
 
 ipcMain.handle('downloadFile', async (event, filename) => {
@@ -1328,6 +1436,107 @@ ipcMain.handle('deactivateSupplier', async (event, supplierId) => {
   }
 });
 
+// --- Supplier lead-time, demand and reorder helper endpoints ---
+ipcMain.handle('getAverageDailyDemand', async (event, productId, days = 90) => {
+  try {
+    return await db.getAverageDailyDemand(productId, days);
+  } catch (err) {
+    logErrorToFile('getAverageDailyDemand error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get average daily demand' };
+  }
+});
+
+ipcMain.handle('getSupplierLeadTime', async (event, supplierName) => {
+  try {
+    return await db.getSupplierLeadTime(supplierName);
+  } catch (err) {
+    logErrorToFile('getSupplierLeadTime error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get supplier lead time' };
+  }
+});
+
+ipcMain.handle('setSupplierLeadTime', async (event, supplierName, days) => {
+  try {
+    return await db.setSupplierLeadTime(supplierName, days);
+  } catch (err) {
+    logErrorToFile('setSupplierLeadTime error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to set supplier lead time' };
+  }
+});
+
+ipcMain.handle('getSuppliersWithLeadTime', async () => {
+  try {
+    return await db.getSuppliersWithLeadTime();
+  } catch (err) {
+    logErrorToFile('getSuppliersWithLeadTime error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get suppliers with lead times' };
+  }
+});
+
+ipcMain.handle('getReorderSuggestion', async (event, productId, opts = {}) => {
+  try {
+    return await db.getReorderSuggestion(productId, opts);
+  } catch (err) {
+    logErrorToFile('getReorderSuggestion error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get reorder suggestion' };
+  }
+});
+
+ipcMain.handle('getVendorConsolidation', async (event, windowDays = 14, opts = {}) => {
+  try {
+    return await db.getVendorConsolidation(windowDays, opts);
+  } catch (err) {
+    logErrorToFile('getVendorConsolidation error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to get vendor consolidation' };
+  }
+});
+
+// Supplier/Product discount CRUD and lookup
+ipcMain.handle('addSupplierProductDiscount', async (event, discount) => {
+  try {
+    return await db.addSupplierProductDiscount(discount);
+  } catch (err) {
+    logErrorToFile('addSupplierProductDiscount error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to add discount' };
+  }
+});
+
+ipcMain.handle('updateSupplierProductDiscount', async (event, id, updates) => {
+  try {
+    return await db.updateSupplierProductDiscount(id, updates);
+  } catch (err) {
+    logErrorToFile('updateSupplierProductDiscount error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to update discount' };
+  }
+});
+
+ipcMain.handle('deleteSupplierProductDiscount', async (event, id) => {
+  try {
+    return await db.deleteSupplierProductDiscount(id);
+  } catch (err) {
+    logErrorToFile('deleteSupplierProductDiscount error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to delete discount' };
+  }
+});
+
+ipcMain.handle('listSupplierProductDiscounts', async (event, filter) => {
+  try {
+    return await db.listSupplierProductDiscounts(filter || {});
+  } catch (err) {
+    logErrorToFile('listSupplierProductDiscounts error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to list discounts' };
+  }
+});
+
+ipcMain.handle('findApplicableDiscount', async (event, query) => {
+  try {
+    return await db.findApplicableDiscount(query || {});
+  } catch (err) {
+    logErrorToFile('findApplicableDiscount error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to find applicable discount' };
+  }
+});
+
 // Email Template Management
 ipcMain.handle('saveEmailTemplate', async (event, templateData) => {
   try {
@@ -1408,6 +1617,32 @@ ipcMain.handle('updatePurchaseRequestOftFilesStatus', async (event, prId, hasOft
   } catch (err) {
     logErrorToFile('updatePurchaseRequestOftFilesStatus error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: 'Failed to update OFT files status' };
+  }
+});
+
+ipcMain.handle('updatePurchaseRequestEmailsSentStatus', async (event, prId, sent) => {
+  try {
+    // Log invocation in main process so developer can correlate renderer console and backend.log
+    try { console.log(`[IPC] updatePurchaseRequestEmailsSentStatus called prId=${prId} sent=${sent}`); } catch (e) {}
+    const result = await db.updatePurchaseRequestEmailsSentStatus(prId, sent);
+    try { console.log(`[IPC] updatePurchaseRequestEmailsSentStatus result prId=${prId} result=${JSON.stringify(result)}`); } catch (e) {}
+    return result;
+  } catch (err) {
+    logErrorToFile('updatePurchaseRequestEmailsSentStatus error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    try { console.error('[IPC] updatePurchaseRequestEmailsSentStatus error:', err && err.message ? err.message : err); } catch (e) {}
+    return { error: 'Failed to update emails_sent status' };
+  }
+});
+
+ipcMain.handle('updatePurchaseRequestEmailsSentStatusForce', async (event, prId, sent) => {
+  try {
+    try { console.log(`[IPC] updatePurchaseRequestEmailsSentStatusForce called prId=${prId} sent=${sent}`); } catch (e) {}
+    const result = await db.updatePurchaseRequestEmailsSentStatusForce(prId, sent);
+    try { console.log(`[IPC] updatePurchaseRequestEmailsSentStatusForce result prId=${prId} result=${JSON.stringify(result)}`); } catch (e) {}
+    return result;
+  } catch (err) {
+    logErrorToFile('updatePurchaseRequestEmailsSentStatusForce error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to update emails_sent status' };
   }
 });
 

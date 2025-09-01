@@ -77,6 +77,7 @@ The lines below point to the exact files and patterns to edit when changing comm
 
 - Auto-updater / releases
 	- Files: `main.js` (autoUpdater wiring), `package-electron.json` (publish settings). See `GITHUB_SETUP.md` and `PACKAGING.md` for the release workflow.
+	- Release helpers & naming: use the repository's release helpers and the new `RELEASE_PROCESS.md` for deterministic uploads. Prefer hyphenated installer filenames (no spaces) to avoid GitHub converting spaces to dots. If you need to remove or rename an uploaded asset, use `scripts/delete_release_asset_by_name.js` and the PowerShell copy-and-upload snippet in `RELEASE_PROCESS.md`.
 
 If you can't find a string or handler, run a workspace search for the exact text (e.g. `window.api`, `purchase_requests`, `createSupplierOrderFiles`) — that's the fastest way to find related code.
 
