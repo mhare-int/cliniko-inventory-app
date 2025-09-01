@@ -484,6 +484,18 @@ function syncProductsFromCliniko() {
               
               console.log(`Found ${uniqueSuppliers.size} unique suppliers from Cliniko products`);
 
+              // Check products table schema before inserting
+              db.all('PRAGMA table_info(products)', (schemaErr, columns) => {
+                if (schemaErr) {
+                  console.error('Schema check error:', schemaErr);
+                } else {
+                  console.log('Products table schema:');
+                  columns.forEach(col => {
+                    console.log(`  ${col.name}: ${col.type} ${col.notnull ? 'NOT NULL' : ''} ${col.pk ? 'PRIMARY KEY' : ''}`);
+                  });
+                }
+              });
+
               // Insert/Update products in local DB
               let processed = 0;
               let total = productsToProcess.length;
@@ -497,6 +509,17 @@ function syncProductsFromCliniko() {
               productsToProcess.forEach(product => {
                 const cliniko_id = String(product.id);
                 const name = product.name || 'Unknown Product';
+                
+                // Debug logging for packaged app issues
+                if (!product.id) {
+                  console.error('ERROR: Product has no ID:', product);
+                  return; // Skip this product
+                }
+                if (!cliniko_id || cliniko_id === 'undefined' || cliniko_id === 'null') {
+                  console.error('ERROR: Invalid cliniko_id after conversion:', cliniko_id, 'from product.id:', product.id);
+                  return; // Skip this product
+                }
+                
                 const stock = product.stock_level || 0;
                 // Check for serial_number first, then barcode, then empty string
                 const barcode = product.serial_number || product.barcode || '';
@@ -506,20 +529,26 @@ function syncProductsFromCliniko() {
                 // Derive unit price from likely Cliniko fields (prefer cost_price)
                 const unit_price = (product.cost_price || product.sell_price || product.price || product.unit_price || product.standard_price || 0);
 
-                // Use UPSERT to avoid duplicates and correctly update existing rows (including unit_price)
-                db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level, unit_price)
-                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0), ?)
+                // Use UPSERT to avoid duplicates and correctly update existing rows
+                // Preserve existing active status if product already exists, default to 1 (active) for new products
+                db.run(`INSERT INTO products (cliniko_id, name, barcode, stock, supplier_name, reorder_level, unit_price, active)
+                        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT reorder_level FROM products WHERE cliniko_id = ?), 0), ?, 1)
                         ON CONFLICT(cliniko_id) DO UPDATE SET
                           name=excluded.name,
                           barcode=excluded.barcode,
                           stock=excluded.stock,
                           supplier_name=excluded.supplier_name,
                           reorder_level=COALESCE(products.reorder_level, excluded.reorder_level),
-                          unit_price=excluded.unit_price`,
+                          unit_price=excluded.unit_price,
+                          active=COALESCE(products.active, excluded.active)`,
                   [cliniko_id, name, barcode, stock, supplier_name, cliniko_id, unit_price], 
                   function(err) {
                     if (err) {
-                      console.error('Error upserting product:', err, 'Product:', product);
+                      console.error('Error upserting product:', err);
+                      console.error('Failed product data:', {
+                        cliniko_id, name, barcode, stock, supplier_name, unit_price,
+                        original_product_id: product.id
+                      });
                     } else {
                       // changes === 1 when insert, 2 when update in SQLite UPSERT
                       if (this.changes === 1) inserted++;
@@ -2599,6 +2628,18 @@ function getAllProductsWithWrapper() {
   });
 }
 
+function getProductCount() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT COUNT(*) as count FROM products', (err, row) => {
+      if (err) {
+        console.error('Error getting product count:', err);
+        return reject({ error: 'Failed to get product count', details: err.message });
+      }
+      resolve(row ? row.count : 0);
+    });
+  });
+}
+
 // Example: Add user
 function addUser(username, password_hash, is_admin) {
   return new Promise((resolve, reject) => {
@@ -3737,6 +3778,42 @@ function reactivateSupplier(supplierId) {
   });
 }
 
+// Deactivate a product (set active = 0)
+function deactivateProduct(clinikoId) {
+  return new Promise((resolve, reject) => {
+    if (!clinikoId) return reject({ error: 'Product Cliniko ID is required' });
+    const now = new Date().toISOString();
+    db.run('UPDATE products SET active = 0 WHERE cliniko_id = ?', [clinikoId], function (err) {
+      if (err) {
+        console.error('Error deactivating product:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      if (this.changes === 0) {
+        return reject({ error: 'Product not found' });
+      }
+      resolve({ success: true });
+    });
+  });
+}
+
+// Activate a product (set active = 1)
+function activateProduct(clinikoId) {
+  return new Promise((resolve, reject) => {
+    if (!clinikoId) return reject({ error: 'Product Cliniko ID is required' });
+    const now = new Date().toISOString();
+    db.run('UPDATE products SET active = 1 WHERE cliniko_id = ?', [clinikoId], function (err) {
+      if (err) {
+        console.error('Error activating product:', err);
+        return reject({ error: 'Database error', details: err.message || err });
+      }
+      if (this.changes === 0) {
+        return reject({ error: 'Product not found' });
+      }
+      resolve({ success: true });
+    });
+  });
+}
+
 // Deactivate a supplier (set active = 0)
 function deactivateSupplier(supplierId) {
   return new Promise((resolve, reject) => {
@@ -4794,6 +4871,7 @@ module.exports = {
   gatherPoTemplateOptions,
   getAllProducts,
   getAllProductsWithWrapper,
+  getProductCount,
   addUser,
   getAllUsers,
   login,
@@ -4869,6 +4947,9 @@ module.exports = {
   deleteSupplier,
   getSupplierByName,
   autoPopulateSuppliersFromCliniko,
+  // Product management functions
+  activateProduct,
+  deactivateProduct,
   // Email template functions
   saveEmailTemplate,
   getEmailTemplate,

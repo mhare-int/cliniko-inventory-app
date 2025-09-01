@@ -334,13 +334,13 @@ function MainApp() {
       setAutoSyncDetails('Checking if sync is needed...');
       await new Promise(resolve => setTimeout(resolve, 500)); // Small pause for UI
       
-      // Update stock levels first (usually quick)
-      setAutoSyncDetails('Updating stock levels from Cliniko...');
-      const stockResult = await window.api.updateStockFromCliniko();
+      // Sync products from Cliniko (includes new products and updates)
+      setAutoSyncDetails('Syncing products from Cliniko (including new products)...');
+      const stockResult = await window.api.syncProductsFromCliniko();
       
       if (stockResult.error) {
         setAutoSyncNotification('error');
-        setAutoSyncDetails(`Stock update error: ${stockResult.error}`);
+        setAutoSyncDetails(`Product sync error: ${stockResult.error}`);
         setTimeout(() => {
           setAutoSyncNotification(null);
           setAutoSyncDetails('');
@@ -385,15 +385,15 @@ function MainApp() {
 
   const performAutoSync = async () => {
     setAutoSyncNotification('syncing');
-    setAutoSyncDetails('Updating stock levels from Cliniko...');
+    setAutoSyncDetails('Syncing products from Cliniko (including new products)...');
 
     try {
-      // First update stock levels
-      const stockResult = await window.api.updateStockFromCliniko();
+      // Sync products (includes new products and updates existing ones while preserving active status)
+      const stockResult = await window.api.syncProductsFromCliniko();
       
       if (stockResult.error) {
         setAutoSyncNotification('error');
-        setAutoSyncDetails(`Stock update error:\n${stockResult.error}`);
+        setAutoSyncDetails(`Product sync error:\n${stockResult.error}`);
         return;
       }
 

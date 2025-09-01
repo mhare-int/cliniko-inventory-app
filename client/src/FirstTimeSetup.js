@@ -183,11 +183,11 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
       console.log('Product sync result:', productResult);
       
       if (productResult && !productResult.error) {
-        // Ensure product costs / unit_price are populated by running the stock/price updater.
+        // Ensure product costs / unit_price are populated by running the product sync.
         // This makes the Setup workflow populate `unit_price` for products (costs) when available from Cliniko.
         try {
           console.log('Updating product prices/unit_price from Cliniko...');
-          const priceRes = await window.api.updateStockFromCliniko();
+          const priceRes = await window.api.syncProductsFromCliniko();
           console.log('Price update result:', priceRes);
         } catch (priceErr) {
           console.warn('Price update during setup failed (non-fatal):', priceErr);
@@ -200,13 +200,48 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
         
         // Verify products were actually saved
         let actualProductCount = 0;
-        try {
-          const allProducts = await window.api.getAllProductsWithWrapper();
-          actualProductCount = allProducts && allProducts.products ? allProducts.products.length : 0;
-          console.log(`Verification: ${actualProductCount} products now in database`);
-        } catch (verifyError) {
-          console.warn('Could not verify product count:', verifyError);
-          // Use the reported count if verification fails
+        let verificationAttempts = 0;
+        const maxAttempts = 3;
+        
+        while (verificationAttempts < maxAttempts && actualProductCount === 0) {
+          try {
+            if (verificationAttempts > 0) {
+              console.log(`Verification attempt ${verificationAttempts + 1}/${maxAttempts} - waiting 1 second...`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            const allProducts = await window.api.getAllProductsWithWrapper();
+            console.log('getAllProductsWithWrapper response:', typeof allProducts, allProducts);
+            console.log('Products array check:', allProducts && allProducts.products ? `Array with ${allProducts.products.length} items` : 'No products array found');
+            actualProductCount = allProducts && allProducts.products ? allProducts.products.length : 0;
+            console.log(`Verification attempt ${verificationAttempts + 1}: ${actualProductCount} products found in database`);
+            
+            if (actualProductCount > 0) {
+              break; // Success!
+            }
+            
+            // Also try a direct count query as fallback
+            try {
+              const directCount = await window.api.getProductCount();
+              console.log(`Direct product count query: ${directCount}`);
+              if (directCount > 0) {
+                console.log('Direct count shows products exist, using that value');
+                actualProductCount = directCount;
+                break;
+              }
+            } catch (directCountError) {
+              console.warn('Direct count query failed:', directCountError);
+            }
+          } catch (verifyError) {
+            console.warn(`Verification attempt ${verificationAttempts + 1} failed:`, verifyError);
+          }
+          
+          verificationAttempts++;
+        }
+        
+        if (verificationAttempts >= maxAttempts && actualProductCount === 0) {
+          console.warn('Verification failed after multiple attempts, using reported count');
+          // Use the reported count if verification repeatedly fails
           actualProductCount = productCount;
         }
         

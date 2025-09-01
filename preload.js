@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   setSessionTimeout: (hours) => ipcRenderer.invoke('setSessionTimeout', hours),
   getAllProducts: () => ipcRenderer.invoke('getAllProducts'),
   getAllProductsWithWrapper: () => ipcRenderer.invoke('getAllProductsWithWrapper'),
+  getProductCount: () => ipcRenderer.invoke('getProductCount'),
   getAllUsers: () => ipcRenderer.invoke('getAllUsers'),
   addUser: (username, password_hash, is_admin) => ipcRenderer.invoke('addUser', username, password_hash, is_admin),
   updateReorderLevels: (updates) => ipcRenderer.invoke('updateReorderLevels', updates),
@@ -108,6 +109,9 @@ contextBridge.exposeInMainWorld('api', {
   getInactiveSuppliers: () => ipcRenderer.invoke('getInactiveSuppliers'),
   reactivateSupplier: (supplierId) => ipcRenderer.invoke('reactivateSupplier', supplierId),
   deactivateSupplier: (supplierId) => ipcRenderer.invoke('deactivateSupplier', supplierId),
+  // Product activation/deactivation functions  
+  activateProduct: (clinikoId) => ipcRenderer.invoke('activateProduct', clinikoId),
+  deactivateProduct: (clinikoId) => ipcRenderer.invoke('deactivateProduct', clinikoId),
   // Demand and supplier lead-time helpers
   getAverageDailyDemand: (productId, days = 90) => ipcRenderer.invoke('getAverageDailyDemand', productId, days),
   getSupplierLeadTime: (supplierName) => ipcRenderer.invoke('getSupplierLeadTime', supplierName),

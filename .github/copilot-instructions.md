@@ -113,11 +113,42 @@ $filePath = "dist\$fileName"
 Invoke-RestMethod -Uri "https://uploads.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets?name=$fileName" -Method POST -Headers $headers -InFile $filePath
 ```
 
+**⚠️ CRITICAL: latest.yml Filename Mismatch Fix**
+After uploading assets, **ALWAYS** verify and fix the `latest.yml` file paths:
+
+1. **Problem**: Electron Builder creates `latest.yml` with hyphens (`Good-Life-Clinic---Inventory-Management-Setup-X.X.X.exe`) but GitHub API converts spaces to dots (`Good.Life.Clinic.-.Inventory.Management.Setup.X.X.X.exe`)
+
+2. **Fix Process**:
+```powershell
+# Step 1: Check the actual uploaded filename on GitHub (from upload response)
+# Step 2: Edit dist/latest.yml to match the GitHub filename exactly
+# Step 3: Delete old latest.yml from GitHub and re-upload corrected version
+
+# Get asset ID for existing latest.yml
+$assets = Invoke-RestMethod -Uri "https://api.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets" -Headers @{ "Authorization" = "token $(Get-Content -Path '.\.tools\gh_token.txt' -Raw)".Trim(); "Accept" = "application/vnd.github.v3+json" }
+$latestYmlAsset = $assets | Where-Object { $_.name -eq "latest.yml" }
+$assetId = $latestYmlAsset.id
+
+# Delete old latest.yml
+Invoke-RestMethod -Uri "https://api.github.com/repos/mhare-int/cliniko-inventory-app/releases/assets/$assetId" -Method DELETE -Headers @{ "Authorization" = "token $(Get-Content -Path '.\.tools\gh_token.txt' -Raw)".Trim(); "Accept" = "application/vnd.github.v3+json" }
+
+# Upload corrected latest.yml
+Invoke-RestMethod -Uri "https://uploads.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets?name=latest.yml" -Method POST -Headers @{ "Authorization" = "token $(Get-Content -Path '.\.tools\gh_token.txt' -Raw)".Trim(); "Content-Type" = "application/octet-stream" } -InFile "dist\latest.yml"
+```
+
+3. **Manual Edit Required**: Update `dist/latest.yml` to change:
+   - ❌ `url: Good-Life-Clinic---Inventory-Management-Setup-X.X.X.exe`
+   - ❌ `path: Good-Life-Clinic---Inventory-Management-Setup-X.X.X.exe`
+   - ✅ `url: Good.Life.Clinic.-.Inventory.Management.Setup.X.X.X.exe`
+   - ✅ `path: Good.Life.Clinic.-.Inventory.Management.Setup.X.X.X.exe`
+
 **Standard Release Workflow:**
 1. `npm run build-installer` (builds client + Electron + cleans DB)
 2. `git add . && git commit -m "Release [VERSION]"`
 3. `git push origin HEAD:main && git push origin v[VERSION]`
 4. Use PowerShell commands above to create GitHub release with assets
+5. **MANDATORY**: Fix latest.yml filename mismatch using the process above
+6. Verify auto-updater works by checking release download URLs
 
 **Never** try to install gh CLI, use browser methods, or other approaches - stick to this proven PowerShell + API method.
 

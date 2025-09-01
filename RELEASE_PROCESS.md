@@ -13,8 +13,9 @@ Checklist (minimal)
 - Commit and push the `release` branch (or appropriate branch) and tag the commit: `git tag -a vX.Y.Z -m "Release vX.Y.Z"` then `git push origin release && git push origin vX.Y.Z`.
 - Build client and installer (see commands below).
 - Ensure `backend/appdata.db` is sanitized for distribution (see `clean-database-for-dist.js`).
-- Ensure `dist/latest.yml` `path`/`files[0].url` match the final installer filename.
-- Upload assets with `scripts/upload_release_assets.js` using an env `GH_TOKEN`.
+- Upload installer and latest.yml assets.
+- **MANDATORY**: Fix latest.yml filename mismatch (see fix process below).
+- Verify auto-updater works by checking release download URLs.
 
 Commands (PowerShell) — build + package
 ```powershell
@@ -47,13 +48,36 @@ Remove-Item Env:\GH_TOKEN
 
 Notes on `dist/latest.yml`
 - `dist/latest.yml` must contain the `path`/`files[0].url` entries that match the name GitHub will store. If you upload a hyphenated copy, update `dist/latest.yml` before uploading so the uploaded `latest.yml` refers to the hyphenated name.
-- Example minimal snippet to ensure `path` matches the filename:
+- **CRITICAL BUG**: Electron Builder creates `latest.yml` with hyphens (`Good-Life-Clinic---Inventory-Management-Setup-X.X.X.exe`) but GitHub API converts spaces to dots (`Good.Life.Clinic.-.Inventory.Management.Setup.X.X.X.exe`). **ALWAYS** fix this mismatch after uploading.
+
+**Fix Process for latest.yml Filename Mismatch:**
+1. Upload installer and initial latest.yml
+2. Note the actual GitHub filename from upload response (will have dots instead of spaces)
+3. Edit `dist/latest.yml` to match the GitHub filename exactly
+4. Delete old latest.yml from GitHub and re-upload corrected version
+
+```powershell
+# Fix latest.yml filename mismatch (run after initial upload)
+$releaseId = "[RELEASE_ID]"
+$headers = @{ "Authorization" = "token $env:GH_TOKEN"; "Accept" = "application/vnd.github.v3+json" }
+
+# Get and delete old latest.yml
+$assets = Invoke-RestMethod -Uri "https://api.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets" -Headers $headers
+$latestYmlAsset = $assets | Where-Object { $_.name -eq "latest.yml" }
+Invoke-RestMethod -Uri "https://api.github.com/repos/mhare-int/cliniko-inventory-app/releases/assets/$($latestYmlAsset.id)" -Method DELETE -Headers $headers
+
+# Upload corrected latest.yml
+$headers["Content-Type"] = "application/octet-stream"
+Invoke-RestMethod -Uri "https://uploads.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets?name=latest.yml" -Method POST -Headers $headers -InFile "dist\latest.yml"
+```
+
+- Example minimal snippet to ensure `path` matches the GitHub filename:
 ```yaml
 files:
-  - url: Good-Life-Clinic-Inventory-Management-Setup-3.0.3.exe
+  - url: Good.Life.Clinic.-.Inventory.Management.Setup.X.X.X.exe
     sha512: <sha512-value>
     size: 105274127
-path: Good-Life-Clinic-Inventory-Management-Setup-3.0.3.exe
+path: Good.Life.Clinic.-.Inventory.Management.Setup.X.X.X.exe
 ```
 
 Deleting an incorrectly-named asset on the release (if needed)

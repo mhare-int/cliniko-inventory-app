@@ -1,3 +1,29 @@
+Release 3.1.1
+
+## 🚀 Enhanced Product Sync & Management
+
+### 🔄 In-App Sync Improvements
+- **Fixed in-app sync to import new products** - Now calls `syncProductsFromCliniko()` instead of `updateStockFromCliniko()`
+- **Preserves manual product activation status** - Products you've marked inactive will stay inactive during sync
+- **New products default to active** - Newly imported products are active by default
+
+### 🎛️ Product Management Features
+- **Added `active` column to products table** (Migration 24)
+- **Product activation/deactivation API** - Ready for UI implementation
+- **Database UPSERT improvements** - Better handling of product updates during sync
+
+### 🛠️ Technical Enhancements
+- **Migration 24**: Adds product active status control
+- **Enhanced sync function**: Preserves user settings while importing new data
+- **API endpoints**: `activateProduct()` and `deactivateProduct()` functions added
+
+### 📊 What This Means for Users
+- In-app sync now pulls new products from Cliniko (was the main reported issue)
+- Manual inactive/active settings are preserved during sync
+- Better control over which products appear in your inventory
+
+---
+
 Release 3.1.0
 
 ## Key Features & Fixes

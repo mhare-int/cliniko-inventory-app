@@ -652,6 +652,15 @@ ipcMain.handle('getAllProductsWithWrapper', async () => {
   }
 });
 
+ipcMain.handle('getProductCount', async () => {
+  try {
+    return await db.getProductCount();
+  } catch (err) {
+    logErrorToFile('getProductCount error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return 0;
+  }
+});
+
 ipcMain.handle('getAllUsers', async () => {
   return await db.getAllUsers();
 });
@@ -1433,6 +1442,24 @@ ipcMain.handle('deactivateSupplier', async (event, supplierId) => {
   } catch (err) {
     logErrorToFile('deactivateSupplier error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: 'Failed to deactivate supplier' };
+  }
+});
+
+ipcMain.handle('activateProduct', async (event, clinikoId) => {
+  try {
+    return await db.activateProduct(clinikoId);
+  } catch (err) {
+    logErrorToFile('activateProduct error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to activate product' };
+  }
+});
+
+ipcMain.handle('deactivateProduct', async (event, clinikoId) => {
+  try {
+    return await db.deactivateProduct(clinikoId);
+  } catch (err) {
+    logErrorToFile('deactivateProduct error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { error: 'Failed to deactivate product' };
   }
 });
 

@@ -8,7 +8,7 @@ const path = require('path');
 
 // Current database version
 // NOTE: bump this when adding new migrations so the DB initialization runner will execute them.
-const CURRENT_DB_VERSION = 23;
+const CURRENT_DB_VERSION = 24;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -556,7 +556,7 @@ const migrations = [
                   // Step 3: Create new table with TEXT cliniko_id
                   db.run(`CREATE TABLE products (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    cliniko_id TEXT NOT NULL,
+                    cliniko_id TEXT NOT NULL UNIQUE,
                     name TEXT NOT NULL,
                     supplier_id INTEGER,
                     stock INTEGER DEFAULT 0,
@@ -937,6 +937,48 @@ migrations.push({
           if (iErr) return reject(iErr);
           db.run(`CREATE INDEX IF NOT EXISTS idx_spd_minqty ON supplier_product_discounts(min_qty)` , (iErr2) => {
             if (iErr2) return reject(iErr2);
+            resolve();
+          });
+        });
+      });
+    });
+  }
+});
+
+// Migration 24: Add active column to products table for manual product activation/deactivation control
+migrations.push({
+  version: 24,
+  description: "Add active column to products table to allow manual control of product activation during sync",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      console.log('🔧 Adding active column to products table...');
+      
+      // First check if column already exists
+      db.all("PRAGMA table_info(products)", (err, columns) => {
+        if (err) return reject(err);
+        
+        const hasActiveColumn = columns.some(col => col.name === 'active');
+        if (hasActiveColumn) {
+          console.log('✅ Active column already exists in products table');
+          return resolve();
+        }
+        
+        // Add active column with default value of 1 (active)
+        // Note: SQLite doesn't allow non-constant defaults, so we use a constant then backfill
+        db.run('ALTER TABLE products ADD COLUMN active INTEGER DEFAULT 1', (addErr) => {
+          if (addErr && !addErr.message.includes('duplicate column name')) {
+            return reject(addErr);
+          }
+          
+          // Backfill existing products to be active by default
+          db.run("UPDATE products SET active = 1 WHERE active IS NULL", (updateErr) => {
+            if (updateErr) {
+              console.warn('Migration 24 backfill warning:', updateErr.message || updateErr);
+            } else {
+              console.log('Migration 24: backfilled active = 1 for existing products');
+            }
+            
+            console.log('✅ Migration 24: Added active column to products table');
             resolve();
           });
         });
