@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 function GenerateSupplierFiles() {
@@ -189,7 +189,7 @@ function GenerateSupplierFiles() {
         }
       }
 
-      // Set email settings and show email mode
+      // Set email settings and show email mode (single state update)
       setEmailSettings({ vendorEmails: vendorEmailsObj });
       setEmailMode(Object.keys(vendorEmailsObj).length > 0);
       
@@ -1904,7 +1904,7 @@ Website: www.goodlifeclinic.com`
     }
   };
 
-  const updateVendorEmail = (vendorName, email) => {
+  const updateVendorEmail = useCallback((vendorName, email) => {
     setEmailSettings(prev => ({
       ...prev,
       vendorEmails: {
@@ -1914,7 +1914,7 @@ Website: www.goodlifeclinic.com`
           : { email, contactName: "" }
       }
     }));
-  };
+  }, []);
 
   // Whether there are real generated files (not placeholders)
   const hasFiles = downloadLinks.some(file => file.type !== 'placeholder');
@@ -2028,8 +2028,8 @@ Website: www.goodlifeclinic.com`
 
             {/* removed Sent indicator label as requested */}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 48 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 48 }}>
                 <input
                   type="checkbox"
                   id="create-files"
@@ -2039,7 +2039,7 @@ Website: www.goodlifeclinic.com`
                 />
                 <label htmlFor="create-files" style={{ fontSize: 14, color: '#374151', margin: 0 }}>Create order files</label>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 48 }}>
                 <input
                   type="checkbox"
                   id="include-attachments"
@@ -2051,6 +2051,42 @@ Website: www.goodlifeclinic.com`
                 <label htmlFor="include-attachments" style={{ fontSize: 14, color: createFiles ? '#374151' : '#9ca3af', margin: 0 }}>Include attachments</label>
               </div>
             </div>
+
+            <button
+              onClick={() => {
+                if (selectedPRId) {
+                  navigate(`/purchase-requests?expand=${selectedPRId}`);
+                } else {
+                  navigate("/purchase-requests");
+                }
+              }}
+              disabled={!selectedPRId}
+              style={{
+                height: 48,
+                width: 48,
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxSizing: 'border-box',
+                background: selectedPRId ? '#1976d2' : '#ccc',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 16,
+                cursor: selectedPRId ? 'pointer' : 'not-allowed',
+                transition: 'background-color 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                if (selectedPRId) e.target.style.backgroundColor = '#1565c0';
+              }}
+              onMouseLeave={(e) => {
+                if (selectedPRId) e.target.style.backgroundColor = '#1976d2';
+              }}
+              title={selectedPRId ? "Go to selected PO" : "Select a PO first"}
+            >
+              →
+            </button>
           </div>
   </div>
       </div>
@@ -2251,7 +2287,7 @@ Website: www.goodlifeclinic.com`
                 const contactName = typeof vendorInfo === 'object' ? vendorInfo.contactName : "";
                 
                 return (
-          <div key={vendorName} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 10 }}>
+          <div key={`vendor-email-${idx}-${vendorName}`} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 10 }}>
                     <div style={{ minWidth: 120, fontWeight: 500, color: "#4b5563" }}>
                       <div>{vendorName}:</div>
                       {contactName && (
@@ -2262,7 +2298,6 @@ Website: www.goodlifeclinic.com`
                     </div>
                     <input
                       type="email"
-            name={vendorName}
             autoComplete="off"
             placeholder="vendor@email.com"
             value={email}

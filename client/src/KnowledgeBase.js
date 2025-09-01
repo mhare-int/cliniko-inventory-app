@@ -19,9 +19,14 @@ const KnowledgeBase = () => {
           'Generate files to send to your suppliers',
           'Track orders from request to delivery',
           'View sales data and trends',
-          'Manage user accounts and permissions'
+          'Manage user accounts and permissions',
+          '🆕 AI-powered reorder suggestions with smart analytics',
+          '🆕 Advanced supplier discount and pricing management',
+          '🆕 Lead time analysis and vendor consolidation tools',
+          '🆝 Comprehensive product audit and data quality management',
+          '🆕 Detailed user behavior analytics and engagement tracking'
         ],
-  workflow: 'The basic process: Set up reorder points in Master Stock List → Create purchase orders for needed items → Generate supplier files → Send to suppliers → Receive and log deliveries'
+  workflow: 'The basic process: Set up reorder points in Master Stock List → Use AI suggestions for smart ordering → Create purchase orders for needed items → Configure supplier discounts → Generate supplier files → Send to suppliers → Receive and log deliveries → Analyze with Lead Time Insights'
       }
     },
     {
@@ -82,14 +87,23 @@ const KnowledgeBase = () => {
           'Click on reorder level numbers to edit them directly',
           'Select multiple products using checkboxes for bulk operations',
           'Upload Excel files to update reorder levels in bulk',
-          'See calculated "No. to Order" amounts based on your reorder points'
+          'See calculated "No. to Order" amounts based on your reorder points',
+          '🆕 Smart "Suggest" button for AI-powered reorder recommendations',
+          '🆕 Automated quantity suggestions based on 90-day sales history',
+          '🆕 Lead time analysis (7-day default or supplier-specific)',
+          '🆕 "Create PO" button to instantly order suggested quantities',
+          '🆕 Barcode scanning and product search functionality'
         ],
         tips: [
           'Set reorder points for products you regularly stock',
           'Use search filters to find specific products quickly',
           'Stock levels update automatically from Cliniko',
           'Focus on setting good reorder points rather than manually selecting items',
-          'Use bulk upload for initial setup of many reorder levels'
+          'Use bulk upload for initial setup of many reorder levels',
+          '🆕 Click "Suggest" to get AI recommendations based on sales history',
+          '🆕 The suggestion uses 90 days of data and 7-day lead times by default',
+          '🆕 Set supplier lead times in Admin Panel for more accurate suggestions',
+          '🆕 Use "Create PO" button after getting suggestions for instant ordering'
         ],
   workflow: 'Open page → Use filters to find products → Set reorder points → Save changes → Use Create Purchase Orders for actual ordering'
       }
@@ -238,6 +252,114 @@ const KnowledgeBase = () => {
       }
     },
     {
+      id: 'supplier-discounts',
+      title: '💰 Supplier Discounts',
+      icon: '💵',
+      content: {
+        title: 'Advanced Pricing & Discount Management',
+        description: 'Configure volume discounts, supplier-specific pricing, and quantity-based pricing tiers for better cost management.',
+        features: [
+          'Create quantity-based discount bands (e.g., 10+ units = 5% off)',
+          'Set supplier-wide discounts or product-specific pricing',
+          'Percentage discounts or fixed price per unit options',
+          'Effective date ranges for seasonal or temporary pricing',
+          'Bulk discount wizard for creating multiple pricing tiers',
+          'Visual discount summary showing active pricing',
+          'Notes field for discount terms and conditions',
+          'Easy edit and delete functionality for all discounts'
+        ],
+        tips: [
+          'Use the bulk wizard to set up multiple quantity bands quickly',
+          'Set effective dates for seasonal pricing changes',
+          'Configure supplier-wide discounts for preferred vendors',
+          'Use the notes field to document special terms or conditions',
+          'Review active discounts regularly to ensure pricing accuracy'
+        ],
+        workflow: 'Select supplier/product → Choose scope (supplier-wide or product-specific) → Set discount bands → Configure dates and notes → Create discount'
+      }
+    },
+    {
+      id: 'lead-time-insights',
+      title: '⏱️ Lead Time Insights',
+      icon: '📊',
+      content: {
+        title: 'Supplier Performance & Lead Time Analysis',
+        description: 'Analyze supplier delivery performance, manage lead times, and optimize ordering schedules for better inventory planning.',
+        features: [
+          'View all suppliers with calculated or configured lead times',
+          'Run vendor consolidation analysis (14-day window)',
+          'See products that need reordering within the next 2 weeks',
+          'Individual product reorder suggestions with detailed metrics',
+          'Historical lead time calculations from past orders',
+          'Safety stock recommendations based on demand variability',
+          'Service level configuration (95% default) for stock calculations',
+          'Supplier performance tracking and optimization suggestions'
+        ],
+        tips: [
+          'Use vendor consolidation to group orders by supplier and save on shipping',
+          'Check this weekly to stay ahead of stock-outs',
+          'Configure supplier lead times manually for more accurate planning',
+          'Review individual product suggestions for high-value items',
+          'Use historical data to validate lead time estimates'
+        ],
+        workflow: 'Review supplier lead times → Run vendor consolidation → Analyze products needing reorder → Get individual product suggestions → Plan consolidated orders'
+      }
+    },
+    {
+      id: 'product-audit',
+      title: '🔍 Product Audit',
+      icon: '📋',
+      content: {
+        title: 'Data Quality & Product Management',
+        description: 'Comprehensive product data analysis and cleanup tools to maintain accurate inventory records.',
+        features: [
+          'Identify products with missing or incomplete data',
+          'Find duplicate products across different suppliers',
+          'Analyze product naming consistency and standardization',
+          'Review products without recent sales activity',
+          'Check for missing supplier information',
+          'Validate barcode and product ID integrity',
+          'Export audit reports for external analysis',
+          'Bulk update capabilities for data cleanup'
+        ],
+        tips: [
+          'Run monthly audits to maintain data quality',
+          'Focus on high-value products first for cleanup',
+          'Use standardized naming conventions across all products',
+          'Regular audits help identify discontinued products',
+          'Clean data improves ordering accuracy and efficiency'
+        ],
+        workflow: 'Run audit scan → Review flagged issues → Prioritize by impact → Clean up data → Validate changes → Export report'
+      }
+    },
+    {
+      id: 'user-analytics',
+      title: '📈 User Analytics',
+      icon: '👥',
+      content: {
+        title: 'Advanced User Behavior & System Usage Analytics',
+        description: 'Comprehensive tracking and analysis of user engagement, feature usage, and system performance metrics.',
+        features: [
+          'Detailed user engagement metrics (session duration, page views, actions)',
+          'Feature usage frequency and duration tracking',
+          'Most visited pages and user journey analysis',
+          'Individual user detailed analytics and behavior patterns',
+          'Customizable time periods (7, 30, 90, 365 days)',
+          'Session statistics and login pattern analysis',
+          'User activity heatmaps and engagement scoring',
+          'Export capabilities for external reporting and analysis'
+        ],
+        tips: [
+          'Review analytics weekly to understand usage patterns',
+          'Identify underutilized features that may need training',
+          'Use engagement data to optimize workflows',
+          'Track user adoption of new features over time',
+          'Identify power users who can help train others'
+        ],
+        workflow: 'Access Admin → User Analytics → Select time period → Review engagement metrics → Analyze patterns → Take action on insights'
+      }
+    },
+    {
       id: 'admin',
       title: '⚙️ Admin Panel',
       icon: '👥',
@@ -253,12 +375,18 @@ const KnowledgeBase = () => {
           'Sales Data Sync: preview invoices and run sales sync; shows estimated time (~3s per sale)',
           'Session Timeout: configure how long a login stays valid',
           'Settings: toggle features like Cliniko stock updates and Smart Prompts; set GitHub token for updates',
-          'Supplier Cleanup: tools to reactivate or tidy supplier records'
+          'Supplier Cleanup: tools to reactivate or tidy supplier records',
+          '🆕 Supplier Discounts: comprehensive discount and pricing management system',
+          '🆕 Lead Time Insights: analyze and manage supplier lead times',
+          '🆕 Advanced user behavior analytics with detailed engagement metrics'
         ],
         tips: [
           'Set supplier account numbers here so your email templates can include them',
           'Use Sales Data Sync to preview before running a large import',
-          'If stock updates to Cliniko aren\'t desired, disable them in Settings'
+          'If stock updates to Cliniko aren\'t desired, disable them in Settings',
+          '🆕 Use Supplier Discounts to set up quantity-based pricing tiers',
+          '🆕 Configure supplier lead times in Suppliers Management for accurate suggestions',
+          '🆕 Check User Analytics to see which features are being used most'
         ]
       }
     }
@@ -381,6 +509,10 @@ const KnowledgeBase = () => {
                   {activeSection === 'generate-files' && "Don't use this page until you've created purchase orders first. Once you have orders, come here to make Excel files for suppliers."}
                   {activeSection === 'receive-items' && "Use this when deliveries arrive. Scan or enter items as you receive them to keep stock levels accurate."}
                   {activeSection === 'sales-insights' && "Check this weekly or monthly to see which products sell best. Use the date controls to look at different time periods."}
+                  {activeSection === 'supplier-discounts' && "Set up volume discounts and pricing tiers for better supplier negotiations. Use the bulk wizard for multiple discount bands."}
+                  {activeSection === 'lead-time-insights' && "Review supplier performance and plan consolidated orders. Run vendor consolidation weekly to optimize ordering."}
+                  {activeSection === 'product-audit' && "Run monthly audits to maintain clean product data. Focus on high-value items and missing information first."}
+                  {activeSection === 'user-analytics' && "Monitor how your team uses the system. Identify training needs and optimize workflows based on usage patterns."}
                   {activeSection === 'admin' && "Only administrators see this. Use User Management to add people, then check Analytics to see how the app is being used."}
                 </p>
               </div>

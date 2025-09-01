@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useState, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 
 
 
 function PurchaseRequests() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [prs, setPrs] = useState([]);
   const [vendorData, setVendorData] = useState({});
   const [loading, setLoading] = useState(true);
@@ -194,13 +195,13 @@ function PurchaseRequests() {
 
   const closeEditModal = () => setEditModalState({ visible: false, prId: null, items: [] });
 
-  const handleEditItemChange = (idx, field, value) => {
+  const handleEditItemChange = useCallback((idx, field, value) => {
     setEditModalState(s => {
       const copy = { ...s, items: [...s.items] };
       copy.items[idx] = { ...copy.items[idx], [field]: value };
       return copy;
     });
-  };
+  }, []);
 
   const saveEditModal = async () => {
   const prId = editModalState.prId;
@@ -298,6 +299,38 @@ function PurchaseRequests() {
         .catch(() => setSuppliersMap({}));
     }
   }, []);
+
+  // Handle URL parameter to auto-expand a specific PO
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.search);
+    const expandParam = urlParams.get('expand');
+    console.log('Auto-expand effect triggered:', { expandParam, prsLength: prs.length, search: location.search });
+    
+    if (expandParam && prs.length > 0) {
+      // Try both string and number matching since IDs might be stored as either
+      const prIdAsNumber = parseInt(expandParam);
+      const prIdAsString = expandParam;
+      
+      console.log('Looking for PR ID:', { prIdAsNumber, prIdAsString });
+      console.log('Available PR IDs:', prs.map(pr => ({ id: pr.id, idType: typeof pr.id, name: pr.name })));
+      
+      const foundPr = prs.find(pr => pr.id === prIdAsNumber || pr.id === prIdAsString || String(pr.id) === prIdAsString);
+      console.log('Found matching PR:', foundPr);
+      
+      if (foundPr) {
+        const actualId = foundPr.id;
+        console.log('Expanding PR with actual ID:', actualId);
+        setExpanded(prev => {
+          const newExpanded = prev.includes(actualId) ? prev : [...prev, actualId];
+          console.log('New expanded array:', newExpanded);
+          return newExpanded;
+        });
+        setTab('pr'); // Ensure we're on the PR tab
+      } else {
+        console.log('PR not found - no matching ID');
+      }
+    }
+  }, [location.search, prs]);
 
   const fetchData = async (tabType) => {
     setLoading(true);

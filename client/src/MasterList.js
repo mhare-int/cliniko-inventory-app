@@ -888,7 +888,20 @@ function MasterStockList() {
                         <div style={{ display: 'flex', gap: 8, marginTop: 6, justifyContent: 'center' }}>
                           <button
                             onClick={() => handleCreatePOForProduct(p, suggestions[p.cliniko_id].recommendedQty)}
-                            style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, background: '#006bb6', color: 'white', border: 'none', cursor: 'pointer' }}
+                            style={{ 
+                              padding: '8px 10px', 
+                              fontSize: 12, 
+                              borderRadius: 6, 
+                              background: '#006bb6', 
+                              color: 'white', 
+                              border: 'none', 
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              minWidth: '60px',
+                              height: '36px'
+                            }}
                           >
                             Create PO
                           </button>
@@ -899,7 +912,20 @@ function MasterStockList() {
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                       <button
                         onClick={() => fetchSuggestion(p.cliniko_id, p)}
-                        style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, background: '#f0f0f0', color: '#333', border: '1px solid #ddd', cursor: 'pointer' }}
+                        style={{ 
+                          padding: '8px 10px', 
+                          fontSize: 12, 
+                          borderRadius: 6, 
+                          background: '#f0f0f0', 
+                          color: '#333', 
+                          border: '1px solid #ddd', 
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: '60px',
+                          height: '36px'
+                        }}
                       >
                         Suggest
                       </button>

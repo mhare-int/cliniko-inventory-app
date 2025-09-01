@@ -58,6 +58,7 @@ const TABLES_TO_CLEAR = [
   'invoices',
   'invoice_items',
   'suppliers',
+  'supplier_product_discounts',
   'users',
   'user_sessions',
   'user_behavior_log',

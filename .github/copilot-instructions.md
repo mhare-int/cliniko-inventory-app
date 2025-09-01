@@ -79,6 +79,48 @@ The lines below point to the exact files and patterns to edit when changing comm
 	- Files: `main.js` (autoUpdater wiring), `package-electron.json` (publish settings). See `GITHUB_SETUP.md` and `PACKAGING.md` for the release workflow.
 	- Release helpers & naming: use the repository's release helpers and the new `RELEASE_PROCESS.md` for deterministic uploads. Prefer hyphenated installer filenames (no spaces) to avoid GitHub converting spaces to dots. If you need to remove or rename an uploaded asset, use `scripts/delete_release_asset_by_name.js` and the PowerShell copy-and-upload snippet in `RELEASE_PROCESS.md`.
 
+## GitHub Release Process (CRITICAL - Use this exact method)
+**ALWAYS use PowerShell + GitHub API for releases - DO NOT try to install gh CLI or use other methods.**
+
+GitHub token is stored in `.tools/gh_token.txt`. Use this exact PowerShell pattern:
+
+1. **Create Release:**
+```powershell
+$headers = @{ "Authorization" = "token $(Get-Content -Path '.\.tools\gh_token.txt' -Raw)".Trim(); "Accept" = "application/vnd.github.v3+json" }
+$body = @{ 
+    tag_name = "v[VERSION]"; 
+    target_commitish = "main"; 
+    name = "Version [VERSION] - [TITLE]"; 
+    body = "[RELEASE_NOTES]" 
+} | ConvertTo-Json
+$response = Invoke-RestMethod -Uri "https://api.github.com/repos/mhare-int/cliniko-inventory-app/releases" -Method POST -Headers $headers -Body $body -ContentType "application/json"
+$response.id
+```
+
+2. **Upload Assets (use release ID from step 1):**
+```powershell
+$releaseId = [ID_FROM_STEP_1]
+$headers = @{ "Authorization" = "token $(Get-Content -Path '.\.tools\gh_token.txt' -Raw)".Trim(); "Content-Type" = "application/octet-stream" }
+
+# Upload installer
+$fileName = "Good Life Clinic - Inventory Management Setup [VERSION].exe"
+$filePath = "dist\$fileName"
+Invoke-RestMethod -Uri "https://uploads.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets?name=$([System.Web.HttpUtility]::UrlEncode($fileName))" -Method POST -Headers $headers -InFile $filePath
+
+# Upload auto-updater metadata
+$fileName = "latest.yml"
+$filePath = "dist\$fileName"
+Invoke-RestMethod -Uri "https://uploads.github.com/repos/mhare-int/cliniko-inventory-app/releases/$releaseId/assets?name=$fileName" -Method POST -Headers $headers -InFile $filePath
+```
+
+**Standard Release Workflow:**
+1. `npm run build-installer` (builds client + Electron + cleans DB)
+2. `git add . && git commit -m "Release [VERSION]"`
+3. `git push origin HEAD:main && git push origin v[VERSION]`
+4. Use PowerShell commands above to create GitHub release with assets
+
+**Never** try to install gh CLI, use browser methods, or other approaches - stick to this proven PowerShell + API method.
+
 If you can't find a string or handler, run a workspace search for the exact text (e.g. `window.api`, `purchase_requests`, `createSupplierOrderFiles`) — that's the fastest way to find related code.
 
 ## When in doubt: tests & validation
