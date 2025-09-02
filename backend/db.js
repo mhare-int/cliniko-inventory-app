@@ -1617,15 +1617,22 @@ function createPurchaseRequest(data) {
         // Prepare list of product IDs to prefetch unit_price
         const productIds = Array.from(new Set(items.map(it => (it.Id || it.id || it.product_id)).filter(Boolean)));
 
-        const finalizeInsertions = (priceMap) => {
+        const finalizeInsertions = (priceMap, supplierMap) => {
           let pending = items.length;
           let prTotal = 0;
 
           items.forEach(item => {
             const product_id = item.Id || item.id || item.product_id || null;
             const product_name = item['Product Name'] || item.name || item.product_name || '';
-            const supplier_name = item['Supplier Name'] || item.supplier_name || '';
-            const supplier_id = item['Supplier Id'] || item.supplier_id || item.supplierId || null;
+            
+            // Get supplier info: prefer explicit item data, fallback to products table lookup
+            let supplier_name = item['Supplier Name'] || item.supplier_name || '';
+            let supplier_id = item['Supplier Id'] || item.supplier_id || item.supplierId || null;
+            if ((!supplier_name || !supplier_id) && product_id && supplierMap && supplierMap[product_id]) {
+              supplier_name = supplier_name || supplierMap[product_id].supplier_name || '';
+              supplier_id = supplier_id || supplierMap[product_id].supplier_id || null;
+            }
+            
             const no_to_order = item['No. to Order'] || item.no_to_order || item.qty || item.quantity || 0;
             const quantity = item.quantity || no_to_order;
 
@@ -1690,13 +1697,31 @@ function createPurchaseRequest(data) {
         };
 
         if (productIds.length === 0) {
-          finalizeInsertions({});
+          finalizeInsertions({}, {});
         } else {
           const placeholders = productIds.map(() => '?').join(',');
-          db.all(`SELECT cliniko_id, unit_price FROM products WHERE cliniko_id IN (${placeholders})`, productIds, (errMap, rows) => {
+          // Query by both id and cliniko_id to handle both database ID and Cliniko ID lookups
+          db.all(`SELECT id, cliniko_id, unit_price, supplier_name, supplier_id FROM products WHERE id IN (${placeholders}) OR cliniko_id IN (${placeholders})`, [...productIds, ...productIds], (errMap, rows) => {
             const priceMap = {};
-            if (!errMap && Array.isArray(rows)) rows.forEach(r => { priceMap[String(r.cliniko_id)] = r.unit_price; });
-            finalizeInsertions(priceMap);
+            const supplierMap = {};
+            if (!errMap && Array.isArray(rows)) {
+              rows.forEach(r => { 
+                // Index by both id and cliniko_id for flexible lookup
+                const idKey = String(r.id);
+                const clinikoKey = String(r.cliniko_id);
+                priceMap[idKey] = r.unit_price;
+                priceMap[clinikoKey] = r.unit_price;
+                supplierMap[idKey] = { 
+                  supplier_name: r.supplier_name, 
+                  supplier_id: r.supplier_id 
+                };
+                supplierMap[clinikoKey] = { 
+                  supplier_name: r.supplier_name, 
+                  supplier_id: r.supplier_id 
+                };
+              });
+            }
+            finalizeInsertions(priceMap, supplierMap);
           });
         }
       });
