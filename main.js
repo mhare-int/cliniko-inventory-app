@@ -1,6 +1,7 @@
 // --- Electron/Node.js requires at the very top ---
 const path = require('path');
 const fs = require('fs');
+const validation = require('./backend/validation');
 
 // Try to load Electron APIs; if not running under Electron, provide safe stubs
 let app, BrowserWindow, ipcMain, dialog, Menu;
@@ -261,8 +262,12 @@ async function createWindow() {
 
 // --- Get active PURs for a barcode ---
 ipcMain.handle('getActivePURsForBarcode', async (event, barcode) => {
+  const barcodeValidation = validation.validateBarcode(barcode);
+  if (!barcodeValidation.valid) {
+    return { error: barcodeValidation.error };
+  }
   try {
-    return await db.getActivePURsForBarcode(barcode);
+    return await db.getActivePURsForBarcode(barcodeValidation.value);
   } catch (err) {
     logErrorToFile('getActivePURsForBarcode error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to get active PURs for barcode', details: err.details || err.message || err };
@@ -348,8 +353,16 @@ ipcMain.handle('syncProductsFromCliniko', async () => {
 
 // --- Update sales data from Cliniko API ---
 ipcMain.handle('updateSalesDataFromCliniko', async (event, startDate = null, endDate = null) => {
+  const startValidation = validation.validateDate(startDate, false);
+  if (!startValidation.valid) {
+    return { error: `Invalid start date: ${startValidation.error}` };
+  }
+  const endValidation = validation.validateDate(endDate, false);
+  if (!endValidation.valid) {
+    return { error: `Invalid end date: ${endValidation.error}` };
+  }
   try {
-    return await db.updateSalesDataFromCliniko(startDate, endDate);
+    return await db.updateSalesDataFromCliniko(startValidation.value, endValidation.value);
   } catch (err) {
     logErrorToFile('updateSalesDataFromCliniko error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to update sales data from Cliniko' };
@@ -564,16 +577,40 @@ app.on('ready', async () => {
 
 // --- IPC handlers for backend logic ---
 ipcMain.handle('deleteUser', async (event, userId) => {
-  return await db.deleteUser(userId);
+  const userIdValidation = validation.validateUserId(userId);
+  if (!userIdValidation.valid) {
+    return { error: userIdValidation.error };
+  }
+  return await db.deleteUser(userIdValidation.value);
 });
 
 ipcMain.handle('changeUserPassword', async (event, userId, newPassword) => {
-  return await db.changeUserPassword(userId, newPassword);
+  const userIdValidation = validation.validateUserId(userId);
+  if (!userIdValidation.valid) {
+    return { error: userIdValidation.error };
+  }
+  const passwordValidation = validation.validatePassword(newPassword);
+  if (!passwordValidation.valid) {
+    return { error: passwordValidation.error };
+  }
+  return await db.changeUserPassword(userIdValidation.value, passwordValidation.value);
 });
 
 ipcMain.handle('updatePurchaseRequestReceived', async (event, prId, lines, receivedBy = null, comment = '') => {
+  const prIdValidation = validation.validatePrId(prId);
+  if (!prIdValidation.valid) {
+    return { error: prIdValidation.error };
+  }
+  const linesValidation = validation.validateReceivedLines(lines);
+  if (!linesValidation.valid) {
+    return { error: linesValidation.error };
+  }
+  const commentValidation = validation.validateComment(comment);
+  if (!commentValidation.valid) {
+    return { error: commentValidation.error };
+  }
   try {
-    return await db.updatePurchaseRequestReceived(prId, lines, receivedBy, comment);
+    return await db.updatePurchaseRequestReceived(prIdValidation.value, linesValidation.value, receivedBy, commentValidation.value);
   } catch (err) {
     logErrorToFile('updatePurchaseRequestReceived error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to update purchase request received', details: err && err.message ? err.message : undefined };
@@ -582,8 +619,24 @@ ipcMain.handle('updatePurchaseRequestReceived', async (event, prId, lines, recei
 
 // Update purchase request with required comment and create audit log
 ipcMain.handle('updatePurchaseRequestWithComment', async (event, prId, updates, changedBy, comment) => {
+  const prIdValidation = validation.validatePrId(prId);
+  if (!prIdValidation.valid) {
+    return { error: prIdValidation.error };
+  }
+  const updatesValidation = validation.validatePrUpdates(updates);
+  if (!updatesValidation.valid) {
+    return { error: updatesValidation.error };
+  }
+  const usernameValidation = validation.validateUsername(changedBy);
+  if (!usernameValidation.valid) {
+    return { error: usernameValidation.error };
+  }
+  const commentValidation = validation.validateComment(comment);
+  if (!commentValidation.valid) {
+    return { error: commentValidation.error };
+  }
   try {
-    return await db.updatePurchaseRequestWithComment(prId, updates, changedBy, comment);
+    return await db.updatePurchaseRequestWithComment(prIdValidation.value, updatesValidation.value, usernameValidation.value, commentValidation.value);
   } catch (err) {
     logErrorToFile('updatePurchaseRequestWithComment error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to update purchase request with comment', details: err && err.details ? err.details : err };
@@ -609,10 +662,26 @@ ipcMain.handle('getPoChangeLog', async (event, prId, limit = 50) => {
 });
 
 ipcMain.handle('updatePurchaseRequestItemsEditWithComment', async (event, prId, edits, changedBy, comment) => {
+  const prIdValidation = validation.validatePrId(prId);
+  if (!prIdValidation.valid) {
+    return { error: prIdValidation.error };
+  }
+  const editsValidation = validation.validateItemEdits(edits);
+  if (!editsValidation.valid) {
+    return { error: editsValidation.error };
+  }
+  const usernameValidation = validation.validateUsername(changedBy);
+  if (!usernameValidation.valid) {
+    return { error: usernameValidation.error };
+  }
+  const commentValidation = validation.validateComment(comment);
+  if (!commentValidation.valid) {
+    return { error: commentValidation.error };
+  }
   try {
   // Log incoming IPC call for diagnostics
-  try { require('fs').appendFileSync(require('path').join(__dirname, 'backend.log'), `[${new Date().toISOString()}] IPC updatePurchaseRequestItemsEditWithComment invoked - prId=${prId} edits=${Array.isArray(edits)?edits.length:0} changedBy=${changedBy}\n`); } catch (e) {}
-  const res = await db.updatePurchaseRequestItemsEditWithComment(prId, edits, changedBy, comment);
+  try { require('fs').appendFileSync(require('path').join(__dirname, 'backend.log'), `[${new Date().toISOString()}] IPC updatePurchaseRequestItemsEditWithComment invoked - prId=${prIdValidation.value} edits=${Array.isArray(editsValidation.value)?editsValidation.value.length:0} changedBy=${usernameValidation.value}\n`); } catch (e) {}
+  const res = await db.updatePurchaseRequestItemsEditWithComment(prIdValidation.value, editsValidation.value, usernameValidation.value, commentValidation.value);
   try { require('fs').appendFileSync(require('path').join(__dirname, 'backend.log'), `[${new Date().toISOString()}] IPC updatePurchaseRequestItemsEditWithComment result - ${JSON.stringify(res).slice(0,200)}\n`); } catch (e) {}
   return res;
   } catch (err) {
@@ -622,8 +691,16 @@ ipcMain.handle('updatePurchaseRequestItemsEditWithComment', async (event, prId, 
 });
 
 ipcMain.handle('receiveItemById', async (event, itemId, quantityReceived) => {
+  const itemIdValidation = validation.validateItemId(itemId);
+  if (!itemIdValidation.valid) {
+    return { error: itemIdValidation.error };
+  }
+  const quantityValidation = validation.validateQuantity(quantityReceived);
+  if (!quantityValidation.valid) {
+    return { error: quantityValidation.error };
+  }
   try {
-    return await db.receiveItemById(itemId, quantityReceived);
+    return await db.receiveItemById(itemIdValidation.value, quantityValidation.value);
   } catch (err) {
     logErrorToFile('receiveItemById error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to receive item', details: err.details || err.message || err };
@@ -636,7 +713,11 @@ ipcMain.handle('getSessionTimeout', async () => {
 });
 
 ipcMain.handle('setSessionTimeout', async (event, hours) => {
-  return await db.setSessionTimeout(hours);
+  const hoursValidation = validation.validateSessionTimeout(hours);
+  if (!hoursValidation.valid) {
+    return { error: hoursValidation.error };
+  }
+  return await db.setSessionTimeout(hoursValidation.value);
 });
 
 ipcMain.handle('getAllProducts', async () => {
@@ -820,6 +901,15 @@ ipcMain.handle('setApiKey', async (event, newKey) => {
   } catch (err) {
     logErrorToFile('setApiKey error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: err && err.error ? err.error : 'Failed to set API key' };
+  }
+});
+
+ipcMain.handle('testApiKey', async (event, apiKey) => {
+  try {
+    return await db.testClinikoApiKey(apiKey);
+  } catch (err) {
+    logErrorToFile('testApiKey error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+    return { valid: false, error: 'Failed to test API key' };
   }
 });
 

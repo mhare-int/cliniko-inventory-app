@@ -79,7 +79,7 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
     }
     try {
   // Log invocation for debugging
-  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] createSupplierOrderFilesForVendors called with items=${items.length}, outputFolder=${outputFolder}, opts=${JSON.stringify(opts)}\n`); } catch (e) {}
+  logger.log(`createSupplierOrderFilesForVendors called with items=${items.length}, outputFolder=${outputFolder}, opts=${JSON.stringify(opts)}`);
       // Ensure output folder exists
       if (!isPreview) {
         if (!fs.existsSync(outputFolder)) {
@@ -122,10 +122,10 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
                 // preserve any original fields where useful
                 original_row: r
               }));
-              try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Loaded ${items.length} items for prId=${prIdCandidate} from DB before generating files\n`); } catch (e) {}
+              logger.log(`Loaded ${items.length} items for prId=${prIdCandidate} from DB before generating files`);
             }
           } catch (e) {
-            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Could not load PR items for ${prIdCandidate}: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+            logger.logError(`Could not load PR items for ${prIdCandidate}`, e);
           }
         }
       } catch (e) {
@@ -156,9 +156,9 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
           const acct = rawName ? (acctMap[rawName.toLowerCase()] || null) : null;
           return Object.assign({}, it, { SupplierAccountNumber: acct, supplier_account_number: acct });
         });
-        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Enriched items with supplier account numbers for ${Object.keys(acctMap).length} suppliers\n`); } catch (e) {}
+        logger.log(`Enriched items with supplier account numbers for ${Object.keys(acctMap).length} suppliers`);
       } catch (e) {
-        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] Failed to lookup supplier account numbers: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+        logger.logError('Failed to lookup supplier account numbers', e);
       }
     }
   } catch (e) {
@@ -171,7 +171,7 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
         // In preview mode, return whatever the generator returns directly
         return resolve(result);
       }
-  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] createSupplierOrderFiles generated ${Array.isArray(result)?result.length:'?'} files\n`); } catch (e) {}
+  logger.log(`createSupplierOrderFiles generated ${Array.isArray(result)?result.length:'?'} files`);
 
       // If a purchase request ID (prId) was provided by the caller and this is not a preview run,
       // automatically mark the generated files in the vendor_files table so dev-server (non-Electron)
@@ -235,23 +235,23 @@ function createSupplierOrderFilesForVendors(items, outputFolder, opts = { format
                   const storedPath = absPath ? path.normalize(absPath) : null;
                   const storedFilename = filename ? path.basename(filename) : null;
                   await markVendorFilesCreated(prId, supplierName, fileType, storedFilename, storedPath, size);
-                  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-marked vendor file for prId=${prId}, vendor=${supplierName}, filename=${storedFilename}\n`); } catch (e) {}
+                  logger.log(`auto-marked vendor file for prId=${prId}, vendor=${supplierName}, filename=${storedFilename}`);
                 } catch (e) {
-                  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark vendor file ERROR: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+                  logger.logError(`auto-mark vendor file ERROR prId=${prId}`, e);
                 }
               } catch (e) {
-                try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark inner loop ERROR: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+                logger.logError('auto-mark inner loop ERROR', e);
               }
             }
           }
         }
       } catch (e) {
-        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] auto-mark vendor files batch error: ${e && e.message ? e.message : e}\n`); } catch (e) {}
+        logger.logError('auto-mark vendor files batch error', e);
       }
 
   resolve({ message: 'Supplier order files created', files: result });
     } catch (err) {
-  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] createSupplierOrderFilesForVendors ERROR: ${err && err.message ? err.message : err}\n`); } catch (e) {}
+  logger.logError('createSupplierOrderFilesForVendors ERROR', err);
   reject({ error: 'Failed to create supplier order files', details: err.message || err });
     }
   });
@@ -417,72 +417,30 @@ function gatherPoTemplateOptions() {
 const https = require('https');
 const { URL } = require('url');
 const { https: httpsFollowRedirects } = require('follow-redirects');
+const ClinikoClient = require('./ClinikoClient');
 
 // Use follow-redirects https for API calls that might redirect
 const httpOrHttps = httpsFollowRedirects;
 
 // --- Sync Products from Cliniko API (Create/Insert) ---
 function syncProductsFromCliniko() {
-  return new Promise((resolve, reject) => {
-    getActualApiKey().then(apiKey => {
-      const allProducts = [];
-      let nextUrl = 'https://api.au1.cliniko.com/v1/products';
-      // Format as Basic Auth: 'Basic ' + base64(token + ':')
-      const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
-      const headers = {
-          'Authorization': authHeader,
-          'Accept': 'application/json',
-          'User-Agent': 'StockProcurementApp'
-      };
-
-      function fetchPage(url) {
-        let data = '';
-        const urlObj = new URL(url);
-        const options = {
-          hostname: urlObj.hostname,
-          path: urlObj.pathname + urlObj.search,
-          method: 'GET',
-          headers
-        };
-        const req = httpOrHttps.request(options, (res) => {
-          res.on('data', (chunk) => { data += chunk; });
-          res.on('end', () => {
-            let json;
-            try {
-              json = JSON.parse(data);
-            } catch (e) {
-              // Log the raw response to a file for debugging
-              const fs = require('fs');
-              const logPath = require('path').join(__dirname, 'cliniko_products_error.log');
-              fs.writeFileSync(logPath, data, { encoding: 'utf8' });
-              return reject({ error: 'Failed to parse Cliniko response', details: data });
-            }
-            if (!json.products) return reject({ error: 'No products in Cliniko response', details: data });
-            // Filter out archived products from this page
-            const pageProducts = Array.isArray(json.products) ? json.products.filter(p => !p.archived_at) : [];
-            allProducts.push(...pageProducts);
-            const next = json.links && json.links.next;
-            if (next) {
-              setTimeout(() => fetchPage(next), 2000); // 2 seconds delay between pages
-            } else {
-              // De-duplicate by Cliniko ID across all pages
-              const uniqueById = new Map();
-              for (const p of allProducts) {
-                const id = String(p.id);
-                if (!uniqueById.has(id)) uniqueById.set(id, p);
-              }
-              const productsToProcess = Array.from(uniqueById.values());
-
-              // Collect unique supplier names for auto-population
-              const uniqueSuppliers = new Set();
-              productsToProcess.forEach(product => {
-                const supplier_name = product.product_supplier_name;
-                if (supplier_name && supplier_name.trim() !== '') {
-                  uniqueSuppliers.add(supplier_name.trim());
-                }
-              });
-              
-              console.log(`Found ${uniqueSuppliers.size} unique suppliers from Cliniko products`);
+  return new Promise(async (resolve, reject) => {
+    try {
+      const apiKey = await getActualApiKey();
+      const client = new ClinikoClient(apiKey);
+      
+      console.log('Fetching products from Cliniko API...');
+      const allProducts = await client.fetchProducts({ 
+        excludeArchived: true,
+        onProgress: (page, total) => console.log(`Fetched page ${page}, total products: ${total}`)
+      });
+      
+      // De-duplicate by Cliniko ID
+      const productsToProcess = ClinikoClient.deduplicateById(allProducts);
+      
+      // Extract unique suppliers
+      const uniqueSuppliers = ClinikoClient.extractUniqueSuppliers(productsToProcess);
+      console.log(`Found ${uniqueSuppliers.size} unique suppliers from Cliniko products`);
 
               // Check products table schema before inserting
               db.all('PRAGMA table_info(products)', (schemaErr, columns) => {
@@ -612,66 +570,26 @@ function syncProductsFromCliniko() {
                   }
                 );
               });
-            }
-          });
-        });
-        req.on('error', (e) => reject({ error: e.message }));
-        req.setTimeout(30000, () => {
-          req.destroy();
-          reject({ error: 'Request timeout' });
-        });
-        req.end();
-      }
-      fetchPage(nextUrl);
-    }).catch(error => {
+    } catch (error) {
       reject(error);
-    });
+    }
   });
 }
 
 function updateStockFromCliniko() {
-  return new Promise((resolve, reject) => {
-    getActualApiKey().then(apiKey => {
-      const allProducts = [];
-      let nextUrl = 'https://api.au1.cliniko.com/v1/products';
-      // Format as Basic Auth: 'Basic ' + base64(token + ':')
-      const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
-      const headers = {
-        'Authorization': authHeader,
-        'Accept': 'application/json',
-        'User-Agent': 'MyAPP (mitch.hare34@gmail.com)'
-      };
-
-      function fetchPage(url) {
-        let data = '';
-        const urlObj = new URL(url);
-        const options = {
-          hostname: urlObj.hostname,
-          path: urlObj.pathname + urlObj.search,
-          method: 'GET',
-          headers
-        };
-        const req = httpOrHttps.request(options, (res) => {
-          res.on('data', (chunk) => { data += chunk; });
-          res.on('end', () => {
-            let json;
-            try {
-              json = JSON.parse(data);
-            } catch (e) {
-              // Log the raw response to a file for debugging
-              const fs = require('fs');
-              const logPath = require('path').join(__dirname, 'cliniko_response_error.log');
-              fs.writeFileSync(logPath, data, { encoding: 'utf8' });
-              return reject({ error: 'Failed to parse Cliniko response', details: data });
-            }
-            if (!json.products) return reject({ error: 'No products in Cliniko response', details: data });
-            allProducts.push(...json.products);
-            const next = json.links && json.links.next;
-            if (next) {
-              fetchPage(next);
-            } else {
-              // Map to cliniko_list schema and include barcode info
-              const cliniko_list = allProducts.map(item => ({
+  return new Promise(async (resolve, reject) => {
+    try {
+      const apiKey = await getActualApiKey();
+      const client = new ClinikoClient(apiKey, { userAgent: 'MyAPP (mitch.hare34@gmail.com)' });
+      
+      console.log('Fetching products from Cliniko API for stock update...');
+      const allProducts = await client.fetchProducts({ 
+        excludeArchived: false, // Include all to update stock
+        onProgress: (page, total) => console.log(`Fetched page ${page}, total products: ${total}`)
+      });
+      
+      // Map to cliniko_list schema
+      const cliniko_list = allProducts.map(item => ({
                 'Id': String(item.id),
                 'Stock': item.stock_level,
                 'Reorder Level': 0,
@@ -680,12 +598,8 @@ function updateStockFromCliniko() {
                 'Barcode': item.serial_number || item.barcode || ''
               }));
 
-              // Collect unique supplier names for possible auto-population
-              const uniqueSuppliers = new Set();
-              cliniko_list.forEach(item => {
-                const s = item['Supplier Name'];
-                if (s && String(s).trim() !== '') uniqueSuppliers.add(String(s).trim());
-              });
+              // Extract unique suppliers
+              const uniqueSuppliers = ClinikoClient.extractUniqueSuppliers(allProducts);
 
               // Update local DB stock, barcode and unit_price for each product
               let updated = 0;
@@ -745,16 +659,9 @@ function updateStockFromCliniko() {
                   }
                 });
               });
-            }
-          });
-        });
-        req.on('error', (e) => reject({ error: e.message }));
-        req.end();
-      }
-      fetchPage(nextUrl);
-    }).catch(error => {
+    } catch (error) {
       reject(error);
-    });
+    }
   });
 }
 const path = require('path');
@@ -1285,11 +1192,7 @@ function getProductSales(start_date, end_date) {
 // --- Sales Insights ---
 function getSalesInsights(limit = 500, offset = 0) {
   return new Promise((resolve, reject) => {
-    // Get proper log path - use helper function that handles electron availability
-    const logPath = getLogPath();
-    
-    const logMsg = `[${new Date().toISOString()}] getSalesInsights called with limit: ${limit}, offset: ${offset}\n`;
-    fs.appendFileSync(logPath, logMsg);
+    logger.log(`getSalesInsights called with limit: ${limit}, offset: ${offset}`);
     
     const today = new Date();
     // Show last 12 months of data instead of complex "next month last year" calculation
@@ -1304,8 +1207,7 @@ function getSalesInsights(limit = 500, offset = 0) {
     const last_month_start_str = last_month_start.toISOString().slice(0, 10);
     const last_month_end_str = last_month_end.toISOString().slice(0, 10);
     
-    const dateLogMsg = `[${new Date().toISOString()}] Date ranges - Main: ${start_date_str} to ${end_date_str}, Last month: ${last_month_start_str} to ${last_month_end_str}\n`;
-    fs.appendFileSync(logPath, dateLogMsg);
+    logger.log(`Date ranges - Main: ${start_date_str} to ${end_date_str}, Last month: ${last_month_start_str} to ${last_month_end_str}`);
     const query = `
         SELECT ps.product_name,
                SUM(ps.quantity) as total_quantity,
@@ -1336,18 +1238,15 @@ function getSalesInsights(limit = 500, offset = 0) {
       limit, offset
     ];
     
-    const paramsLogMsg = `[${new Date().toISOString()}] getSalesInsights query params: ${JSON.stringify(params)}\n`;
-    fs.appendFileSync(logPath, paramsLogMsg);
+    logger.log(`getSalesInsights query params: ${JSON.stringify(params)}`);
     
     db.all(query, params, (err, rows) => {
       if (err) {
-        const errorLogMsg = `[${new Date().toISOString()}] getSalesInsights DB ERROR: ${err.message || err}\nStack: ${err.stack || 'No stack trace'}\n`;
-        fs.appendFileSync(logPath, errorLogMsg);
+        logger.logError(`getSalesInsights DB ERROR`, err);
         return reject({ error: 'DB error', details: err.message || err });
       }
       
-      const resultLogMsg = `[${new Date().toISOString()}] getSalesInsights query returned ${rows ? rows.length : 0} rows\n`;
-      fs.appendFileSync(logPath, resultLogMsg);
+      logger.log(`getSalesInsights query returned ${rows ? rows.length : 0} rows`);
       
       const insights = rows.map(row => ({
         product_name: row.product_name,
@@ -1357,8 +1256,7 @@ function getSalesInsights(limit = 500, offset = 0) {
         currently_ordered: row.currently_ordered || 0
       }));
       
-      const successLogMsg = `[${new Date().toISOString()}] getSalesInsights processed ${insights.length} insights successfully\n`;
-      fs.appendFileSync(logPath, successLogMsg);
+      logger.log(`getSalesInsights processed ${insights.length} insights successfully`);
       resolve(insights);
     });
   });
@@ -1366,10 +1264,7 @@ function getSalesInsights(limit = 500, offset = 0) {
 
 function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset = 0) {
   return new Promise((resolve, reject) => {
-    const logPath = getLogPath();
-    
-    const logMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges called with customRanges: ${JSON.stringify(customRanges)}, limit: ${limit}, offset: ${offset}\n`;
-    fs.appendFileSync(logPath, logMsg);
+    logger.log(`getSalesInsightsWithCustomRanges called with customRanges: ${JSON.stringify(customRanges)}, limit: ${limit}, offset: ${offset}`);
     
     const today = new Date();
     // Show last 12 months of data instead of complex "next month last year" calculation
@@ -1384,8 +1279,7 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
     const last_month_start_str = last_month_start.toISOString().slice(0, 10);
     const last_month_end_str = last_month_end.toISOString().slice(0, 10);
     
-    const dateLogMsg = `[${new Date().toISOString()}] Date ranges - Main: ${start_date_str} to ${end_date_str}, Last month: ${last_month_start_str} to ${last_month_end_str}\n`;
-    fs.appendFileSync(logPath, dateLogMsg);
+    logger.log(`Date ranges - Main: ${start_date_str} to ${end_date_str}, Last month: ${last_month_start_str} to ${last_month_end_str}`);
     
     // Build custom range subqueries
     const customRangeSelects = customRanges.map((range, index) => `
@@ -1397,8 +1291,7 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
                      AND ps${index + 3}.invoice_date <= ?
                ) as custom_range_${index}`).join(',');
     
-    const customRangeLogMsg = `[${new Date().toISOString()}] Built custom range selects: ${customRangeSelects}\n`;
-    fs.appendFileSync(logPath, customRangeLogMsg);
+    logger.log(`Built custom range selects: ${customRangeSelects}`);
     
     const query = `
         SELECT ps.product_name,
@@ -1432,19 +1325,16 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
       limit, offset
     ];
     
-    const paramsLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges query params: ${JSON.stringify(params)}\n`;
-    const queryLogMsg = `[${new Date().toISOString()}] Query structure: ${query.substring(0, 300)}...\n`;
-    fs.appendFileSync(logPath, paramsLogMsg + queryLogMsg);
+    logger.log(`getSalesInsightsWithCustomRanges query params: ${JSON.stringify(params)}`);
+    logger.log(`Query structure: ${query.substring(0, 300)}...`);
     
     db.all(query, params, (err, rows) => {
       if (err) {
-        const errorLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges DB ERROR: ${err.message || err}\nStack: ${err.stack || 'No stack trace'}\n`;
-        fs.appendFileSync(logPath, errorLogMsg);
+        logger.logError(`getSalesInsightsWithCustomRanges DB ERROR`, err);
         return reject({ error: 'DB error', details: err.message || err });
       }
       
-      const resultLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges query returned ${rows ? rows.length : 0} rows\n`;
-      fs.appendFileSync(logPath, resultLogMsg);
+      logger.log(`getSalesInsightsWithCustomRanges query returned ${rows ? rows.length : 0} rows`);
       
       const insights = rows.map(row => {
         const result = {
@@ -1463,12 +1353,9 @@ function getSalesInsightsWithCustomRanges(customRanges = [], limit = 500, offset
         return result;
       });
       
-      const successLogMsg = `[${new Date().toISOString()}] getSalesInsightsWithCustomRanges processed ${insights.length} insights successfully\n`;
+      logger.log(`getSalesInsightsWithCustomRanges processed ${insights.length} insights successfully`);
       if (insights.length > 0) {
-        const sampleLogMsg = `[${new Date().toISOString()}] Sample insight: ${JSON.stringify(insights[0])}\n`;
-        fs.appendFileSync(logPath, successLogMsg + sampleLogMsg);
-      } else {
-        fs.appendFileSync(logPath, successLogMsg);
+        logger.log(`Sample insight: ${JSON.stringify(insights[0])}`);
       }
       
       resolve(insights);
@@ -1529,7 +1416,48 @@ function downloadFile(filename) {
 // --- Authentication ---
 // const bcrypt = require('bcryptjs'); // removed duplicate, only require once at the top
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key';
+const crypto = require('crypto');
+
+// JWT secret cached in memory after first retrieval
+let JWT_SECRET = null;
+
+/**
+ * Get or initialize JWT secret from database
+ * Generates a unique secret per installation if not already set
+ * @returns {Promise<string>} JWT secret
+ */
+async function getJwtSecret() {
+  // Return cached value if available
+  if (JWT_SECRET) return JWT_SECRET;
+  
+  // Check environment variable first
+  if (process.env.JWT_SECRET) {
+    JWT_SECRET = process.env.JWT_SECRET;
+    return JWT_SECRET;
+  }
+  
+  try {
+    // Try to get from database
+    const existing = await getAppSetting('jwt_secret');
+    if (existing && existing.value) {
+      JWT_SECRET = existing.value;
+      logger.log('JWT secret loaded from database');
+      return JWT_SECRET;
+    }
+    
+    // Generate new secret and store in database
+    const newSecret = crypto.randomBytes(64).toString('hex');
+    await setAppSetting('jwt_secret', newSecret);
+    JWT_SECRET = newSecret;
+    logger.log('New JWT secret generated and stored in database');
+    return JWT_SECRET;
+  } catch (e) {
+    // Fallback if DB operations fail (shouldn't happen in normal operation)
+    logger.logError('Failed to get/set JWT secret from DB, using fallback', e);
+    JWT_SECRET = crypto.randomBytes(64).toString('hex');
+    return JWT_SECRET;
+  }
+}
 
 function login(username, password) {
   return new Promise((resolve, reject) => {
@@ -1569,7 +1497,8 @@ function login(username, password) {
         
         let token;
         try {
-          token = jwt.sign({ id: user.id, username: user.username, is_admin: !!user.is_admin }, JWT_SECRET, { expiresIn: '7d' });
+          const secret = await getJwtSecret();
+          token = jwt.sign({ id: user.id, username: user.username, is_admin: !!user.is_admin }, secret, { expiresIn: '7d' });
         } catch (jwtErr) {
           console.error('JWT sign error:', jwtErr);
           return reject({ error: 'Token generation error', details: jwtErr.message || jwtErr });
@@ -1591,12 +1520,17 @@ function login(username, password) {
 }
 
 function getCurrentUser(token) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!token) return reject({ error: 'Missing token' });
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-      if (err) return reject({ error: 'Invalid token' });
-      resolve({ id: user.id, username: user.username, is_admin: user.is_admin });
-    });
+    try {
+      const secret = await getJwtSecret();
+      jwt.verify(token, secret, (err, user) => {
+        if (err) return reject({ error: 'Invalid token' });
+        resolve({ id: user.id, username: user.username, is_admin: user.is_admin });
+      });
+    } catch (e) {
+      return reject({ error: 'Failed to verify token', details: e.message });
+    }
   });
 }
 
@@ -1844,12 +1778,68 @@ function getPurchaseRequests(active_only, group_by) {
 
 // Delete PR
 function deletePurchaseRequest(pr_id) {
-  return new Promise((resolve, reject) => {
-    db.run('DELETE FROM purchase_request_items WHERE pr_id=?', [pr_id], () => {
-      db.run('DELETE FROM purchase_requests WHERE pr_id=?', [pr_id], () => {
-        resolve({ message: 'Purchase request deleted' });
+  return new Promise(async (resolve, reject) => {
+    try {
+      // First, get all generated files for this PR so we can delete them from disk
+      const files = await getGeneratedFiles(pr_id).catch(() => []);
+      
+      // Delete each file from disk
+      if (files && files.length > 0) {
+        logger.log(`Deleting ${files.length} associated files for PR ${pr_id}`);
+        
+        for (const file of files) {
+          const filePath = file.file_path || file.path;
+          if (filePath) {
+            try {
+              const fs = require('fs');
+              if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                logger.log(`Deleted file: ${filePath}`);
+              }
+            } catch (fileErr) {
+              logger.logError(`Failed to delete file ${filePath}`, fileErr);
+              // Continue deleting other files even if one fails
+            }
+          }
+        }
+        
+        // Delete file records from database
+        await new Promise((res, rej) => {
+          db.run('DELETE FROM vendor_files WHERE pr_id = ?', [pr_id], (err) => {
+            if (err) {
+              logger.logError('Failed to delete vendor_files records', err);
+              rej(err);
+            } else {
+              logger.log(`Deleted vendor_files records for PR ${pr_id}`);
+              res();
+            }
+          });
+        });
+      }
+      
+      // Delete purchase request items
+      await new Promise((res, rej) => {
+        db.run('DELETE FROM purchase_request_items WHERE pr_id=?', [pr_id], (err) => {
+          if (err) rej(err);
+          else res();
+        });
       });
-    });
+      
+      // Delete the purchase request itself
+      await new Promise((res, rej) => {
+        db.run('DELETE FROM purchase_requests WHERE pr_id=?', [pr_id], (err) => {
+          if (err) rej(err);
+          else res();
+        });
+      });
+      
+      logger.log(`Successfully deleted PR ${pr_id} and all associated files`);
+      resolve({ message: 'Purchase request and associated files deleted successfully' });
+      
+    } catch (err) {
+      logger.logError('Error deleting purchase request', err);
+      reject(err);
+    }
   });
 }
 
@@ -2133,8 +2123,8 @@ function generateReorderLevelsTemplate() {
 }
 
 const sqlite3 = require('sqlite3').verbose();
-const crypto = require('crypto');
 const { runMigrations, backupDatabase, getCurrentVersion, CURRENT_DB_VERSION } = require('./migrations');
+const logger = require('./logger'); // Async logging utility
 
 // Encryption configuration
 const ENCRYPTION_ALGORITHM = 'aes-256-cbc';
@@ -2178,6 +2168,24 @@ const db = new sqlite3.Database(dbPath, async (err) => {
     console.error('Failed to connect to database:', err);
   } else {
     console.log('Connected to SQLite database at', dbPath);
+    
+    // Enable WAL mode for better concurrency and performance
+    db.run('PRAGMA journal_mode = WAL', (walErr) => {
+      if (walErr) {
+        console.warn('Failed to enable WAL mode:', walErr);
+      } else {
+        console.log('✅ SQLite WAL mode enabled');
+      }
+    });
+    
+    // Set busy timeout to 5 seconds (5000ms) to handle SQLITE_BUSY errors
+    db.run('PRAGMA busy_timeout = 5000', (busyErr) => {
+      if (busyErr) {
+        console.warn('Failed to set busy timeout:', busyErr);
+      } else {
+        console.log('✅ SQLite busy timeout set to 5000ms');
+      }
+    });
     
     try {
       // Conditional migrations: only run if on-disk DB schema version is older than expected
@@ -2523,10 +2531,85 @@ function getActualApiKey() {
   });
 }
 
+/**
+ * Test if a Cliniko API key is valid by making a minimal API request
+ * @param {string} apiKey - The API key to test
+ * @returns {Promise<{valid: boolean, error?: string}>}
+ */
+function testClinikoApiKey(apiKey) {
+  return new Promise((resolve) => {
+    if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
+      return resolve({ valid: false, error: 'Missing or invalid API key' });
+    }
+    
+    // Test with a minimal API call (just fetch 1 product to verify auth)
+    const testUrl = 'https://api.au1.cliniko.com/v1/products?per_page=1';
+    const authHeader = 'Basic ' + Buffer.from(apiKey.trim() + ':').toString('base64');
+    const headers = {
+      'Authorization': authHeader,
+      'Accept': 'application/json',
+      'User-Agent': 'StockProcurementApp'
+    };
+    
+    const urlObj = new URL(testUrl);
+    const options = {
+      hostname: urlObj.hostname,
+      path: urlObj.pathname + urlObj.search,
+      method: 'GET',
+      headers,
+      timeout: 10000 // 10 second timeout
+    };
+    
+    logger.log(`Testing Cliniko API key...`);
+    
+    const req = httpOrHttps.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          logger.log('API key validation successful');
+          resolve({ valid: true });
+        } else if (res.statusCode === 401) {
+          logger.log('API key validation failed: 401 Unauthorized');
+          resolve({ valid: false, error: 'Invalid API key - Authentication failed' });
+        } else {
+          logger.log(`API key validation failed: HTTP ${res.statusCode}`);
+          resolve({ valid: false, error: `API request failed with status ${res.statusCode}` });
+        }
+      });
+    });
+    
+    req.on('error', (err) => {
+      logger.logError('API key test request error', err);
+      resolve({ valid: false, error: `Network error: ${err.message}` });
+    });
+    
+    req.on('timeout', () => {
+      req.destroy();
+      logger.logError('API key test timeout');
+      resolve({ valid: false, error: 'Request timeout - please check your connection' });
+    });
+    
+    req.end();
+  });
+}
+
 function setApiKey(newKey) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!newKey || typeof newKey !== 'string' || !newKey.trim()) {
       return reject({ error: 'Missing or invalid API key' });
+    }
+    
+    // Validate the API key before saving
+    logger.log('Validating API key before saving...');
+    const validation = await testClinikoApiKey(newKey.trim());
+    
+    if (!validation.valid) {
+      logger.logError('API key validation failed', validation.error);
+      return reject({ 
+        error: validation.error || 'Invalid API key', 
+        validationFailed: true 
+      });
     }
     
     try {
@@ -2542,8 +2625,8 @@ function setApiKey(newKey) {
       db.run('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', 
         ['CLINIKO_API_KEY', encryptedString, timestamp], function (err) {
         if (err) return reject(err);
-        console.log('API key encrypted and saved successfully');
-        resolve({ message: 'API key updated and encrypted' });
+        console.log('API key validated, encrypted and saved successfully');
+        resolve({ message: 'API key validated and saved' });
       });
     } catch (encryptionError) {
       console.error('Encryption error:', encryptionError);
@@ -3554,11 +3637,7 @@ function updatePurchaseRequestItemsEditWithComment(prId, edits = [], changedBy =
     if (!comment || String(comment).trim().length < 3) return reject({ error: 'A reason/comment is required (min 3 chars)' });
 
     // Debug logging: record invocation
-    try {
-      fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestItemsEditWithComment called - prId=${prId} edits=${edits.length} changedBy=${changedBy} comment="${String(comment).replace(/\n/g,' ')}"\n`);
-    } catch (e) {
-      // ignore logging failures
-    }
+    logger.log(`updatePurchaseRequestItemsEditWithComment called - prId=${prId} edits=${edits.length} changedBy=${changedBy} comment="${String(comment).replace(/\n/g,' ')}"`);
 
     // Fetch before snapshot
     db.get('SELECT * FROM purchase_requests WHERE pr_id = ?', [prId], (err, prRow) => {
@@ -3615,12 +3694,51 @@ function updatePurchaseRequestItemsEditWithComment(prId, edits = [], changedBy =
                 });
               }
             } else {
-              // Update fields: no_to_order, unit_cost, product_name if present
+              // Update fields: no_to_order, unit_cost, product_name, backorder_qty if present
               const fields = [];
               const params = [];
               if (typeof e.no_to_order !== 'undefined') { fields.push('no_to_order = ?'); params.push(e.no_to_order); }
               if (typeof e.unit_cost !== 'undefined') { fields.push('unit_cost = ?'); params.push(e.unit_cost); }
               if (typeof e.productName !== 'undefined') { fields.push('product_name = ?'); params.push(e.productName); }
+              
+              // Handle backorder: if backorder is true, set backorder_qty to outstanding quantity
+              if (e.backorder === true) {
+                // First get the current item to calculate outstanding quantity
+                const getItemQuery = e.id ? 
+                  'SELECT * FROM purchase_request_items WHERE id = ? AND pr_id = ?' :
+                  'SELECT * FROM purchase_request_items WHERE pr_id = ? AND product_name = ?';
+                const getItemParams = e.id ? [e.id, prId] : [prId, e.originalProductName || e.productName];
+                
+                db.get(getItemQuery, getItemParams, (getErr, currentItem) => {
+                  if (getErr) {
+                    console.warn('Failed to get current item for backorder calculation:', getErr);
+                    return applyEdit(idx + 1);
+                  }
+                  
+                  if (currentItem) {
+                    const outstanding = (currentItem.no_to_order || 0) - (currentItem.received_so_far || 0);
+                    if (outstanding > 0) {
+                      fields.push('backorder_qty = ?');
+                      params.push(outstanding);
+                      // Also set the remaining quantity to received, effectively "completing" this line
+                      fields.push('received_so_far = no_to_order');
+                    }
+                  }
+                  
+                  if (fields.length === 0) return applyEdit(idx + 1);
+
+                  const updateQuery = e.id ? 
+                    `UPDATE purchase_request_items SET ${fields.join(', ')} WHERE id = ? AND pr_id = ?` :
+                    `UPDATE purchase_request_items SET ${fields.join(', ')} WHERE pr_id = ? AND product_name = ?`;
+                  const updateParams = e.id ? [...params, e.id, prId] : [...params, prId, e.originalProductName || e.productName];
+                  
+                  db.run(updateQuery, updateParams, (uErr) => {
+                    if (uErr) console.warn('Failed to update item with backorder:', uErr);
+                    applyEdit(idx + 1);
+                  });
+                });
+                return; // Exit early since we're handling async
+              }
 
               if (fields.length === 0) return applyEdit(idx + 1);
 
@@ -3859,20 +3977,18 @@ function deactivateSupplier(supplierId) {
 
 function autoPopulateSuppliersFromCliniko(uniqueSuppliers, options = { deactivateMissing: true, dryRun: false }) {
   return new Promise((resolve, reject) => {
-    if (!uniqueSuppliers || uniqueSuppliers.size === 0) {
-      return resolve({ inserted: 0, reactivated: 0, deactivated: 0, insertedNames: [], reactivatedNames: [], deactivatedNames: [], message: 'No suppliers to process' });
-    }
-
     // Build a normalized map: key = lower(trim(name)) -> original trimmed name
     // This lets us compare case-insensitively while preserving the original casing for DB writes/logs
     const normalizedMap = new Map();
-    uniqueSuppliers.forEach(s => {
-      try {
-        const trimmed = String(s).trim();
-        const key = trimmed.toLowerCase();
-        if (trimmed && !normalizedMap.has(key)) normalizedMap.set(key, trimmed);
-      } catch (e) { /* ignore */ }
-    });
+    if (uniqueSuppliers && uniqueSuppliers.size > 0) {
+      uniqueSuppliers.forEach(s => {
+        try {
+          const trimmed = String(s).trim();
+          const key = trimmed.toLowerCase();
+          if (trimmed && !normalizedMap.has(key)) normalizedMap.set(key, trimmed);
+        } catch (e) { /* ignore */ }
+      });
+    }
 
     let processed = 0;
     let inserted = 0;
@@ -3893,17 +4009,32 @@ function autoPopulateSuppliersFromCliniko(uniqueSuppliers, options = { deactivat
       }
 
       // Get all active Cliniko suppliers and deactivate those not in the current set
-      db.all("SELECT id, name FROM suppliers WHERE source = ? AND active = 1", ['Cliniko'], (err, rows) => {
+      // EXCEPT suppliers that have been manually edited (have non-empty email, contact_name, account_number, or special_instructions)
+      db.all(`SELECT id, name, email, contact_name, account_number, special_instructions 
+              FROM suppliers 
+              WHERE source = ? AND active = 1`, ['Cliniko'], (err, rows) => {
         if (err) {
           console.error('Error querying existing Cliniko suppliers for deactivation:', err);
           return resolve({ inserted, reactivated, deactivated: 0, insertedNames, reactivatedNames, deactivatedNames, message: `Suppliers auto-populated: ${inserted} new, ${reactivated} reactivated (deactivation failed)` , deactivation_error: err.message || err });
         }
 
         // Compare case-insensitively using the normalizedMap keys
+        // BUT: Don't deactivate suppliers that have been manually edited (have user data)
         const toDeactivate = rows.filter(r => {
           try {
             const key = String(r.name || '').trim().toLowerCase();
-            return !normalizedMap.has(key);
+            const notInClinikoList = !normalizedMap.has(key);
+            
+            // Check if supplier has user-edited fields (any non-empty value indicates manual editing)
+            const hasUserEdits = (
+              (r.email && r.email.trim() !== '') ||
+              (r.contact_name && r.contact_name.trim() !== '') ||
+              (r.account_number && r.account_number.trim() !== '') ||
+              (r.special_instructions && r.special_instructions.trim() !== '')
+            );
+            
+            // Only deactivate if not in Cliniko list AND has no user edits
+            return notInClinikoList && !hasUserEdits;
           } catch (e) { return true; }
         });
 
@@ -3924,7 +4055,7 @@ function autoPopulateSuppliersFromCliniko(uniqueSuppliers, options = { deactivat
             if (!uErr) {
               deactivated++;
               deactivatedNames.push(row.name);
-              console.log(`Deactivated supplier: '${row.name}'`);
+              console.log(`Deactivated supplier: '${row.name}' (not in current Cliniko product list and has no user edits)`);
             } else {
               console.error('Error deactivating supplier:', row.name, uErr);
             }
@@ -3939,7 +4070,14 @@ function autoPopulateSuppliersFromCliniko(uniqueSuppliers, options = { deactivat
 
     // Process each supplier name: insert or reactivate as before
     // Iterate over normalizedMap values (original trimmed names) but perform case-insensitive lookups
-    Array.from(normalizedMap.values()).forEach(supplierName => {
+    const suppliers = Array.from(normalizedMap.values());
+    
+    // If there are no suppliers to process, go straight to deactivation
+    if (suppliers.length === 0) {
+      return performDeactivationIfNeeded();
+    }
+    
+    suppliers.forEach(supplierName => {
       // Use case-insensitive match via COLLATE NOCASE so names differing only by case match
       db.get('SELECT id, active FROM suppliers WHERE name = ? COLLATE NOCASE', [supplierName], (err, existingRow) => {
         if (err) {
@@ -3969,8 +4107,8 @@ function autoPopulateSuppliersFromCliniko(uniqueSuppliers, options = { deactivat
           }
         } else {
           db.run(
-            'INSERT INTO suppliers (name, email, contact_name, special_instructions, source, created_at, updated_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-            [supplierName, '', '', '', 'Cliniko', now, now],
+            'INSERT INTO suppliers (name, email, contact_name, special_instructions, account_number, source, created_at, updated_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)',
+            [supplierName, '', '', '', '', 'Cliniko', now, now],
             function (insertErr) {
               if (insertErr && !insertErr.message.includes('UNIQUE constraint failed')) {
                 console.error('Error auto-inserting supplier:', insertErr, supplierName);
@@ -4264,7 +4402,7 @@ function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, 
     if (!prId || !vendorName || !fileType || !filename) {
       return reject({ error: 'Missing required parameters' });
     }
-  try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated called with prId=${prId}, vendor=${vendorName}, fileType=${fileType}, filename=${filename}, filePath=${filePath}\n`); } catch (e) {}
+  logger.log(`markVendorFilesCreated called with prId=${prId}, vendor=${vendorName}, fileType=${fileType}, filename=${filename}, filePath=${filePath}`);
     
     // Ensure vendor_files table exists
     db.run(`CREATE TABLE IF NOT EXISTS vendor_files (
@@ -4287,14 +4425,14 @@ function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, 
           if (dedupeErr) {
             // Log but do not fail - we'll still try to create the unique index and upsert
             console.warn('Warning: failed to dedupe vendor_files table before creating index:', dedupeErr.message || dedupeErr);
-            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] DEDUPE WARNING: ${dedupeErr && dedupeErr.message ? dedupeErr.message : dedupeErr}\n`); } catch (e) {}
+            logger.logError('DEDUPE WARNING', dedupeErr);
           }
 
           // Create a unique index to prevent future duplicate rows on the same (pr_id, vendor_name, file_type, filename)
           db.run(`CREATE UNIQUE INDEX IF NOT EXISTS vendor_files_unique_idx ON vendor_files(pr_id, vendor_name, file_type, filename)`, [], function(idxErr) {
             if (idxErr) {
               console.warn('Warning: failed to create unique index on vendor_files:', idxErr.message || idxErr);
-              try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] INDEX CREATE WARNING: ${idxErr && idxErr.message ? idxErr.message : idxErr}\n`); } catch (e) {}
+              logger.logError('INDEX CREATE WARNING', idxErr);
             }
 
             // Use UPSERT to insert or update the record atomically
@@ -4307,11 +4445,11 @@ function markVendorFilesCreated(prId, vendorName, fileType, filename, filePath, 
 
             db.run(upsertSql, [prId, vendorName, fileType, filename, filePath, fileSize], function(err) {
               if (err) {
-                try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated ERROR: ${err && err.message ? err.message : err}\n`); } catch (e) {}
+                logger.logError(`markVendorFilesCreated ERROR prId=${prId}`, err);
                 console.error('Error marking vendor files created (upsert):', err);
                 return reject({ error: 'Failed to mark vendor files created', details: err.message });
               }
-              try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] markVendorFilesCreated success for prId=${prId}, vendor=${vendorName}, filename=${filename}\n`); } catch (e) {}
+              logger.log(`markVendorFilesCreated success for prId=${prId}, vendor=${vendorName}, filename=${filename}`);
               resolve(true);
             });
           });
@@ -4405,22 +4543,22 @@ function updatePurchaseRequestEmailsSentStatus(prId, sent) {
   return new Promise((resolve, reject) => {
     if (!prId) return reject({ error: 'Missing purchase request ID' });
     try {
-      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus called prId=${prId} sent=${sent}\n`); } catch (e) {}
+      logger.log(`updatePurchaseRequestEmailsSentStatus called prId=${prId} sent=${sent}`);
       db.run(
         'UPDATE purchase_requests SET emails_sent = ? WHERE pr_id = ?',
         [sent ? 1 : 0, prId],
         function(err) {
           if (err) {
             console.error('Error updating emails_sent status:', err);
-            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus ERROR prId=${prId} err=${err && err.message}\n`); } catch (e) {}
+            logger.logError(`updatePurchaseRequestEmailsSentStatus ERROR prId=${prId}`, err);
             return reject({ error: 'Failed to update emails_sent status', details: err.message });
           }
-          try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus result prId=${prId} changes=${this.changes}\n`); } catch (e) {}
+          logger.log(`updatePurchaseRequestEmailsSentStatus result prId=${prId} changes=${this.changes}`);
           resolve(this.changes > 0);
         }
       );
     } catch (e) {
-      try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatus EXCEPTION prId=${prId} err=${e && e.message}\n`); } catch (ee) {}
+      logger.logError(`updatePurchaseRequestEmailsSentStatus EXCEPTION prId=${prId}`, e);
       return reject({ error: 'Failed to update emails_sent status', details: e.message });
     }
   });
@@ -4445,13 +4583,13 @@ function updatePurchaseRequestEmailsSentStatusForce(prId, sent) {
       if (idx >= tryUpdates.length) return resolve({ success: false, changes: 0 });
       const q = tryUpdates[idx++];
       try {
-        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce attempt sql=${q.sql} params=${JSON.stringify(q.params)}\n`); } catch (e) {}
+        logger.log(`updatePurchaseRequestEmailsSentStatusForce attempt sql=${q.sql} params=${JSON.stringify(q.params)}`);
         db.run(q.sql, q.params, function (err) {
           if (err) {
-            try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce ERROR prId=${prId} err=${err && err.message}\n`); } catch (e) {}
+            logger.logError(`updatePurchaseRequestEmailsSentStatusForce ERROR prId=${prId}`, err);
             return reject({ error: 'Failed to update emails_sent status', details: err.message });
           }
-          try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce result prId=${prId} changes=${this.changes}\n`); } catch (e) {}
+          logger.log(`updatePurchaseRequestEmailsSentStatusForce result prId=${prId} changes=${this.changes}`);
           if (this.changes && this.changes > 0) {
             return resolve({ success: true, changes: this.changes });
           }
@@ -4459,7 +4597,7 @@ function updatePurchaseRequestEmailsSentStatusForce(prId, sent) {
           attempt();
         });
       } catch (e) {
-        try { fs.appendFileSync(path.join(__dirname, 'backend.log'), `[${new Date().toISOString()}] updatePurchaseRequestEmailsSentStatusForce EXCEPTION prId=${prId} err=${e && e.message}\n`); } catch (ee) {}
+        logger.logError(`updatePurchaseRequestEmailsSentStatusForce EXCEPTION prId=${prId}`, e);
         return reject({ error: 'Failed to update emails_sent status', details: e.message });
       }
     };

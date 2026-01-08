@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import useEventListener from "./hooks/useEventListener";
+import devLog from "./utils/devLog";
 
 
 
@@ -27,16 +29,16 @@ function PurchaseRequests() {
   const [vendorSuggestions, setVendorSuggestions] = useState([]);
   const [suppliersMap, setSuppliersMap] = useState({});
 
-  const fmtCurrency = (n) => {
+  const fmtCurrency = useCallback((n) => {
     if (n === null || typeof n === 'undefined' || n === '') return '—';
     const num = Number(n) || 0;
     return `$${num.toFixed(2)}`;
-  };
+  }, []);
 
   // Compute PR-level total when backend doesn't supply `total_cost`.
   // Prefer explicit pr.total_cost/pr.totalCost, otherwise sum item.line_total or
   // fall back to (unit_cost * No. to Order) per item.
-  const computePrTotal = (pr) => {
+  const computePrTotal = useCallback((pr) => {
     if (!pr) return '';
     const explicit = pr.total_cost ?? pr.totalCost;
     if (typeof explicit !== 'undefined' && explicit !== null) return explicit;
@@ -49,10 +51,10 @@ function PurchaseRequests() {
       return acc + unit * qty;
     }, 0);
     return total;
-  };
+  }, []);
 
   // Compute total for an array of items (used in Vendor view header)
-  const computeItemsTotal = (items) => {
+  const computeItemsTotal = useCallback((items) => {
     if (!Array.isArray(items)) return '';
     const total = items.reduce((acc, item) => {
       const line = Number(item.line_total ?? item.lineTotal ?? NaN);
@@ -62,16 +64,16 @@ function PurchaseRequests() {
       return acc + unit * qty;
     }, 0);
     return total;
-  };
+  }, []);
 
-  const getSupplierName = (item) => {
+  const getSupplierName = useCallback((item) => {
     if (!item) return "-";
     const nameFromItem = item["Supplier Name"] || item.supplier_name || item.vendor_name || null;
     if (nameFromItem) return nameFromItem;
     const supplierId = item["Supplier Id"] || item.supplier_id || item.supplierId || item.supplier || null;
     if (supplierId && suppliersMap[supplierId]) return suppliersMap[supplierId];
     return "-";
-  };
+  }, [suppliersMap]);
 
   // Modal-based reason prompt (replaces window.prompt which is not supported in Electron renderer)
   const [reasonModalState, setReasonModalState] = useState({ visible: false, title: '', defaultText: '' });
@@ -189,7 +191,22 @@ function PurchaseRequests() {
 
   const openEditModal = async (pr) => {
     // load items from pr into modal state with editable fields
-    const items = (pr.items || []).map(i => ({ id: i.id, productName: i['Product Name'] || i.product_name || i.name, no_to_order: i['No. to Order'] ?? i.no_to_order ?? i.quantity ?? 0, unit_cost: Number(i.unit_cost ?? i.unitCost ?? i.UnitCost ?? 0) || 0, delete: false }));
+    const items = (pr.items || []).map(i => {
+      const ordered = i['No. to Order'] ?? i.no_to_order ?? i.quantity ?? 0;
+      const received = i['received_so_far'] ?? i.received_so_far ?? 0;
+      const outstanding = ordered - received;
+      
+      return { 
+        id: i.id, 
+        productName: i['Product Name'] || i.product_name || i.name, 
+        no_to_order: ordered, 
+        unit_cost: Number(i.unit_cost ?? i.unitCost ?? i.UnitCost ?? 0) || 0, 
+        delete: false, 
+        backorder: false,
+        outstanding: outstanding,
+        canBackorder: outstanding > 0
+      };
+    });
     setEditModalState({ visible: true, prId: pr.id, items });
   };
 
@@ -199,6 +216,14 @@ function PurchaseRequests() {
     setEditModalState(s => {
       const copy = { ...s, items: [...s.items] };
       copy.items[idx] = { ...copy.items[idx], [field]: value };
+      
+      // Mutual exclusion: if delete is checked, uncheck backorder and vice versa
+      if (field === 'delete' && value) {
+        copy.items[idx].backorder = false;
+      } else if (field === 'backorder' && value) {
+        copy.items[idx].delete = false;
+      }
+      
       return copy;
     });
   }, []);
@@ -206,10 +231,17 @@ function PurchaseRequests() {
   const saveEditModal = async () => {
   const prId = editModalState.prId;
   if (!prId) return;
-  console.log('saveEditModal invoked for prId=', prId);
+  devLog.log('saveEditModal invoked for prId=', prId);
   setSavingEdit(true);
     // Build edits array for backend
-    const edits = editModalState.items.map(it => ({ id: it.id, productName: it.productName, no_to_order: Number(it.no_to_order || 0), unit_cost: Number(it.unit_cost || 0), delete: !!it.delete }));
+    const edits = editModalState.items.map(it => ({ 
+      id: it.id, 
+      productName: it.productName, 
+      no_to_order: Number(it.no_to_order || 0), 
+      unit_cost: Number(it.unit_cost || 0), 
+      delete: !!it.delete, 
+      backorder: !!it.backorder 
+    }));
 
     // Request reason
     let reason;
@@ -270,19 +302,17 @@ function PurchaseRequests() {
   }, [tab]);
 
   // Listen for cross-component updates to purchase requests (e.g. emails_sent toggled elsewhere)
-  useEffect(() => {
-    const handler = async (e) => {
-      try {
-        // Simple re-fetch of PR data when notified
-        await fetchData('pr');
-      } catch (err) {
-        console.warn('Failed to refresh PRs after external change', err);
-      }
-    };
-    window.addEventListener('purchaseRequestsChanged', handler);
-    return () => window.removeEventListener('purchaseRequestsChanged', handler);
+  const handlePurchaseRequestsChanged = useCallback(async (e) => {
+    try {
+      // Simple re-fetch of PR data when notified
+      await fetchData('pr');
+    } catch (err) {
+      console.warn('Failed to refresh PRs after external change', err);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  
+  useEventListener('purchaseRequestsChanged', handlePurchaseRequestsChanged);
 
   // Load suppliers map once on mount so we can resolve supplier_id -> name
   useEffect(() => {
@@ -390,14 +420,15 @@ function PurchaseRequests() {
         );
       });
       setEditing(obj);
-      // Initialize per-line selection for PRs (default: select lines with outstanding > 0)
+      // Initialize per-line selection for PRs (default: select lines with outstanding > 0 and not backordered)
       const sel = {};
       res.forEach(pr => {
         sel[pr.id] = pr.items.map(i => {
           const outstanding = typeof i["outstanding"] !== "undefined"
             ? i["outstanding"]
             : ((i["No. to Order"] ?? i.no_to_order ?? 0) - (i["received_so_far"] ?? i.received_so_far ?? 0));
-          return Number(outstanding) > 0;
+          const isBackordered = (i.backorder_qty ?? 0) > 0;
+          return Number(outstanding) > 0 && !isBackordered;
         });
       });
       setSelectedLines(sel);
@@ -415,7 +446,9 @@ function PurchaseRequests() {
           const outstandingItems = items.filter(item => {
             const ordered = Number(item["No. to Order"] ?? item.no_to_order ?? 0);
             const received = Number(item["received_so_far"] ?? item.received_so_far ?? 0);
-            return received < ordered;
+            const backorderQty = Number(item.backorder_qty ?? 0);
+            // Include items that have outstanding quantity and are not fully backordered
+            return received < ordered && backorderQty === 0;
           });
           if (outstandingItems.length > 0) filteredVendorData[vendor] = outstandingItems;
         });
@@ -426,7 +459,9 @@ function PurchaseRequests() {
           items.forEach(item => {
             const ordered = Number(item["No. to Order"] ?? item.no_to_order ?? 0);
             const received = Number(item["received_so_far"] ?? item.received_so_far ?? 0);
-            if (received < ordered) {
+            const backorderQty = Number(item.backorder_qty ?? 0);
+            // Include items that have outstanding quantity and are not fully backordered
+            if (received < ordered && backorderQty === 0) {
               const vendor = item["Supplier Name"] || item.supplier_name || item.vendor_name || pr.supplier_name || pr.vendor_name || 'Unknown';
               if (!filteredVendorData[vendor]) filteredVendorData[vendor] = [];
               // Attach PR id and date for context if available
@@ -449,14 +484,15 @@ function PurchaseRequests() {
       });
       setVendorEditing(obj);
 
-      // Initialize per-line selection for vendors (default: select lines with outstanding > 0)
+      // Initialize per-line selection for vendors (default: select lines with outstanding > 0 and not backordered)
       const vsel = {};
       Object.entries(filteredVendorData).forEach(([vendor, items]) => {
         vsel[vendor] = items.map(i => {
           const outstanding = typeof i["outstanding"] !== "undefined"
             ? i["outstanding"]
             : ((i["No. to Order"] ?? i.no_to_order ?? 0) - (i["received_so_far"] ?? i.received_so_far ?? 0));
-          return Number(outstanding) > 0;
+          const isBackordered = (i.backorder_qty ?? 0) > 0;
+          return Number(outstanding) > 0 && !isBackordered;
         });
       });
       setSelectedVendorLines(vsel);
@@ -494,7 +530,7 @@ function PurchaseRequests() {
 
   // Vendor tab: Save receipt for all items in a vendor group
   const saveVendorReceived = async (vendor, items) => {
-    console.log('saveVendorReceived called for vendor:', vendor);
+    devLog.log('saveVendorReceived called for vendor:', vendor);
     setSavingVendor(vendor);
     
     try {
@@ -1382,6 +1418,8 @@ function PurchaseRequests() {
                                     ? item["outstanding"]
                                     : ((item["No. to Order"] ?? item.no_to_order ?? 0) - (item["received_so_far"] ?? item.received_so_far ?? 0));
                                 const prevReceived = item["received_so_far"] ?? item.received_so_far ?? 0;
+                                const backorderQty = item.backorder_qty ?? 0;
+                                const isBackordered = backorderQty > 0;
                                 const prodName = item["Product Name"] ?? item.name;
                                 const supplier = getSupplierName(item);
                                 const val =
@@ -1389,15 +1427,19 @@ function PurchaseRequests() {
                                     ? editing[pr.id][idx]
                                     : maxQty;
                                 return (
-                                  <tr key={idx}>
+                                  <tr key={idx} style={{ backgroundColor: isBackordered ? "#fff3cd" : "transparent" }}>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: 'center' }}>
                                       <input
                                         type="checkbox"
                                         checked={(selectedLines[pr.id] && selectedLines[pr.id][idx]) || false}
                                         onChange={e => toggleLineSelection(pr.id, idx, e.target.checked)}
+                                        disabled={isBackordered}
                                       />
                                     </td>
-                                    <td style={{ border: "1px solid #ccc", padding: 4 }}>{prodName}</td>
+                                    <td style={{ border: "1px solid #ccc", padding: 4 }}>
+                                      {prodName}
+                                      {isBackordered && <span style={{ marginLeft: 8, fontSize: 12, color: "#856404", fontWeight: "bold" }}>[BACKORDER: {backorderQty}]</span>}
+                                    </td>
                                     <td style={{ border: "1px solid #ccc", padding: 4 }}>{supplier}</td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                       {item["No. to Order"] ?? item.no_to_order ?? 0}
@@ -1405,8 +1447,8 @@ function PurchaseRequests() {
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                       {prevReceived}
                                     </td>
-                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
-                                      {maxQty}
+                                    <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center", color: isBackordered ? "#856404" : "inherit" }}>
+                                      {isBackordered ? 0 : maxQty}
                                     </td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                       {fmtCurrency(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? '')}
@@ -1415,21 +1457,25 @@ function PurchaseRequests() {
                                       {fmtCurrency(item.line_total ?? item.lineTotal ?? '')}
                                     </td>
                                     <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={val}
-                                        onChange={e => handleLineChange(pr.id, idx, e.target.value)}
-                                        style={{
-                                          width: 44,
-                                          textAlign: "center",
-                                          fontSize: 16,
-                                          padding: "2px 4px",
-                                          borderRadius: 4,
-                                          border: "1px solid #ccc",
-                                          margin: "0 2px"
-                                        }}
-                                      />
+                                      {isBackordered ? (
+                                        <span style={{ color: "#856404", fontStyle: "italic", fontSize: 12 }}>Backordered</span>
+                                      ) : (
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={val}
+                                          onChange={e => handleLineChange(pr.id, idx, e.target.value)}
+                                          style={{
+                                            width: 44,
+                                            textAlign: "center",
+                                            fontSize: 16,
+                                            padding: "2px 4px",
+                                            borderRadius: 4,
+                                            border: "1px solid #ccc",
+                                            margin: "0 2px"
+                                          }}
+                                        />
+                                      )}
                                     </td>
                                   </tr>
                                 );
@@ -1713,6 +1759,8 @@ function PurchaseRequests() {
                           const prodName = item["Product Name"] ?? item.name;
                           const ordered = item["No. to Order"] ?? item.no_to_order ?? 0;
                           const prevReceived = item["received_so_far"] ?? item.received_so_far ?? 0;
+                          const backorderQty = item.backorder_qty ?? 0;
+                          const isBackordered = backorderQty > 0;
                           const outstanding = typeof item["outstanding"] !== "undefined"
                             ? item["outstanding"]
                             : (ordered - prevReceived);
@@ -1721,18 +1769,24 @@ function PurchaseRequests() {
                               ? vendorEditing[vendor][idx]
                               : outstanding;
                           return (
-                            <tr key={idx}>
+                            <tr key={idx} style={{ backgroundColor: isBackordered ? "#fff3cd" : "transparent" }}>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: 'center' }}>
                                 <input
                                   type="checkbox"
                                   checked={(selectedVendorLines[vendor] && selectedVendorLines[vendor][idx]) || false}
                                   onChange={e => toggleVendorLineSelection(vendor, idx, e.target.checked)}
+                                  disabled={isBackordered}
                                 />
                               </td>
-                              <td style={{ border: "1px solid #ccc", padding: 4 }}>{prodName}</td>
+                              <td style={{ border: "1px solid #ccc", padding: 4 }}>
+                                {prodName}
+                                {isBackordered && <span style={{ marginLeft: 8, fontSize: 12, color: "#856404", fontWeight: "bold" }}>[BACKORDER: {backorderQty}]</span>}
+                              </td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{ordered}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{prevReceived}</td>
-                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{outstanding}</td>
+                              <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center", color: isBackordered ? "#856404" : "inherit" }}>
+                                {isBackordered ? 0 : outstanding}
+                              </td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
                                 {fmtCurrency(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? '')}
                               </td>
@@ -1740,21 +1794,25 @@ function PurchaseRequests() {
                                 {fmtCurrency(item.line_total ?? item.lineTotal ?? '')}
                               </td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  value={val}
-                                  onChange={e => handleVendorLineChange(vendor, idx, e.target.value)}
-                                  style={{
-                                    width: 44,
-                                    textAlign: "center",
-                                    fontSize: 16,
-                                    padding: "2px 4px",
-                                    borderRadius: 4,
-                                    border: "1px solid #ccc",
-                                    margin: "0 2px"
-                                  }}
-                                />
+                                {isBackordered ? (
+                                  <span style={{ color: "#856404", fontStyle: "italic", fontSize: 12 }}>Backordered</span>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={val}
+                                    onChange={e => handleVendorLineChange(vendor, idx, e.target.value)}
+                                    style={{
+                                      width: 44,
+                                      textAlign: "center",
+                                      fontSize: 16,
+                                      padding: "2px 4px",
+                                      borderRadius: 4,
+                                      border: "1px solid #ccc",
+                                      margin: "0 2px"
+                                    }}
+                                  />
+                                )}
                               </td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item.pr_id}</td>
                               <td style={{ border: "1px solid #ccc", padding: 4, textAlign: "center" }}>{item.date_created ? new Date(item.date_created).toLocaleString() : "—"}</td>
@@ -1857,11 +1915,16 @@ function PurchaseRequests() {
             <h3 style={{ margin: 0 }}>Edit Purchase Order — {editModalState.prId}</h3>
             <button onClick={closeEditModal} title="Close" aria-label="Close edit" style={{ marginLeft: 'auto', border: '1px solid #ccc', background: '#eee', width: 36, height: 36, borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, lineHeight: 1, transform: 'translateY(-12px)', color: '#000' }}>✕</button>
           </div>
-          <div style={{ color: '#666', marginBottom: 12 }}>Modify "No. to Order" or mark lines to delete. A required reason will be requested when saving.</div>
+          <div style={{ color: '#666', marginBottom: 12 }}>
+            Modify "No. to Order" or mark lines to delete or backorder. A required reason will be requested when saving.
+            <br />
+            <strong>Backorder:</strong> Marks remaining outstanding quantity as backordered and removes from active receiving. Use when supplier says item will be available later.
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f6f9fb' }}>
                 <th style={{ border: '1px solid #ddd', padding: 8 }}>Delete</th>
+                <th style={{ border: '1px solid #ddd', padding: 8 }}>Backorder</th>
                 <th style={{ border: '1px solid #ddd', padding: 8 }}>Product</th>
                 <th style={{ border: '1px solid #ddd', padding: 8 }}>No. to Order</th>
                 <th style={{ border: '1px solid #ddd', padding: 8 }}>Unit Cost</th>
@@ -1872,6 +1935,16 @@ function PurchaseRequests() {
                 <tr key={row.id || idx}>
                   <td style={{ border: '1px solid #eee', padding: 8, textAlign: 'center' }}>
                     <input type="checkbox" checked={!!row.delete} onChange={e => handleEditItemChange(idx, 'delete', e.target.checked)} />
+                  </td>
+                  <td style={{ border: '1px solid #eee', padding: 8, textAlign: 'center' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={!!row.backorder} 
+                      onChange={e => handleEditItemChange(idx, 'backorder', e.target.checked)}
+                      disabled={!row.canBackorder}
+                      title={row.canBackorder ? `Backorder ${row.outstanding} remaining items` : "No outstanding quantity to backorder"}
+                    />
+                    {row.canBackorder && <div style={{ fontSize: 10, color: '#666' }}>({row.outstanding})</div>}
                   </td>
                   <td style={{ border: '1px solid #eee', padding: 8 }}>{row.productName}</td>
                   <td style={{ border: '1px solid #eee', padding: 8, textAlign: 'center' }}>

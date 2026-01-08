@@ -280,7 +280,10 @@ function CreatePurchaseRequests() {
         });
         setOnOrderMap(map);
       }
-      navigate("/generate-supplier-files");
+      // Pass guided mode state to next step
+      navigate("/generate-supplier-files", { 
+        state: { guidedMode: location.state?.guidedMode } 
+      });
     } catch (err) {
   setError("Failed to create purchase order.");
     }
@@ -417,6 +420,24 @@ function CreatePurchaseRequests() {
           <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
             Create Purchase Orders
           </h2>
+          {location.state?.guidedMode && (
+            <div style={{
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              color: "#fff",
+              padding: "16px 20px",
+              borderRadius: "12px",
+              marginBottom: "20px",
+              boxShadow: "0 4px 12px rgba(102, 126, 234, 0.3)",
+              textAlign: "center"
+            }}>
+              <div style={{ fontSize: "1.3em", fontWeight: "700", marginBottom: "6px" }}>
+                🚀 Tuesday Ordering Workflow - Step 1 of 2
+              </div>
+              <div style={{ fontSize: "0.95em", opacity: 0.95 }}>
+                Review items below reorder point and create purchase orders
+              </div>
+            </div>
+          )}
           {location.state?.fromMasterList ? (
             <p
               style={{
@@ -1062,7 +1083,9 @@ function CreatePurchaseRequests() {
                     }
                   }}
                 >
-                  Create Purchase Order
+                  {location.state?.guidedMode 
+                    ? "✓ Create PO & Continue to Generate Files" 
+                    : "Create Purchase Order"}
                 </button>
               </div>
             </div>

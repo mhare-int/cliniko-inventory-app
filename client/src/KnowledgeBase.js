@@ -9,363 +9,338 @@ const KnowledgeBase = () => {
     {
       id: 'overview',
       title: '📋 Overview',
-      icon: '🏠',
       content: {
-        title: 'Getting Started with Your Inventory App',
-        description: 'This app helps you manage stock levels, create purchase orders, and track deliveries for your business.',
+        title: 'What to do in this app',
+        description: 'Use this app to check your stock levels, create purchase orders when items run low, and send orders to suppliers.',
         features: [
-          'Monitor what products you have in stock',
-          'Create orders when items are running low',
-          'Generate files to send to your suppliers',
-          'Track orders from request to delivery',
-          'View sales data and trends',
-          'Manage user accounts and permissions',
-          '🆕 AI-powered reorder suggestions with smart analytics',
-          '🆕 Advanced supplier discount and pricing management',
-          '🆕 Lead time analysis and vendor consolidation tools',
-          '🆝 Comprehensive product audit and data quality management',
-          '🆕 Detailed user behavior analytics and engagement tracking'
+          'Check current stock levels and see what needs ordering',
+          'Get AI-powered suggestions for how much to order',
+          'Create purchase orders for products running low',
+          'Generate Excel files to send to suppliers',
+          'Track orders from creation to delivery',
+          'View sales trends and performance data',
+          'Set up volume discounts and supplier pricing',
+          'Analyze supplier lead times and consolidate orders',
+          'Run product audits to keep data clean',
+          'Manage user accounts and track system usage'
         ],
-  workflow: 'The basic process: Set up reorder points in Master Stock List → Use AI suggestions for smart ordering → Create purchase orders for needed items → Configure supplier discounts → Generate supplier files → Send to suppliers → Receive and log deliveries → Analyze with Lead Time Insights'
+  workflow: 'Set reorder points → Get AI suggestions → Create purchase orders → Generate supplier files → Email to suppliers → Receive and log deliveries'
       }
     },
     {
       id: 'first-time-setup',
       title: '🚀 First-Time Setup',
-      icon: '🚀',
       content: {
-        title: 'Complete your initial setup in three quick steps',
-        description: 'On first run, the app guides you through creating an admin, saving your Cliniko API key, and importing data.',
+        title: 'What to do when you first open the app',
+        description: 'Follow three steps to get started: create an admin account, enter your Cliniko API key, and sync your products.',
         features: [
-          'Step 1: Create your administrator account and log in',
-          'Step 2: Enter your Cliniko API key (stored securely)',
-          'Step 3: Sync products and suppliers now; sales data continues syncing in the background',
-          'Preview the number of invoices and estimated time before running sales sync',
-          'Time estimate uses ~3 seconds per sale record for planning only'
+          'Step 1: Create an administrator account and log in',
+          'Step 2: Enter your Cliniko API key (the app validates it before saving)',
+          'Step 3: Click to sync products and suppliers - this runs immediately',
+          'Sales sync runs in the background while you work',
+          'You can use the app right away after products sync'
         ],
         tips: [
-          'After products are synced, you can start using the app right away',
-          'Background sales sync will keep running while you work; progress is shown in a small notification',
-          'You can revisit Admin → Sales Data Sync to preview or run a sync anytime'
+          'The app tests your API key to make sure it works',
+          'Products sync quickly so you can start working',
+          'Sales data syncs in the background - you\'ll see a small notification',
+          'Go to Admin → Sales Data Sync anytime to sync more sales data'
         ],
-        workflow: 'Open app → Create admin → Save API key → Sync products & suppliers now → Sales sync continues in background'
+        workflow: 'Open app → Create admin → Enter API key → Sync products → Start working while sales sync in background'
       }
     },
     {
       id: 'home',
       title: '🏠 Home Dashboard',
-      icon: '📊',
       content: {
-        title: 'Starting Point for Daily Tasks',
-        description: 'This is where you land when you first open the app. Use the buttons here to quickly jump to common tasks. When the app starts, you may see a small popup showing background sync progress (stock and sales).',
+        title: 'What to do on the home page',
+        description: 'Click the big blue button to create purchase orders. Click the green button to generate supplier files. Use the tabs at the top to navigate.',
         features: [
-          'Good Life company logo at the top',
-          'Welcome message confirms you\'re in the right place',
-          'Blue "Create Purchase Orders" button - click to start ordering',
-          'Green "Generate Supplier Files" button - click after making requests',
-          'Navigation tabs at the top take you to other sections'
+          'Click "Create Purchase Orders" to start ordering stock',
+          'Click "Generate Supplier Files" after creating orders',
+          'Use the navigation tabs at the top to go to other pages',
+          'See background sync progress in the small notification popup'
         ],
         tips: [
           'Start here each day to access main functions',
           'Use the big buttons instead of hunting through menus',
-          'The navigation tabs at the top are always available',
-          'Background sync runs automatically after login and shows a brief notification'
+          'Navigation tabs are always available at the top',
+          'Background sync shows progress when you log in'
         ]
       }
     },
     {
       id: 'master-list',
       title: '📋 Master Stock List',
-      icon: '📦',
       content: {
-        title: 'How to Manage Your Product Database',
-        description: 'This page shows all your products with current stock levels and lets you set reorder points. It\'s your central product management hub.',
+        title: 'What to do when managing products',
+        description: 'Set reorder points for your products, use AI suggestions to determine order quantities, and click "Create PO" to place orders instantly.',
         features: [
-          'View current stock levels for all products (synced from Cliniko)',
-          'Set and update reorder points for each product',
-          'Search boxes at the top to filter by product or supplier',
-          'Click on reorder level numbers to edit them directly',
-          'Select multiple products using checkboxes for bulk operations',
-          'Upload Excel files to update reorder levels in bulk',
-          'See calculated "No. to Order" amounts based on your reorder points',
-          '🆕 Smart "Suggest" button for AI-powered reorder recommendations',
-          '🆕 Automated quantity suggestions based on 90-day sales history',
-          '🆕 Lead time analysis (7-day default or supplier-specific)',
-          '🆕 "Create PO" button to instantly order suggested quantities',
-          '🆕 Barcode scanning and product search functionality'
+          'Set reorder points by clicking on the numbers',
+          'Use search boxes to filter by product or supplier',
+          'Click "Suggest" for AI-powered order recommendations',
+          'Get suggestions based on 90 days of sales history',
+          'Click "Create PO" to order suggested quantities immediately',
+          'Upload Excel files to set many reorder points at once',
+          'Use barcode scanning to find products quickly',
+          'Select multiple products for bulk operations'
         ],
         tips: [
-          'Set reorder points for products you regularly stock',
-          'Use search filters to find specific products quickly',
-          'Stock levels update automatically from Cliniko',
-          'Focus on setting good reorder points rather than manually selecting items',
-          'Use bulk upload for initial setup of many reorder levels',
-          '🆕 Click "Suggest" to get AI recommendations based on sales history',
-          '🆕 The suggestion uses 90 days of data and 7-day lead times by default',
-          '🆕 Set supplier lead times in Admin Panel for more accurate suggestions',
-          '🆕 Use "Create PO" button after getting suggestions for instant ordering'
+          'Click "Suggest" to get smart ordering recommendations',
+          'AI uses your sales history and supplier lead times',
+          'Set supplier lead times in Admin Panel for better suggestions',
+          'Use "Create PO" after getting suggestions for instant ordering',
+          'Stock levels update automatically from Cliniko'
         ],
-  workflow: 'Open page → Use filters to find products → Set reorder points → Save changes → Use Create Purchase Orders for actual ordering'
+  workflow: 'Filter products → Set reorder points → Click "Suggest" → Review AI recommendations → Click "Create PO" to order'
       }
     },
     {
       id: 'create-pr',
   title: '📝 Create Purchase Orders',
-      icon: '✏️',
       content: {
-        title: 'How to Order More Stock',
-        description: 'Use this page when you need to order products that are running low. It helps you build a list of what to buy.',
+        title: 'What to do when creating orders',
+        description: 'Search for products, tick "Include Negative" to see out-of-stock items, review suggested quantities, and submit your order.',
         features: [
-          'Search for products using the dropdown box',
-          'Tick "Include Negative" to see out-of-stock items',
-          'Green ticks mean you have stock, red crosses mean you\'re out',
-          'Products automatically group by which supplier sells them',
-          'Quantities are suggested based on what you need'
+          'Search for products in the dropdown',
+          'Tick "Include Negative" to see items with zero or negative stock',
+          'Look for red X marks showing out-of-stock products',
+          'Review suggested quantities (app calculates based on reorder points)',
+          'Products group automatically by supplier',
+          'Adjust quantities before submitting'
         ],
         tips: [
-          'Always check the "Include Negative" box to see everything',
-          'Look for red X marks - these products are out of stock',
+          'Always tick "Include Negative" to see everything',
+          'Red X marks = out of stock, green ticks = in stock',
           'The app groups items by supplier automatically',
-          'Review suggested quantities before submitting'
+          'Review quantities before clicking submit'
         ],
-        workflow: 'Search for products → Check "Include Negative" → Review items with red X marks → Adjust quantities → Submit request'
+        workflow: 'Search products → Tick "Include Negative" → Find red X items → Adjust quantities → Submit order'
       }
     },
     {
       id: 'purchase-requests',
   title: '📋 Active Purchase Orders',
-      icon: '⏳',
       content: {
-        title: 'Checking Your Current Orders',
-  description: 'This shows you all the purchase orders you\'ve made that haven\'t been completed yet.',
+        title: 'What to do when tracking orders',
+  description: 'Check your current orders, update status as orders progress, mark complete when items arrive, and follow up with suppliers.',
         features: [
-          'See all orders you\'ve submitted but not finished',
-          'Check which supplier each order goes to',
-          'Update the status as orders progress',
-          'Edit order details if you need to change something',
-          'Cancel orders that are no longer needed'
+          'View all orders you haven\'t completed yet',
+          'Update order status as things progress',
+          'Mark orders complete when items arrive',
+          'Edit orders if details change',
+          'Cancel orders no longer needed',
+          'See which supplier each order goes to'
         ],
         tips: [
-          'Check this page regularly to track order progress',
-          'Update status when you place orders with suppliers',
-          'Mark orders complete when items arrive',
-          'Use this to follow up with suppliers about delays'
+          'Check this page regularly to track progress',
+          'Update status when you send orders to suppliers',
+          'Mark complete when deliveries arrive',
+          'Use this to follow up on delayed orders'
         ],
-        workflow: 'Check current orders → Update status as things progress → Follow up with suppliers → Mark complete when delivered'
+        workflow: 'View current orders → Update status → Follow up on delays → Mark complete when delivered'
       }
     },
     {
       id: 'archived',
       title: '📚 Archived Requests',
-      icon: '🗄️',
       content: {
-        title: 'Historical Records',
-  description: 'Access completed purchase orders and historical ordering data.',
+        title: 'What to do when reviewing history',
+  description: 'Search past orders, analyze ordering patterns, reference previous quantities, and track supplier performance.',
         features: [
-          'Complete order history',
           'Search by date, supplier, or product',
-          'Order performance analysis',
-          'Reorder functionality',
-          'Cost tracking over time',
-          'Supplier performance metrics'
+          'Review past order quantities for guidance',
+          'Track how well suppliers perform over time',
+          'Export data for analysis in Excel',
+          'Reorder items from past orders'
         ],
         tips: [
-          'Use for analyzing ordering patterns',
-          'Reference past orders for quantity guidance',
-          'Track supplier delivery performance',
-          'Export data for external analysis'
+          'Use past orders to guide future quantities',
+          'Track supplier delivery times and reliability',
+          'Export data for deeper analysis',
+          'Look for patterns in your ordering'
         ],
-        workflow: 'Search archived orders → Analyze patterns → Use insights for future orders'
+        workflow: 'Search archived orders → Review quantities and dates → Analyze patterns → Use insights for future orders'
       }
     },
     {
       id: 'generate-files',
       title: '🏢 Generate Supplier Files',
-      icon: '📄',
       content: {
-        title: 'How to Send Orders to Your Suppliers',
-  description: 'After creating purchase orders, use this page to turn them into Excel files you can email to suppliers.',
+        title: 'What to do when sending orders to suppliers',
+  description: 'Generate Excel files from your purchase orders, download them, and email to suppliers. Each supplier gets their own file.',
         features: [
-          'Creates Excel files from your purchase orders',
-          'Makes separate files for each supplier automatically',
-          'Download links appear after files are generated',
+          'Click to generate Excel files from your orders',
+          'Each supplier gets a separate file automatically',
+          'Download links appear after files are created',
           'Files are formatted professionally for suppliers',
-          'Keeps your requests organized by supplier',
-          'Supports email templates with variables like {{supplierAccountNumber}} in subject/body'
+          'Use email templates with {{supplierAccountNumber}} variables',
+          'On Windows, create Outlook .oft emails with attachments'
         ],
         tips: [
-          'Only use this after you\'ve created purchase orders',
-          'Download files immediately after generating them',
-          'Each supplier gets their own separate file',
-          'Set supplier account numbers in Admin → Suppliers Management so {{supplierAccountNumber}} fills in your emails',
-          'On Windows, the app can prepare Outlook .oft emails with your template and attachment'
+          'Create purchase orders first, then come here',
+          'Download files immediately after generating',
+          'Set supplier account numbers in Admin so {{supplierAccountNumber}} fills in',
+          'Windows users can prepare Outlook emails automatically'
         ],
-  workflow: 'Create purchase orders first → Come to this page → Generate files → Download files → Email to suppliers'
+  workflow: 'Create purchase orders → Generate files → Download files → Email to suppliers'
       }
     },
     {
       id: 'receive-items',
       title: '📦 Receive Items',
-      icon: '✅',
       content: {
-        title: 'Process Incoming Stock',
-        description: 'Log received inventory and update stock levels efficiently.',
+        title: 'What to do when deliveries arrive',
+        description: 'Scan or enter received items, verify quantities match orders, note any issues, and update stock levels.',
         features: [
-          'Barcode scanning support',
-          'Batch processing',
-          'Quantity verification',
-          'Quality control notes',
-          'Automatic stock updates',
-          'Discrepancy reporting'
+          'Scan barcodes as items arrive',
+          'Enter quantities received',
+          'Verify against purchase orders',
+          'Note damaged or missing items',
+          'Stock updates automatically',
+          'Report discrepancies'
         ],
         tips: [
-          'Scan items as they arrive for accuracy',
-          'Check quantities against purchase orders',
-          'Note any damaged or missing items',
-          'Update stock levels immediately'
+          'Scan items for accuracy',
+          'Check quantities against what you ordered',
+          'Note problems immediately',
+          'Update stock right away'
         ],
-        workflow: 'Scan/enter received items → Verify quantities → Note any issues → Update stock'
+        workflow: 'Scan items → Enter quantities → Verify against order → Note issues → Update stock'
       }
     },
     {
       id: 'sales-insights',
       title: '📊 Sales Insights',
-      icon: '📈',
       content: {
-        title: 'Performance Analytics',
-        description: 'Analyze sales data and inventory performance to make informed decisions.',
+        title: 'What to do when analyzing sales',
+        description: 'Select date ranges, review sales metrics, identify trends, and adjust your inventory strategy based on data.',
         features: [
-          'Sales trends and patterns',
-          'Top-selling products',
-          'Seasonal analysis',
-          'Profit margin tracking',
-          'Inventory turnover rates',
-          'Custom date ranges'
+          'Choose custom date ranges to analyze',
+          'View sales trends and patterns',
+          'See top-selling products',
+          'Analyze seasonal patterns',
+          'Track profit margins',
+          'Check inventory turnover rates'
         ],
         tips: [
           'Review weekly for short-term trends',
           'Use seasonal data for planning',
           'Focus on high-margin, fast-moving items',
-          'Compare periods for growth analysis'
+          'Compare time periods for growth'
         ],
-        workflow: 'Select date range → Review metrics → Identify trends → Adjust inventory strategy'
+        workflow: 'Select dates → Review metrics → Identify trends → Adjust ordering strategy'
       }
     },
     {
       id: 'supplier-discounts',
       title: '💰 Supplier Discounts',
-      icon: '💵',
       content: {
-        title: 'Advanced Pricing & Discount Management',
-        description: 'Configure volume discounts, supplier-specific pricing, and quantity-based pricing tiers for better cost management.',
+        title: 'What to do when setting up pricing',
+        description: 'Create quantity-based discount bands, set supplier-wide or product-specific pricing, and configure effective dates for pricing changes.',
         features: [
-          'Create quantity-based discount bands (e.g., 10+ units = 5% off)',
-          'Set supplier-wide discounts or product-specific pricing',
-          'Percentage discounts or fixed price per unit options',
-          'Effective date ranges for seasonal or temporary pricing',
-          'Bulk discount wizard for creating multiple pricing tiers',
-          'Visual discount summary showing active pricing',
-          'Notes field for discount terms and conditions',
-          'Easy edit and delete functionality for all discounts'
+          'Create quantity discounts (e.g., 10+ units = 5% off)',
+          'Set supplier-wide or product-specific pricing',
+          'Use percentage discounts or fixed prices',
+          'Set date ranges for seasonal pricing',
+          'Use bulk wizard to create multiple tiers quickly',
+          'Add notes for special terms',
+          'Edit or delete discounts anytime'
         ],
         tips: [
-          'Use the bulk wizard to set up multiple quantity bands quickly',
-          'Set effective dates for seasonal pricing changes',
+          'Use bulk wizard for quick setup of multiple bands',
+          'Set effective dates for seasonal changes',
           'Configure supplier-wide discounts for preferred vendors',
-          'Use the notes field to document special terms or conditions',
-          'Review active discounts regularly to ensure pricing accuracy'
+          'Document special terms in the notes field',
+          'Review active discounts regularly'
         ],
-        workflow: 'Select supplier/product → Choose scope (supplier-wide or product-specific) → Set discount bands → Configure dates and notes → Create discount'
+        workflow: 'Select supplier/product → Choose discount scope → Set quantity bands → Configure dates → Add notes → Create discount'
       }
     },
     {
       id: 'lead-time-insights',
       title: '⏱️ Lead Time Insights',
-      icon: '📊',
       content: {
-        title: 'Supplier Performance & Lead Time Analysis',
-        description: 'Analyze supplier delivery performance, manage lead times, and optimize ordering schedules for better inventory planning.',
+        title: 'What to do when optimizing orders',
+        description: 'Run vendor consolidation to group orders, review supplier lead times, and get individual product reorder suggestions with safety stock calculations.',
         features: [
-          'View all suppliers with calculated or configured lead times',
-          'Run vendor consolidation analysis (14-day window)',
-          'See products that need reordering within the next 2 weeks',
-          'Individual product reorder suggestions with detailed metrics',
-          'Historical lead time calculations from past orders',
-          'Safety stock recommendations based on demand variability',
-          'Service level configuration (95% default) for stock calculations',
-          'Supplier performance tracking and optimization suggestions'
+          'View all suppliers with their lead times',
+          'Run vendor consolidation (14-day window)',
+          'See products needing reorder in next 2 weeks',
+          'Get individual product suggestions with metrics',
+          'Review historical lead time calculations',
+          'See safety stock recommendations',
+          'Configure service levels (default 95%)',
+          'Track supplier performance'
         ],
         tips: [
-          'Use vendor consolidation to group orders by supplier and save on shipping',
-          'Check this weekly to stay ahead of stock-outs',
-          'Configure supplier lead times manually for more accurate planning',
-          'Review individual product suggestions for high-value items',
-          'Use historical data to validate lead time estimates'
+          'Use vendor consolidation to save on shipping',
+          'Check weekly to stay ahead of stock-outs',
+          'Set supplier lead times manually for accuracy',
+          'Review suggestions for high-value items',
+          'Use historical data to validate estimates'
         ],
-        workflow: 'Review supplier lead times → Run vendor consolidation → Analyze products needing reorder → Get individual product suggestions → Plan consolidated orders'
+        workflow: 'Review lead times → Run consolidation → Check products needing reorder → Review suggestions → Plan consolidated orders'
       }
     },
     {
       id: 'product-audit',
       title: '🔍 Product Audit',
-      icon: '📋',
       content: {
-        title: 'Data Quality & Product Management',
-        description: 'Comprehensive product data analysis and cleanup tools to maintain accurate inventory records.',
+        title: 'What to do when cleaning data',
+        description: 'Run audit scans to find missing data, identify duplicates, check naming consistency, and clean up product records.',
         features: [
-          'Identify products with missing or incomplete data',
-          'Find duplicate products across different suppliers',
-          'Analyze product naming consistency and standardization',
-          'Review products without recent sales activity',
-          'Check for missing supplier information',
-          'Validate barcode and product ID integrity',
-          'Export audit reports for external analysis',
-          'Bulk update capabilities for data cleanup'
+          'Find products with missing data',
+          'Identify duplicate products',
+          'Check naming consistency',
+          'Review products without recent sales',
+          'Find missing supplier information',
+          'Validate barcodes and product IDs',
+          'Export audit reports',
+          'Bulk update for cleanup'
         ],
         tips: [
-          'Run monthly audits to maintain data quality',
-          'Focus on high-value products first for cleanup',
-          'Use standardized naming conventions across all products',
-          'Regular audits help identify discontinued products',
-          'Clean data improves ordering accuracy and efficiency'
+          'Run monthly audits to maintain quality',
+          'Focus on high-value products first',
+          'Use standard naming conventions',
+          'Find discontinued products',
+          'Clean data improves ordering accuracy'
         ],
-        workflow: 'Run audit scan → Review flagged issues → Prioritize by impact → Clean up data → Validate changes → Export report'
+        workflow: 'Run audit scan → Review flagged issues → Prioritize fixes → Clean data → Validate changes → Export report'
       }
     },
     {
       id: 'user-analytics',
       title: '📈 User Analytics',
-      icon: '👥',
       content: {
-        title: 'Advanced User Behavior & System Usage Analytics',
-        description: 'Comprehensive tracking and analysis of user engagement, feature usage, and system performance metrics.',
+        title: 'What to do when tracking usage',
+        description: 'Review user engagement metrics, analyze feature usage, identify patterns, and take action to improve workflows and training.',
         features: [
-          'Detailed user engagement metrics (session duration, page views, actions)',
-          'Feature usage frequency and duration tracking',
-          'Most visited pages and user journey analysis',
-          'Individual user detailed analytics and behavior patterns',
-          'Customizable time periods (7, 30, 90, 365 days)',
-          'Session statistics and login pattern analysis',
-          'User activity heatmaps and engagement scoring',
-          'Export capabilities for external reporting and analysis'
+          'View user engagement metrics (sessions, page views, actions)',
+          'Track feature usage frequency and duration',
+          'See most visited pages',
+          'Analyze individual user behavior patterns',
+          'Choose time periods (7, 30, 90, 365 days)',
+          'Review session statistics and login patterns',
+          'See activity heatmaps and engagement scores',
+          'Export for external analysis'
         ],
         tips: [
-          'Review analytics weekly to understand usage patterns',
-          'Identify underutilized features that may need training',
-          'Use engagement data to optimize workflows',
-          'Track user adoption of new features over time',
+          'Review weekly to understand patterns',
+          'Find features that need training',
+          'Use data to optimize workflows',
+          'Track new feature adoption',
           'Identify power users who can help train others'
         ],
-        workflow: 'Access Admin → User Analytics → Select time period → Review engagement metrics → Analyze patterns → Take action on insights'
+        workflow: 'Go to Admin → User Analytics → Select time period → Review metrics → Analyze patterns → Take action'
       }
     },
     {
       id: 'admin',
       title: '⚙️ Admin Panel',
-      icon: '👥',
       content: {
-        title: 'Administration & Settings',
-        description: 'Manage users, suppliers, templates, and system settings. Use these tools to keep your data clean and your workflows smooth.',
+        title: 'What to do when managing settings',
+        description: 'Add users, change passwords, manage suppliers, configure email templates, sync sales data, and adjust system settings.',
         features: [
           'User Management: add users, change passwords, grant admin rights',
           'User Analytics: see feature usage and activity patterns',

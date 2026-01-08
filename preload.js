@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('api', {
   logout: () => ipcRenderer.invoke('logout'),
   getApiKey: () => ipcRenderer.invoke('getApiKey'),
   setApiKey: (newKey) => ipcRenderer.invoke('setApiKey', newKey),
+  testApiKey: (apiKey) => ipcRenderer.invoke('testApiKey', apiKey),
   updatePurchaseRequestReceived: (pr_id, lines, receivedBy = null, comment = '') => ipcRenderer.invoke('updatePurchaseRequestReceived', pr_id, lines, receivedBy, comment),
   updatePurchaseRequestWithComment: (pr_id, updates, changedBy, comment) => ipcRenderer.invoke('updatePurchaseRequestWithComment', pr_id, updates, changedBy, comment),
   updatePurchaseRequestItemsWithComment: (pr_id, lines, changedBy, comment) => ipcRenderer.invoke('updatePurchaseRequestItemsWithComment', pr_id, lines, changedBy, comment),

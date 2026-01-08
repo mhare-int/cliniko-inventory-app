@@ -354,7 +354,9 @@ function SuppliersManagement() {
           if (daysVal !== undefined && daysVal !== null && String(daysVal).trim() !== '') {
             const daysNum = Number(daysVal);
             if (!isNaN(daysNum) && window.api && window.api.setSupplierLeadTime) {
-              const supplierNameToUse = editingSupplier ? editingSupplier.name : payload.name;
+              // Use the new supplier name (payload.name) so lead time is saved against the
+              // updated name when the user renames a supplier during edit.
+              const supplierNameToUse = (payload.name || '').trim();
               await window.api.setSupplierLeadTime(supplierNameToUse, daysNum);
             }
           }

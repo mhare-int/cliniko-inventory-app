@@ -34,3 +34,25 @@ code {
     transform: translateX(50px);
   }
 }
+
+/* Button attention animations for newly created files */
+@keyframes pulse-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 107, 182, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(0, 107, 182, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 107, 182, 0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    left: -100%;
+  }
+  100% {
+    left: 100%;
+  }
+}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 function Home() {
+  const navigate = useNavigate();
   const [dashboardData, setDashboardData] = useState({
     activePURs: 0,
     uniqueItemsOnOrder: 0,
@@ -72,6 +73,12 @@ function Home() {
       setDashboardData(prev => ({ ...prev, loading: false }));
     }
   };
+
+  const startGuidedOrdering = () => {
+    // Start the guided workflow - navigate to Create Purchase Orders with a flag
+    navigate('/create-pr', { state: { guidedMode: true } });
+  };
+
   return (
     <div className="center-card">
       <img
@@ -184,6 +191,50 @@ function Home() {
             </div>
           </div>
         )}
+      </div>
+      
+      {/* Guided Ordering Button */}
+      <div style={{ marginTop: "32px", marginBottom: "16px" }}>
+        <button 
+          onClick={startGuidedOrdering}
+          style={{
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "#fff",
+            fontWeight: 700,
+            padding: "24px 32px",
+            border: "none",
+            borderRadius: "12px",
+            fontSize: "1.3em",
+            cursor: "pointer",
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            transition: "all 0.3s ease",
+            boxShadow: "0 4px 12px rgba(102, 126, 234, 0.3)",
+            gap: "12px"
+          }}
+          onMouseEnter={(e) => {
+            e.target.style.transform = "translateY(-3px)";
+            e.target.style.boxShadow = "0 6px 20px rgba(102, 126, 234, 0.4)";
+          }}
+          onMouseLeave={(e) => {
+            e.target.style.transform = "translateY(0)";
+            e.target.style.boxShadow = "0 4px 12px rgba(102, 126, 234, 0.3)";
+          }}>
+          <span style={{ fontSize: "1.4em" }}>🚀</span>
+          Start Tuesday Ordering Workflow
+        </button>
+        <div style={{
+          textAlign: "center",
+          color: "#64748b",
+          fontSize: "0.9em",
+          marginTop: "8px",
+          fontStyle: "italic"
+        }}>
+          Guided step-by-step: Create POs → Generate Files → Send to Suppliers
+        </div>
       </div>
       
       <div style={{ 

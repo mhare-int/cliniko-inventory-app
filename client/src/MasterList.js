@@ -981,7 +981,7 @@ function MasterStockList() {
           }}
         >
           <span style={{ fontSize: "18px" }}>📝</span>
-          Create Purchase Request ({selectedIds.length})
+          Create Purchase Order ({selectedIds.length})
         </button>
       </div>
       

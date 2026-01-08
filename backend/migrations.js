@@ -8,7 +8,7 @@ const path = require('path');
 
 // Current database version
 // NOTE: bump this when adding new migrations so the DB initialization runner will execute them.
-const CURRENT_DB_VERSION = 24;
+const CURRENT_DB_VERSION = 25;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -987,6 +987,69 @@ migrations.push({
   }
 });
 
+// Migration 25: Add database indexes for performance optimization
+migrations.push({
+  version: 25,
+  description: "Add indexes to improve query performance on frequently accessed columns",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      console.log('🔧 Adding database indexes...');
+      
+      const indexes = [
+        // Products table indexes
+        'CREATE INDEX IF NOT EXISTS idx_products_cliniko_id ON products(cliniko_id)',
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)',
+        'CREATE INDEX IF NOT EXISTS idx_products_active ON products(active)',
+        'CREATE INDEX IF NOT EXISTS idx_products_supplier_id ON products(supplier_id)',
+        
+        // Purchase requests table indexes
+        'CREATE INDEX IF NOT EXISTS idx_pr_pr_id ON purchase_requests(pr_id)',
+        'CREATE INDEX IF NOT EXISTS idx_pr_barcode ON purchase_requests(barcode)',
+        'CREATE INDEX IF NOT EXISTS idx_pr_status ON purchase_requests(status)',
+        'CREATE INDEX IF NOT EXISTS idx_pr_supplier_id ON purchase_requests(supplier_id)',
+        'CREATE INDEX IF NOT EXISTS idx_pr_created_at ON purchase_requests(created_at)',
+        
+        // Receipt log table indexes
+        'CREATE INDEX IF NOT EXISTS idx_receipt_log_pr_id ON receipt_log(pr_id)',
+        'CREATE INDEX IF NOT EXISTS idx_receipt_log_timestamp ON receipt_log(timestamp)',
+        
+        // Product change log table indexes
+        'CREATE INDEX IF NOT EXISTS idx_product_change_log_cliniko_id ON product_change_log(cliniko_id)',
+        'CREATE INDEX IF NOT EXISTS idx_product_change_log_timestamp ON product_change_log(timestamp)',
+        
+        // User sessions table indexes
+        'CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)',
+        'CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(token)',
+        'CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)',
+        
+        // User behavior log table indexes
+        'CREATE INDEX IF NOT EXISTS idx_user_behavior_log_user_id ON user_behavior_log(user_id)',
+        'CREATE INDEX IF NOT EXISTS idx_user_behavior_log_timestamp ON user_behavior_log(timestamp)',
+        
+        // PO change log table indexes
+        'CREATE INDEX IF NOT EXISTS idx_po_change_log_pr_id ON po_change_log(pr_id)',
+        'CREATE INDEX IF NOT EXISTS idx_po_change_log_timestamp ON po_change_log(timestamp)'
+      ];
+      
+      let completed = 0;
+      const total = indexes.length;
+      
+      indexes.forEach((indexSql, idx) => {
+        db.run(indexSql, (err) => {
+          if (err) {
+            console.warn(`Failed to create index ${idx + 1}/${total}:`, err.message);
+          }
+          completed++;
+          if (completed === total) {
+            console.log(`✅ Migration 25: Created ${total} database indexes`);
+            resolve();
+          }
+        });
+      });
+    });
+  }
+});
+
 /**
  * Get current database version
  */
@@ -1081,6 +1144,56 @@ function backupDatabase(dbPath) {
     });
   });
 }
+
+// Migration 25: Add backorder_qty column to purchase_request_items for backorder functionality
+migrations.push({
+  version: 25,
+  description: "Add backorder_qty column to purchase_request_items table for backorder tracking",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      console.log('🔧 Adding backorder_qty column to purchase_request_items table...');
+      
+      // Check if table exists first
+      db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='purchase_request_items'", (err, row) => {
+        if (err) return reject(err);
+        if (!row) {
+          console.log('✅ purchase_request_items table does not exist, skipping backorder_qty column');
+          return resolve();
+        }
+        
+        // Check if column already exists
+        db.all("PRAGMA table_info(purchase_request_items)", (err, columns) => {
+          if (err) return reject(err);
+          
+          const hasBackorderQty = columns.some(col => col.name === 'backorder_qty');
+          if (hasBackorderQty) {
+            console.log('✅ backorder_qty column already exists in purchase_request_items table');
+            return resolve();
+          }
+          
+          // Add backorder_qty column with default value of 0
+          db.run('ALTER TABLE purchase_request_items ADD COLUMN backorder_qty INTEGER DEFAULT 0', (addErr) => {
+            if (addErr && !addErr.message.includes('duplicate column name')) {
+              return reject(addErr);
+            }
+            
+            // Backfill existing rows to have backorder_qty = 0
+            db.run("UPDATE purchase_request_items SET backorder_qty = 0 WHERE backorder_qty IS NULL", (updateErr) => {
+              if (updateErr) {
+                console.warn('Migration 25 backfill warning:', updateErr.message || updateErr);
+              } else {
+                console.log('Migration 25: backfilled backorder_qty = 0 for existing items');
+              }
+              
+              console.log('✅ Migration 25: Added backorder_qty column to purchase_request_items table');
+              resolve();
+            });
+          });
+        });
+      });
+    });
+  }
+});
 
 module.exports = {
   runMigrations,

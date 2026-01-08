@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import devLog from "./utils/devLog";
 
 function GenerateSupplierFiles() {
   const navigate = useNavigate();
@@ -29,6 +30,7 @@ function GenerateSupplierFiles() {
   const [vendorSearch, setVendorSearch] = useState('');
   const [suppliersMap, setSuppliersMap] = useState({});
   const [vendorOptions, setVendorOptions] = useState([]);
+  const [showButtonAnimation, setShowButtonAnimation] = useState(false);
   // One-time debug guard to avoid spamming the console
   const debugSupplierLoggedRef = useRef(false);
 
@@ -574,13 +576,13 @@ function GenerateSupplierFiles() {
   // Step 1: Create PO files if requested
       if (createFiles) {
         // Check if PO files already exist for this PR (we will only delete them after new files are successfully created)
-        console.log('🔍 Checking for existing PO files for PR:', pr.id);
+        devLog.log('🔍 Checking for existing PO files for PR:', pr.id);
         const existingExcelFiles = await window.api.getGeneratedFiles(pr.id, 'excel');
         if (existingExcelFiles && existingExcelFiles.length > 0) {
-          console.log('ℹ️ Found existing PO files; will delete them only after new files are successfully created:', existingExcelFiles.map(f => f.filename));
+          devLog.log('ℹ️ Found existing PO files; will delete them only after new files are successfully created:', existingExcelFiles.map(f => f.filename));
         }
         
-        console.log('✅ Creating new PO files');
+        devLog.log('✅ Creating new PO files');
 
   // Create the actual files
         if (!window.api || !window.api.createSupplierOrderFilesForVendors) throw new Error("createSupplierOrderFilesForVendors not available");
@@ -648,7 +650,6 @@ function GenerateSupplierFiles() {
             return { file: String(f) };
           });
         }
-        alert("Orders sent to suppliers successfully!");
 
         // Delete any old HTML file for the same PR and supplier after new HTML files are created
         const existingHtmlFiles = await window.api.getGeneratedFiles(pr.id, 'html');
@@ -734,12 +735,18 @@ function GenerateSupplierFiles() {
           }
         }
         
-  alert("PO files created successfully!");
+        // Count unique vendors for the success message
+        const vendorCount = new Set(files.map(f => f.supplier || f.vendor || 'Unknown')).size;
+        console.log(`✅ Created ${files.length} PO file(s) for ${vendorCount} vendor(s)`);
+        
+        // Trigger button animation to draw attention
+        setShowButtonAnimation(true);
+        setTimeout(() => setShowButtonAnimation(false), 8000); // Stop after 8 seconds
       }
       
       // Step 2: If email setup is ready, automatically create the .oft email template files
-      console.log('📧 Email settings vendor emails:', emailSettings.vendorEmails);
-      console.log('📧 Email settings keys:', Object.keys(emailSettings.vendorEmails || {}));
+      devLog.log('📧 Email settings vendor emails:', emailSettings.vendorEmails);
+      devLog.log('📧 Email settings keys:', Object.keys(emailSettings.vendorEmails || {}));
       
       if (Object.keys(emailSettings.vendorEmails || {}).length > 0) {
         console.log('🔄 Starting automatic email template creation...');
@@ -767,7 +774,10 @@ function GenerateSupplierFiles() {
           await handleSendEmails(files);
           console.log('🔄 AFTER handleSendEmails call');
           setEmailMode(false); // Hide email setup after creating templates
-          alert("Email templates created successfully!");
+          
+          // Show comprehensive success message
+          const vendorCount = new Set(files.map(f => f.supplier || f.vendor || 'Unknown')).size;
+          alert(`Success! Created ${files.length} PO file(s) for ${vendorCount} vendor(s) with email templates.`);
         } catch (emailError) {
           console.error('❌ Error creating email templates:', emailError);
           // Still show the files that were created, but with an error for email templates
@@ -784,7 +794,8 @@ function GenerateSupplierFiles() {
       } else {
         // If no email setup available, just show the created files
         setDownloadLinks(files);
-        alert("Files created successfully! Email templates require vendor email addresses to be configured.");
+        const vendorCount = new Set(files.map(f => f.supplier || f.vendor || 'Unknown')).size;
+        alert(`Success! Created ${files.length} PO file(s) for ${vendorCount} vendor(s). To create email templates, configure vendor email addresses.`);
       }
       
       // When not creating files, automatically create email templates
@@ -1952,6 +1963,24 @@ Website: www.goodlifeclinic.com`
       <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
         Send Orders to Suppliers
       </h2>
+      {location.state?.guidedMode && (
+        <div style={{
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+          color: "#fff",
+          padding: "16px 20px",
+          borderRadius: "12px",
+          marginBottom: "20px",
+          boxShadow: "0 4px 12px rgba(102, 126, 234, 0.3)",
+          textAlign: "center"
+        }}>
+          <div style={{ fontSize: "1.3em", fontWeight: "700", marginBottom: "6px" }}>
+            🚀 Tuesday Ordering Workflow - Step 2 of 2
+          </div>
+          <div style={{ fontSize: "0.95em", opacity: 0.95 }}>
+            Generate PDF files and send them to your suppliers
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 16 }}>
         {/* Row 1: Folder Picker + PR selector and options on the right */}
         <div style={{ display: "flex", alignItems: "flex-end", gap: 18, minHeight: 48 }}>
@@ -2218,7 +2247,40 @@ Website: www.goodlifeclinic.com`
 
             {createFiles && (
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
-                <button style={{ width: '60%', background: '#006bb6', color: '#fff', fontWeight: 600, padding: '12px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: 15 }} onClick={handleDownloadAll} type="button">Open All Supplier emails</button>
+                <button 
+                  style={{ 
+                    width: '60%', 
+                    background: '#006bb6', 
+                    color: '#fff', 
+                    fontWeight: 600, 
+                    padding: '12px 16px', 
+                    border: 'none', 
+                    borderRadius: '6px', 
+                    cursor: 'pointer', 
+                    fontSize: 15,
+                    position: 'relative',
+                    overflow: 'hidden',
+                    ...(showButtonAnimation ? {
+                      animation: 'pulse-glow 1.5s ease-in-out infinite',
+                      boxShadow: '0 0 0 0 rgba(0, 107, 182, 0.7)'
+                    } : {})
+                  }} 
+                  onClick={handleDownloadAll} 
+                  type="button"
+                >
+                  {showButtonAnimation && (
+                    <span style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: '-100%',
+                      width: '100%',
+                      height: '100%',
+                      background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+                      animation: 'shimmer 2s infinite'
+                    }} />
+                  )}
+                  <span style={{ position: 'relative', zIndex: 1 }}>Open All Supplier emails</span>
+                </button>
               </div>
             )}
           </div>

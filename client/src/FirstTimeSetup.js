@@ -108,6 +108,20 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
     setIsSubmitting(true);
     
     try {
+      // First test if the API key is valid
+      console.log('Testing API key...');
+      const testResult = await window.api.testApiKey(apiKey.trim());
+      
+      if (!testResult || !testResult.valid) {
+        const errorMsg = testResult?.error || 'Invalid API key - please check and try again';
+        setError(errorMsg);
+        setIsSubmitting(false);
+        return;
+      }
+      
+      console.log('API key validated successfully, saving...');
+      
+      // API key is valid, now save it
       const result = await window.api.setApiKey(apiKey.trim());
       if (result && !result.error) {
         setCurrentStep(3); // Move to product sync step
