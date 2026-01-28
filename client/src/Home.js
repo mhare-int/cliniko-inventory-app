@@ -223,8 +223,7 @@ function Home() {
             e.target.style.transform = "translateY(0)";
             e.target.style.boxShadow = "0 4px 12px rgba(102, 126, 234, 0.3)";
           }}>
-          <span style={{ fontSize: "1.4em" }}>🚀</span>
-          Start Tuesday Ordering Workflow
+          Start Ordering Workflow
         </button>
         <div style={{
           textAlign: "center",

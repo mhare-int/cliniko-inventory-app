@@ -115,7 +115,6 @@ function FirstTimeSetup({ onSetupComplete, onBackgroundSyncComplete }) {
       if (!testResult || !testResult.valid) {
         const errorMsg = testResult?.error || 'Invalid API key - please check and try again';
         setError(errorMsg);
-        setIsSubmitting(false);
         return;
       }
       
