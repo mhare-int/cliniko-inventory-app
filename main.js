@@ -403,7 +403,7 @@ async function initializeAutoUpdater() {
       provider: 'github',
       owner: 'mhare-int',
       repo: 'cliniko-inventory-app',
-      private: true
+      private: false
     };
 
     // Add GitHub token if available (required for private repos)
