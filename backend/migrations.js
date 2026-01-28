@@ -8,7 +8,7 @@ const path = require('path');
 
 // Current database version
 // NOTE: bump this when adding new migrations so the DB initialization runner will execute them.
-const CURRENT_DB_VERSION = 25;
+const CURRENT_DB_VERSION = 27;
 
 // Migration scripts - add new ones as you update the app
 const migrations = [
@@ -1145,9 +1145,9 @@ function backupDatabase(dbPath) {
   });
 }
 
-// Migration 25: Add backorder_qty column to purchase_request_items for backorder functionality
+// Migration 26: Add backorder_qty column to purchase_request_items for backorder functionality
 migrations.push({
-  version: 25,
+  version: 26,
   description: "Add backorder_qty column to purchase_request_items table for backorder tracking",
   up: (db) => {
     return new Promise((resolve, reject) => {
@@ -1191,6 +1191,32 @@ migrations.push({
           });
         });
       });
+    });
+  }
+});
+
+// Migration 27: Add GitHub token to settings for auto-updates
+migrations.push({
+  version: 27,
+  description: "Add GitHub token to settings for automatic updates",
+  up: (db) => {
+    return new Promise((resolve, reject) => {
+      console.log('🔧 Adding GitHub token to settings...');
+      
+      const githubToken = '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';
+      
+      db.run(
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+        ['GITHUB_TOKEN', githubToken],
+        (err) => {
+          if (err) {
+            console.error('❌ Failed to add GitHub token:', err);
+            return reject(err);
+          }
+          console.log('✅ Migration 26: Added GitHub token to settings');
+          resolve();
+        }
+      );
     });
   }
 });
