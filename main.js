@@ -139,6 +139,7 @@ async function createWindow() {
     mainWindow = new BrowserWindow({
       width: 1600,
       height: 1200,
+      show: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -169,6 +170,22 @@ async function createWindow() {
       mainWindow.webContents.openDevTools();
     }
     
+    mainWindow.once('ready-to-show', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.show();
+      mainWindow.focus();
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.focus();
+      }
+    });
+
+    mainWindow.on('focus', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.focus();
+      }
+    });
+
     mainWindow.on('closed', function () {
       mainWindow = null;
     });
@@ -1021,9 +1038,9 @@ ipcMain.handle('setClinikoStockUpdateSetting', async (event, enabled) => {
 });
 
 // Update stock in Cliniko when items are received
-ipcMain.handle('updateClinikoStock', async (event, productName, quantityToAdd, purNumber = null) => {
+ipcMain.handle('updateClinikoStock', async (event, productName, quantityToAdd, purNumber = null, productId = null) => {
   try {
-    return await db.updateClinikoStock(productName, quantityToAdd, purNumber);
+    return await db.updateClinikoStock(productName, quantityToAdd, purNumber, productId);
   } catch (err) {
     logErrorToFile('updateClinikoStock error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: 'Failed to update Cliniko stock' };

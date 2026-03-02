@@ -28,6 +28,7 @@ function getActivePURsForBarcode(barcode) {
             return {
               id: item.id, // Use item ID instead of PR ID
               pr_id: pr.pr_id, // Also include PR ID for reference
+              product_id: item.product_id,
               supplier: item.supplier_name,
               qty_ordered: item.no_to_order,
               qty_outstanding: item.no_to_order - (item.received_so_far || 0),
@@ -3429,7 +3430,7 @@ function setClinikoStockUpdateSetting(enabled) {
 }
 
 // --- Update Cliniko Stock ---
-function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
+function updateClinikoStock(productName, quantityToAdd, purNumber = null, productId = null) {
   return new Promise(async (resolve, reject) => {
     try {
       // First check if stock updates are enabled
@@ -3448,14 +3449,50 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
         // Format as Basic Auth: 'Basic ' + base64(token + ':')
         const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64');
 
-        // Find the product in our database to get the Cliniko ID
-        db.get('SELECT cliniko_id, name, stock FROM products WHERE name = ?', [productName], async (err, product) => {
-          if (err) return reject({ error: 'Failed to find product', details: err.message });
-          if (!product) return reject({ error: 'Product not found in database' });
+        const normalizedName = String(productName || '').trim();
+        const normalizedProductId = productId !== null && typeof productId !== 'undefined'
+          ? String(productId).trim()
+          : '';
+
+        const findProduct = () => new Promise((resolveProduct, rejectProduct) => {
+          const byName = () => {
+            if (!normalizedName) return resolveProduct(null);
+            db.get('SELECT cliniko_id, name, stock FROM products WHERE name = ? LIMIT 1', [normalizedName], (nameErr, nameProduct) => {
+              if (nameErr) return rejectProduct({ error: 'Failed to find product by name', details: nameErr.message });
+              if (nameProduct) return resolveProduct(nameProduct);
+              db.get('SELECT cliniko_id, name, stock FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [normalizedName], (normErr, normProduct) => {
+                if (normErr) return rejectProduct({ error: 'Failed to find product by normalized name', details: normErr.message });
+                resolveProduct(normProduct || null);
+              });
+            });
+          };
+
+          if (normalizedProductId) {
+            db.get('SELECT cliniko_id, name, stock FROM products WHERE cliniko_id = ? OR CAST(id AS TEXT) = ? LIMIT 1', [normalizedProductId, normalizedProductId], (idErr, idProduct) => {
+              if (idErr) return rejectProduct({ error: 'Failed to find product by ID', details: idErr.message });
+              if (idProduct) return resolveProduct(idProduct);
+              byName();
+            });
+          } else {
+            byName();
+          }
+        });
+
+        const product = await findProduct();
+        if (!product) {
+          return reject({
+            error: 'Product not found in database',
+            details: `name=${normalizedName || '(empty)'}, productId=${normalizedProductId || '(empty)'}`
+          });
+        }
 
           try {
             const https = require('https');
             const clinikoId = product.cliniko_id;
+            const clinikoIdAsInt = parseInt(clinikoId, 10);
+            if (!Number.isFinite(clinikoIdAsInt)) {
+              return reject({ error: 'Invalid Cliniko product ID', details: `cliniko_id=${clinikoId}` });
+            }
             
             // Determine adjustment type based on quantity
             let adjustmentType;
@@ -3467,7 +3504,7 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
 
             // Use Stock Adjustments API (CORRECT WAY)
             const postData = JSON.stringify({
-              product_id: parseInt(clinikoId),
+              product_id: clinikoIdAsInt,
               quantity: quantityToAdd,
               adjustment_type: adjustmentType,
               comment: purNumber ? `Stock adjustment from PUR-${purNumber}` : 'Stock adjustment from purchase request system'
@@ -3503,7 +3540,7 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
                     
                     resolve({
                       success: true,
-                      message: `Successfully created Cliniko stock adjustment for ${productName}`,
+                      message: `Successfully created Cliniko stock adjustment for ${product.name}`,
                       updated: true,
                       previousStock: product.stock,
                       newStock: newStock,
@@ -3530,7 +3567,6 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null) {
           } catch (apiError) {
             reject({ error: 'Failed to update Cliniko stock', details: apiError.message });
           }
-        });
       } catch (keyError) {
         reject({ error: 'Failed to get API key', details: keyError.message });
       }

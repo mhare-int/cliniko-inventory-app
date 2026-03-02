@@ -95,7 +95,7 @@ contextBridge.exposeInMainWorld('api', {
   // Cliniko stock update APIs
   getClinikoStockUpdateSetting: () => ipcRenderer.invoke('getClinikoStockUpdateSetting'),
   setClinikoStockUpdateSetting: (enabled) => ipcRenderer.invoke('setClinikoStockUpdateSetting', enabled),
-  updateClinikoStock: (productName, quantityToAdd) => ipcRenderer.invoke('updateClinikoStock', productName, quantityToAdd),
+  updateClinikoStock: (productName, quantityToAdd, purNumber = null, productId = null) => ipcRenderer.invoke('updateClinikoStock', productName, quantityToAdd, purNumber, productId),
   
   // Smart Prompts setting APIs
   getSmartPromptsSetting: () => ipcRenderer.invoke('getSmartPromptsSetting'),

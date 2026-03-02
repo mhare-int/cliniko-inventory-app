@@ -53,8 +53,8 @@ const ReceiveItemsPage = () => {
 
             try {
               console.log('Updating Cliniko stock for product:', itemInfo.name, 'quantity:', quantity, 'PUR:', purId, 'Supplier:', supplier, 'QtyOrdered:', qtyOrdered, 'QtyOutstanding:', qtyOutstanding);
-              // Pass purId to backend as before
-              const stockResult = await window.api.updateClinikoStock(itemInfo.name, quantity, purId);
+              // Pass purId and cliniko_id so backend can match by stable ID first
+              const stockResult = await window.api.updateClinikoStock(itemInfo.name, quantity, purId, itemInfo.cliniko_id || null);
               stockUpdateResults.push({
                 product: itemInfo.name,
                 quantity: quantity,

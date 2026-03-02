@@ -13,7 +13,6 @@ import MasterList from "./MasterList";
 import TabsNav from "./TabsNav";
 import Login from "./Login";
 import RequireAuth from "./RequireAuth";
-import AdminUsersPage from "./AdminUsersPage";
 import AdminLayout from "./AdminLayout";
 import UserBehaviorAnalytics from "./UserBehaviorAnalytics";
 import SalesInsights from "./SalesInsights";
@@ -88,6 +87,56 @@ function MainApp() {
   // Run first time setup check on mount
   useEffect(() => {
     checkFirstTimeSetup();
+  }, []);
+
+  // Focus reliability fallback for Electron: sometimes first click on a text input
+  // can be consumed by window activation, so re-apply focus on that same interaction.
+  useEffect(() => {
+    if (!window?.process?.versions?.electron) {
+      return;
+    }
+
+    const getEditableTarget = (target) => {
+      if (!target || !(target instanceof HTMLElement)) return null;
+
+      if (target.isContentEditable) return target;
+
+      const editableAncestor = target.closest('input, textarea, [contenteditable="true"]');
+      if (!editableAncestor || !(editableAncestor instanceof HTMLElement)) return null;
+
+      if (editableAncestor.tagName === 'TEXTAREA') return editableAncestor;
+      if (editableAncestor.isContentEditable) return editableAncestor;
+      if (editableAncestor.tagName !== 'INPUT') return null;
+
+      const type = (editableAncestor.getAttribute('type') || 'text').toLowerCase();
+      return ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(type)
+        ? null
+        : editableAncestor;
+    };
+
+    const handlePointerDown = (event) => {
+      if (!event.isTrusted) return;
+
+      const editableTarget = getEditableTarget(event.target);
+      if (!editableTarget) return;
+
+      setTimeout(() => {
+        if (document.activeElement !== editableTarget && document.contains(editableTarget)) {
+          try {
+            editableTarget.focus({ preventScroll: true });
+          } catch {
+            editableTarget.focus();
+          }
+        }
+      }, 0);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('mousedown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('mousedown', handlePointerDown, true);
+    };
   }, []);
 
   // Handle background sync completion notification

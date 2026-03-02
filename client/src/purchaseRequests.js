@@ -548,10 +548,12 @@ function PurchaseRequests() {
         const receivedQty = Number(receivedArr[idx]);
         const include = anySelected ? Boolean(perVendorSel[idx]) : true;
         const productName = item["Product Name"] ?? item.name;
+        const productId = item.product_id ?? item.productId ?? item.Id ?? item.id ?? null;
         
         if (include) {
           prGroups[item.pr_id].push({
           productName: productName,
+          productId: productId,
           ordered: item["No. to Order"] ?? item.no_to_order ?? 0,
           receivedSoFar: item["received_so_far"] ?? item.received_so_far ?? 0,
           outstanding: typeof item["outstanding"] !== "undefined"
@@ -565,6 +567,7 @@ function PurchaseRequests() {
   if (include && receivedQty > 0 && productName) {
           stockUpdateResults.push({
             product: productName,
+            productId: productId,
             quantity: receivedQty,
             prId: item.pr_id,
             toUpdate: true
@@ -599,7 +602,7 @@ function PurchaseRequests() {
         }
         try {
           const changedBy = await resolveCurrentUserIdentifier();
-          await window.api.updatePurchaseRequestItemsWithComment(prId, prGroups[prId].map(l => ({ productName: l.productName, newlyReceived: l.newlyReceived })), changedBy, reasonForPr);
+          await window.api.updatePurchaseRequestItemsWithComment(prId, prGroups[prId].map(l => ({ productName: l.productName, productId: l.productId, newlyReceived: l.newlyReceived })), changedBy, reasonForPr);
         } catch (e) {
           console.warn('updatePurchaseRequestItemsWithComment failed, falling back to legacy:', e);
           try {
@@ -617,7 +620,7 @@ function PurchaseRequests() {
         if (stockUpdate.toUpdate) {
           try {
             console.log('Updating Cliniko stock for product:', stockUpdate.product, 'quantity:', stockUpdate.quantity);
-            const stockResult = await window.api.updateClinikoStock(stockUpdate.product, stockUpdate.quantity, stockUpdate.prId);
+            const stockResult = await window.api.updateClinikoStock(stockUpdate.product, stockUpdate.quantity, stockUpdate.prId, stockUpdate.productId);
             stockUpdate.result = stockResult;
             console.log('Cliniko stock update result:', stockResult);
           } catch (stockError) {
@@ -891,6 +894,7 @@ function PurchaseRequests() {
       const anySelected = perLineSel.some(Boolean);
       const lines = pr.items.map((item, idx) => ({
         productName: item["Product Name"] ?? item.name,
+        productId: item.product_id ?? item.productId ?? item.Id ?? item.id ?? null,
         ordered: item["No. to Order"] ?? item.no_to_order ?? 0,
         receivedSoFar: item["received_so_far"] ?? item.received_so_far ?? 0,
         outstanding: typeof item["outstanding"] !== "undefined"
@@ -928,7 +932,7 @@ function PurchaseRequests() {
       console.log('Updating purchase order received quantities (audited) ...');
       try {
         const changedBy = await resolveCurrentUserIdentifier();
-        await window.api.updatePurchaseRequestItemsWithComment(pr.id, lines.map(l => ({ productName: l.productName, newlyReceived: l.newlyReceived })), changedBy, reason);
+        await window.api.updatePurchaseRequestItemsWithComment(pr.id, lines.map(l => ({ productName: l.productName, productId: l.productId, newlyReceived: l.newlyReceived })), changedBy, reason);
       } catch (e) {
         console.warn('Audited update failed, falling back to legacy:', e);
         try {
@@ -949,7 +953,7 @@ function PurchaseRequests() {
         if (receivedQty > 0 && line.productName) {
           try {
             console.log('Updating Cliniko stock for product:', line.productName, 'quantity:', receivedQty);
-            const stockResult = await window.api.updateClinikoStock(line.productName, receivedQty, pr.id);
+            const stockResult = await window.api.updateClinikoStock(line.productName, receivedQty, pr.id, line.productId);
             stockUpdateResults.push({
               product: line.productName,
               quantity: receivedQty,
@@ -1578,6 +1582,7 @@ function PurchaseRequests() {
                       const receivedArr = getReceivedArr(pr);
                       const lines = pr.items.map((item, idx) => ({
                         productName: item["Product Name"] ?? item.name,
+                        productId: item.product_id ?? item.productId ?? item.Id ?? item.id ?? null,
                         newlyReceived: Number(receivedArr[idx]),
                       }));
                       
@@ -1596,7 +1601,7 @@ function PurchaseRequests() {
                       }
                       try {
                         const changedBy = await resolveCurrentUserIdentifier();
-                        await window.api.updatePurchaseRequestItemsWithComment(pr.id, lines.map(l => ({ productName: l.productName, newlyReceived: l.newlyReceived })), changedBy, reasonForPrBulk);
+                        await window.api.updatePurchaseRequestItemsWithComment(pr.id, lines.map(l => ({ productName: l.productName, productId: l.productId, newlyReceived: l.newlyReceived })), changedBy, reasonForPrBulk);
                       } catch (e) {
                         console.warn('Audited bulk update failed, falling back to legacy:', e);
                         try {
@@ -1629,7 +1634,7 @@ function PurchaseRequests() {
                         if (line.newlyReceived > 0 && line.productName) {
                           try {
                             console.log('Updating Cliniko stock for product:', line.productName, 'quantity:', line.newlyReceived);
-                            const stockResult = await window.api.updateClinikoStock(line.productName, line.newlyReceived, pr.id);
+                            const stockResult = await window.api.updateClinikoStock(line.productName, line.newlyReceived, pr.id, line.productId);
                             totalStockUpdates.push({
                               product: line.productName,
                               quantity: line.newlyReceived,
