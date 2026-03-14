@@ -1038,9 +1038,9 @@ ipcMain.handle('setClinikoStockUpdateSetting', async (event, enabled) => {
 });
 
 // Update stock in Cliniko when items are received
-ipcMain.handle('updateClinikoStock', async (event, productName, quantityToAdd, purNumber = null, productId = null) => {
+ipcMain.handle('updateClinikoStock', async (event, productName, quantityToAdd, purId = null, productId = null) => {
   try {
-    return await db.updateClinikoStock(productName, quantityToAdd, purNumber, productId);
+    return await db.updateClinikoStock(productName, quantityToAdd, purId, productId);
   } catch (err) {
     logErrorToFile('updateClinikoStock error: ' + (err && err.message ? err.message : JSON.stringify(err)));
     return { error: 'Failed to update Cliniko stock' };

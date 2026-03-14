@@ -581,7 +581,7 @@ function updateStockFromCliniko() {
   return new Promise(async (resolve, reject) => {
     try {
       const apiKey = await getActualApiKey();
-      const client = new ClinikoClient(apiKey, { userAgent: 'MyAPP (mitch.hare34@gmail.com)' });
+      const client = new ClinikoClient(apiKey, { userAgent: 'StockProcurementApp (mitch.hare34@gmail.com)' });
       
       console.log('Fetching products from Cliniko API for stock update...');
       const allProducts = await client.fetchProducts({ 
@@ -620,6 +620,9 @@ function updateStockFromCliniko() {
                 }
 
                 db.run('UPDATE products SET stock=?, barcode=?, unit_price=? WHERE cliniko_id=?', [stock, barcode, unit_price, cliniko_id], (err2) => {
+                  if (err2) {
+                    console.error(`Failed to update local stock for cliniko_id=${cliniko_id}:`, err2.message);
+                  }
                   updated++;
                   if (updated === total) {
                     // After updating all products, attempt to auto-populate suppliers (respect admin setting)
@@ -816,8 +819,6 @@ function updateSalesDataFromCliniko(startDate = null, endDate = null) {
             twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
             startDate = twoYearsAgo.toISOString();
           } else if (result && result.latest_date) {
-            // Start from the latest date we have
-            startDate = result.latest_date;
             // Start from the latest date we have
             startDate = result.latest_date;
             console.log(`Resuming sync from latest date in DB: ${startDate}`);
@@ -3430,7 +3431,7 @@ function setClinikoStockUpdateSetting(enabled) {
 }
 
 // --- Update Cliniko Stock ---
-function updateClinikoStock(productName, quantityToAdd, purNumber = null, productId = null) {
+function updateClinikoStock(productName, quantityToAdd, purId = null, productId = null) {
   return new Promise(async (resolve, reject) => {
     try {
       // First check if stock updates are enabled
@@ -3489,10 +3490,16 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null, produc
           try {
             const https = require('https');
             const clinikoId = product.cliniko_id;
-            const clinikoIdAsInt = parseInt(clinikoId, 10);
-            if (!Number.isFinite(clinikoIdAsInt)) {
+
+            // Validate the Cliniko ID. Keep it as a string in the JSON payload to
+            // avoid JavaScript losing precision on large 64-bit integer IDs.
+            if (!clinikoId || String(clinikoId).trim() === '' || isNaN(Number(clinikoId))) {
               return reject({ error: 'Invalid Cliniko product ID', details: `cliniko_id=${clinikoId}` });
             }
+            // Send as a number only when it is safely representable; otherwise keep as string.
+            const clinikoIdForPayload = Number.isSafeInteger(Number(clinikoId))
+              ? Number(clinikoId)
+              : String(clinikoId);
             
             // Determine adjustment type based on quantity
             let adjustmentType;
@@ -3504,10 +3511,10 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null, produc
 
             // Use Stock Adjustments API (CORRECT WAY)
             const postData = JSON.stringify({
-              product_id: clinikoIdAsInt,
+              product_id: clinikoIdForPayload,
               quantity: quantityToAdd,
               adjustment_type: adjustmentType,
-              comment: purNumber ? `Stock adjustment from PUR-${purNumber}` : 'Stock adjustment from purchase request system'
+              comment: purId ? `Stock adjustment from PO-${purId}` : 'Stock adjustment from purchase order system'
             });
 
             const options = {
@@ -3520,7 +3527,7 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null, produc
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(postData),
-                'User-Agent': 'MyAPP (mitch.hare34@gmail.com)'
+                'User-Agent': 'StockProcurementApp (mitch.hare34@gmail.com)'
               }
             };
 
@@ -3531,9 +3538,12 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null, produc
                 if (res.statusCode === 201) { // Stock adjustments return 201 Created
                   const responseData = JSON.parse(data);
                   
-                  // Update our local database stock as well
-                  const newStock = (product.stock || 0) + quantityToAdd;
-                  db.run('UPDATE products SET stock = ? WHERE cliniko_id = ?', [newStock, clinikoId], (updateErr) => {
+                  // Update local stock atomically to avoid a read/write race condition.
+                  // Using stock = stock + ? means concurrent calls won't overwrite each other.
+                  db.run(
+                    'UPDATE products SET stock = stock + ? WHERE cliniko_id = ?',
+                    [quantityToAdd, clinikoId],
+                    function(updateErr) {
                     if (updateErr) {
                       console.error('Failed to update local stock:', updateErr);
                     }
@@ -3543,7 +3553,7 @@ function updateClinikoStock(productName, quantityToAdd, purNumber = null, produc
                       message: `Successfully created Cliniko stock adjustment for ${product.name}`,
                       updated: true,
                       previousStock: product.stock,
-                      newStock: newStock,
+                      newStock: (product.stock || 0) + quantityToAdd,
                       quantityAdded: quantityToAdd,
                       adjustmentId: responseData.id
                     });
