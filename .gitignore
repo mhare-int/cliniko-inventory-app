@@ -92,6 +92,7 @@ GITHUB_TOKEN_MANAGEMENT.md
 *setup*.sh
 *test*.js
 *admin*.js
+!client/src/AdminLayout.js
 *update*.sh
 build-with-validation.sh
 
