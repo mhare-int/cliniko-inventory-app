@@ -1,0 +1,60 @@
+{
+  "appId": "com.yourcompany.cliniko-inventory",
+  "productName": "Good Life Clinic - Inventory Management",
+  "electronVersion": "37.2.3",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "package.json",
+    "client/build/**/*",
+    "backend/**/*",
+    "node_modules/**/*",
+    "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+    "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+    "!**/node_modules/*.d.ts",
+    "!**/node_modules/.bin",
+    "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+    "!.editorconfig",
+    "!**/._*",
+    "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+    "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+    "!**/{appveyor.yml,.travis.yml,circle.yml}",
+    "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+  ],
+  "extraResources": [
+    {
+      "from": "backend/appdata.db",
+      "to": "backend/appdata.db",
+      "filter": ["**/*"]
+    }
+  ],
+  "publish": {
+    "provider": "github",
+    "owner": "mhare-int",
+    "repo": "cliniko-inventory-app",
+    "private": false,
+    "releaseType": "release"
+  },
+  "icon": "client/public/goodlife-512.png",
+  "win": {
+    "target": "nsis",
+    "icon": "client/public/goodlife-512.png"
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "client/public/goodlife-512.png"
+  },
+  "linux": {
+    "target": "AppImage",
+    "icon": "client/public/goodlife-512.png"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  }
+}
