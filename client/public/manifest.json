@@ -1,0 +1,25 @@
+{
+  "short_name": "Good Life Clinic",
+  "name": "Good Life Clinic - Inventory Management System",
+  "icons": [
+    {
+      "src": "goodlife.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "goodlife.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "goodlife.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}

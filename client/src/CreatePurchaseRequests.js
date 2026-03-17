@@ -1,0 +1,1022 @@
+import React, { useState, useEffect, useRef } from "react";
+import AsyncSelect from "react-select/async";
+import "./App.css";
+import ApiKeyModal from "./ApiKeyModal";
+import { useNavigate, useLocation } from "react-router-dom";
+
+const TickIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+    <polyline points="4 11 9 16 16 6" fill="none" stroke="#14B800" strokeWidth="2.2"/>
+  </svg>
+);
+const CrossIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+    <line x1="5" y1="5" x2="15" y2="15" stroke="#FF4D4F" strokeWidth="2.2"/>
+    <line x1="15" y1="5" x2="5" y2="15" stroke="#FF4D4F" strokeWidth="2.2"/>
+  </svg>
+);
+
+
+function CreatePurchaseRequests() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Remove outputFolder and downloadLinks, not needed for PR creation only
+  const [products, setProducts] = React.useState([]);
+  const [includeNegative, setIncludeNegative] = React.useState(false);
+  const [items, setItems] = React.useState([]);
+  const [selectedRows, setSelectedRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [activePRs, setActivePRs] = React.useState([]);
+  const [onOrderMap, setOnOrderMap] = React.useState({});
+  const [addingRow, setAddingRow] = React.useState(false);
+  const [addRow, setAddRow] = React.useState({ product: null, noToOrder: "" });
+  const [suppliersMap, setSuppliersMap] = React.useState({});
+
+  const fmtCurrency = (n) => {
+    if (n === null || typeof n === 'undefined' || n === '') return '—';
+    const num = Number(n) || 0;
+    return `$${num.toFixed(2)}`;
+  };
+
+
+
+
+  // Helper to check if API key is set and non-empty/whitespace (from backend)
+  const [apiKeySet, setApiKeySet] = React.useState(false);
+  const [checkingApiKey, setCheckingApiKey] = React.useState(true);
+
+  // Always check API key from backend on mount and after set/remove
+  const fetchApiKey = async () => {
+    setCheckingApiKey(true);
+    try {
+      if (window.api && window.api.getApiKey) {
+        const res = await window.api.getApiKey();
+        setApiKeySet(!!(res && res.api_key));
+      } else {
+        setApiKeySet(false);
+      }
+    } catch {
+      setApiKeySet(false);
+    }
+    setCheckingApiKey(false);
+  };
+
+  React.useEffect(() => {
+    fetchApiKey();
+    // eslint-disable-next-line
+  }, []);
+
+  // Handler for setting API key (calls backend)
+  const handleSetApiKey = async (key) => {
+    if (window.api && window.api.setApiKey) {
+      await window.api.setApiKey(key);
+      fetchApiKey();
+    }
+  };
+
+  // Handler for logging out (clearing API key)
+  const handleLogout = async () => {
+    if (window.api && window.api.setApiKey) {
+      await window.api.setApiKey("");
+      fetchApiKey();
+    }
+    navigate("/");
+  };
+
+  React.useEffect(() => {
+  // Load purchase orders on mount to populate onOrderMap
+    if (!window.api || !window.api.getPurchaseRequests) {
+      setOnOrderMap({});
+      return;
+    }
+    window.api.getPurchaseRequests(true, undefined)
+      .then((res) => {
+        setActivePRs(res);
+        const map = {};
+        res.forEach((pr) => {
+          pr.items.forEach((item) => {
+            const prodName = item["Product Name"] || item.name;
+            const qty = item["No. to Order"] || item.no_to_order || 0;
+            map[prodName] = (map[prodName] || 0) + qty;
+          });
+        });
+        setOnOrderMap(map);
+      })
+      .catch(() => setOnOrderMap({}));
+  }, []); // Only run once on mount
+
+  React.useEffect(() => {
+    // Fetch products from backend on mount
+    if (!window.api || !window.api.getAllProducts) {
+      setProducts([]);
+      return;
+    }
+    (async () => {
+      try {
+        if (!window.api || !window.api.getAllProducts) {
+          setProducts([]);
+          return;
+        }
+
+        const prodResp = await window.api.getAllProducts();
+
+        // Try to fetch suppliers to fill supplier_name when products only have supplier_id
+        let suppliers = [];
+        try {
+          if (window.api.getAllSuppliers) {
+            suppliers = await window.api.getAllSuppliers();
+          }
+        } catch (e) {
+          suppliers = [];
+        }
+
+        const supMap = {};
+        (suppliers || []).forEach(s => { if (s && s.id) supMap[s.id] = s.name; });
+        setSuppliersMap(supMap);
+
+        const augmented = (prodResp || []).map(p => ({
+          ...p,
+          supplier_name: (p.supplier_name || supMap[p.supplier_id] || '').trim()
+        }));
+
+        setProducts(augmented);
+
+        // Check if we have pre-selected items from Master List
+        const preSelectedItems = location.state?.preSelectedItems;
+        const fromMasterList = location.state?.fromMasterList;
+
+        if (fromMasterList && preSelectedItems && preSelectedItems.length > 0) {
+          console.log('Pre-selected items from Master List:', preSelectedItems);
+          // Ensure unit_cost is filled from products when available
+          const normalized = preSelectedItems.map(it => {
+            const prodName = it['Product Name'] || it.name || '';
+            const prod = (prodResp || []).find(p => p.name === prodName || String(p.id) === String(it.Id) || String(p.cliniko_id) === String(it.Id));
+            return { ...it, unit_cost: Number(it.unit_cost ?? it.unitCost ?? it.unit_price ?? it.unitPrice ?? (prod ? (prod.unit_price ?? prod.unitPrice ?? 0) : 0)) };
+          });
+          setItems(normalized);
+          setSelectedRows(normalized.map((_, idx) => idx));
+          setError("");
+        } else {
+          setItems([]);
+          setSelectedRows([]);
+          setError("");
+        }
+      } catch (err) {
+        setProducts([]);
+      }
+    })();
+  }, [location.state]);
+
+  const handleNoToOrderChange = (idx, newValue) => {
+    setItems((items) =>
+      items.map((item, i) =>
+        i === idx ? { ...item, ["No. to Order"]: Number(newValue) } : item
+      )
+    );
+  };
+
+  const handleUnitCostChange = (idx, newValue) => {
+    const val = Number(newValue) || 0;
+    setItems((items) =>
+      items.map((item, i) =>
+        i === idx ? { ...item, unit_cost: val } : item
+      )
+    );
+  };
+
+  const computeLineTotal = (item) => {
+    const qty = Number(item["No. to Order"] ?? item.no_to_order ?? 0) || 0;
+    const unit = Number(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? 0) || 0;
+    return unit * qty;
+  };
+
+  const computePrTotal = () => {
+    return items.reduce((acc, it) => acc + computeLineTotal(it), 0);
+  };
+
+  const handleSelectRow = (idx) => {
+    setSelectedRows((rows) =>
+      rows.includes(idx) ? rows.filter((i) => i !== idx) : [...rows, idx]
+    );
+  };
+
+  const handleDelete = () => {
+    setItems((items) => items.filter((_, i) => !selectedRows.includes(i)));
+    setSelectedRows([]);
+  };
+
+
+  // No handleSubmit needed for PR creation only
+
+  // Create Purchase Order for selected items
+  const handleCreatePR = async () => {
+    if (selectedRows.length === 0) {
+  alert("Please select at least one item to create a purchase order.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      if (!window.api || !window.api.createPurchaseRequest) throw new Error("createPurchaseRequest not available");
+      // Combine items with the same product (by Product Name and Supplier Name)
+      const selectedItems = selectedRows.map((i) => items[i]);
+      const combinedMap = {};
+      selectedItems.forEach(item => {
+        const prodName = item["Product Name"] || item.name;
+        const supplier = item["Supplier Name"] || item.supplier_name || "";
+        const key = prodName + "__" + supplier;
+        if (!combinedMap[key]) {
+          combinedMap[key] = { ...item };
+        } else {
+          // Sum No. to Order
+          const prev = combinedMap[key]["No. to Order"] ?? combinedMap[key].no_to_order ?? 0;
+          const add = item["No. to Order"] ?? item.no_to_order ?? 0;
+          combinedMap[key]["No. to Order"] = Number(prev) + Number(add);
+        }
+      });
+      const prItems = Object.values(combinedMap);
+
+      // Ensure supplier fields are explicitly present on every item
+      // and compute unit_cost, line_total and PR total_cost
+      let prTotal = 0;
+      const normalizedPrItems = prItems.map(it => {
+        const supplierName = it['Supplier Name'] || it.supplier_name || it.SupplierName || '';
+        const supplierId = it['Supplier Id'] || it.supplier_id || it.supplierId || it.supplier || null;
+        const prodName = it['Product Name'] || it.name || '';
+        const qty = Number(it['No. to Order'] ?? it.no_to_order ?? 0) || 0;
+
+        // Try to determine a unit cost from the item or the products list
+        let unitCost = Number(it.unit_cost ?? it.unitCost ?? it.unit_price ?? it.unitPrice ?? 0) || 0;
+        if ((!unitCost || unitCost === 0) && Array.isArray(products)) {
+          const prod = products.find(p => (p.name === prodName) || (p.id && (p.id === it.Id || p.id === it['Id'])) || (p.cliniko_id && (p.cliniko_id === it.Id || p.cliniko_id === it['Id'])));
+          if (prod) unitCost = Number(prod.unit_price ?? prod.unitPrice ?? prod.cost_price ?? 0) || unitCost;
+        }
+
+        const lineTotal = Number((unitCost * qty) || 0);
+        prTotal += lineTotal;
+
+        return {
+          ...it,
+          'Supplier Name': supplierName,
+          'Supplier Id': supplierId,
+          unit_cost: unitCost,
+          line_total: lineTotal
+        };
+      });
+
+      await window.api.createPurchaseRequest({ items: normalizedPrItems, total_cost: prTotal });
+  alert("Purchase Order created successfully!");
+      // Optionally refresh PR map after creation
+      if (window.api.getPurchaseRequests) {
+        const res = await window.api.getPurchaseRequests(true, undefined);
+        const map = {};
+        res.forEach((pr) => {
+          pr.items.forEach((item) => {
+            const prodName = item["Product Name"] || item.name;
+            const qty = item["No. to Order"] || item.no_to_order || 0;
+            map[prodName] = (map[prodName] || 0) + qty;
+          });
+        });
+        setOnOrderMap(map);
+      }
+      // Pass guided mode state to next step
+      navigate("/generate-supplier-files", { 
+        state: { guidedMode: location.state?.guidedMode } 
+      });
+    } catch (err) {
+  setError("Failed to create purchase order.");
+    }
+    setLoading(false);
+  };
+
+  // --- Add Line Feature --- //
+  // Fetch product options async from backend
+  const loadProductOptions = async (inputValue, callback) => {
+    try {
+      if (!window.api || !window.api.getProductOptions) throw new Error("getProductOptions not available");
+      const resp = await window.api.getProductOptions(inputValue || "");
+      callback(resp || []);
+    } catch (err) {
+      callback([]);
+    }
+  };
+
+  // When a product is selected in the add row
+  const handleProductSelect = (selectedOption) => {
+    const data = selectedOption ? selectedOption.data : null;
+    if (data && !data.supplier_name) {
+      const supName = suppliersMap[data.supplier_id] || '';
+      data.supplier_name = supName;
+    }
+    setAddRow(row => ({
+      ...row,
+      product: data,
+      noToOrder: ""
+    }));
+  };
+
+  // Handle entering "No. to Order" in the add row
+  const handleAddRowNoToOrder = (e) => {
+    setAddRow(row => ({
+      ...row,
+      noToOrder: e.target.value
+    }));
+  };
+
+  // Add the new row to items
+  const handleAddRowSubmit = (e) => {
+    if (e) e.preventDefault();
+    if (!addRow.product || !addRow.noToOrder || Number(addRow.noToOrder) <= 0) return;
+    // Flatten the structure for backend
+    const prod = addRow.product;
+    const supplierNameFromMap = prod && prod.supplier_id ? (suppliersMap[prod.supplier_id] || '') : '';
+    const item = {
+      "Id": prod.cliniko_id || prod.id, // both possible
+      "Product Name": prod.name,
+      "Supplier Name": prod.supplier_name || supplierNameFromMap || '',
+      "Supplier Id": prod.supplier_id || prod.supplierId || prod.supplier || null,
+      "Stock": prod.stock,
+      "Reorder Level": prod.reorder_level,
+      ["No. to Order"]: Number(addRow.noToOrder)
+    };
+  // populate unit_cost from product when available
+  item.unit_cost = Number(prod.unit_price ?? prod.unitPrice ?? prod.unitCost ?? 0) || 0;
+    setItems(prev => [...prev, item]);
+    setAddingRow(false);
+    setAddRow({ product: null, noToOrder: "" });
+    setSelectedRows(prev => [...prev, items.length]);
+  };
+
+  // Handle Add Line button click with scroll to bottom
+  const handleAddLineClick = () => {
+    setAddingRow(true);
+    // Scroll to bottom after a short delay to allow the row to render
+    setTimeout(() => {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }, 100);
+  };
+
+  // Run Stock Comparison (populate items)
+  const handleRunStockComparison = () => {
+    setError("");
+    setLoading(true);
+    setItems([]);
+    setSelectedRows([]);
+    // Filter products based on includeNegative and calculate No. to Order using total stock (current + on order)
+    const filtered = products.filter(p => {
+      if (!includeNegative && p.stock < 0) return false;
+      const onOrderQty = onOrderMap[p.name] || 0;
+      const totalStock = (parseInt(p.stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0);
+      return (p.reorder_level - totalStock > 0);
+    });
+    const processedItems = filtered.map(i => {
+      const onOrderQty = onOrderMap[i.name] || 0;
+      const totalStock = (parseInt(i.stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0);
+      // Determine unit cost from product data when available
+      const prodMatch = Array.isArray(products) ? products.find(p => p.name === i.name || String(p.id) === String(i.id) || String(p.cliniko_id) === String(i.cliniko_id)) : null;
+      const unitCost = Number(i.unit_price ?? i.unitPrice ?? i.unit_cost ?? (prodMatch ? (prodMatch.unit_price ?? prodMatch.unitPrice ?? 0) : 0)) || 0;
+      return {
+        ...i,
+        ["Supplier Name"]: i.supplier_name || i.SupplierName || '',
+        ["Supplier Id"]: i.supplier_id || i.supplierId || null,
+        ["On Order"]: onOrderQty,
+        ["Total Stock"]: totalStock,
+        ["No. to Order"]: Math.max(0, Number(i.reorder_level - totalStock)),
+        unit_cost: unitCost
+      };
+    });
+    setItems(processedItems);
+    setSelectedRows(processedItems.map((_, idx) => idx));
+    setLoading(false);
+  };
+
+
+
+  return (
+    <>
+      <ApiKeyModal
+        open={!apiKeySet && !checkingApiKey}
+        isAdmin={true}
+        onGoToAdmin={() => navigate("/admin/users")}
+        onLogout={handleLogout}
+        onSetApiKey={handleSetApiKey}
+      />
+      <div className="center-card">
+        <img
+          src={"goodlife.png"}
+          alt="The Good Life Clinic"
+          style={{
+            width: 220,
+            maxWidth: "70%",
+            display: "block",
+            margin: "0 auto 38px auto",
+            boxShadow: "0 6px 26px 2px rgba(0,0,0,0.08)",
+            borderRadius: "18px",
+            background: "#fff",
+          }}
+        />
+        <div style={{ marginBottom: 38 }}>
+          <h2 style={{ marginTop: 0, marginBottom: 16, color: "#006bb6" }}>
+            Create Purchase Orders
+          </h2>
+          {location.state?.guidedMode && (
+            <div style={{
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              color: "#fff",
+              padding: "16px 20px",
+              borderRadius: "12px",
+              marginBottom: "20px",
+              boxShadow: "0 4px 12px rgba(102, 126, 234, 0.3)",
+              textAlign: "center"
+            }}>
+              <div style={{ fontSize: "1.3em", fontWeight: "700", marginBottom: "6px" }}>
+                🚀 Ordering Workflow - Step 1 of 2
+              </div>
+              <div style={{ fontSize: "0.95em", opacity: 0.95 }}>
+                Review items below reorder point and create purchase orders
+              </div>
+            </div>
+          )}
+          {location.state?.fromMasterList ? (
+            <p
+              style={{
+                fontSize: "1.13em",
+                margin: 0,
+                color: "#232323",
+                lineHeight: 1.5,
+                textAlign: "center",
+              }}
+            >
+              ✅ <strong>{items.length} items selected</strong> from Master Stock List and ready to order!
+            </p>
+          ) : null}
+        </div>
+
+        {/* How to Use Instructions */}
+        {!location.state?.fromMasterList && (
+          <div style={{
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "8px",
+            padding: "16px",
+            margin: "20px 0",
+            fontSize: "14px",
+            lineHeight: "1.5"
+          }}>
+            <h4 style={{ 
+              margin: "0 0 12px 0", 
+              color: "#374151", 
+              fontSize: "16px",
+              fontWeight: "600"
+            }}>
+              💡 How to Use:
+            </h4>
+            <div style={{ color: "#4b5563" }}>
+              <p style={{ margin: "0 0 8px 0" }}>
+                <strong>📦 Start New Purchase Order:</strong> Create any ad-hoc orders by manually selecting products
+              </p>
+              <p style={{ margin: "0" }}>
+                <strong>📊 Run Stock Comparison:</strong> Automatically finds all items below reorder level (you can still add extra products after)
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!location.state?.fromMasterList && (
+          <>
+            <form>
+              <label
+                style={{
+                  marginTop: 8,
+                  marginBottom: 16,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={includeNegative}
+                  onChange={(e) => setIncludeNegative(e.target.checked)}
+                />
+                Include negative stock
+              </label>
+              <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Clear any existing data and start fresh
+                    setItems([]);
+                    setSelectedRows([]);
+                    setError("");
+                    // Start with a new row for adding items
+                    setAddingRow(true);
+                    setAddRow({ product: null, noToOrder: "" });
+                    // Scroll to bottom after a short delay to allow the row to render
+                    setTimeout(() => {
+                      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                    }, 100);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "12px 16px",
+                    background: "#28a745",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "6px",
+                    fontSize: "16px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    transition: "background 0.2s ease"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = "#218838";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = "#28a745";
+                  }}
+                >
+                  Start New Purchase Order
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || products.length === 0 || !apiKeySet}
+                  onClick={handleRunStockComparison}
+                  style={{
+                    flex: 1,
+                    padding: "12px 16px",
+                    opacity: products.length === 0 || loading || !apiKeySet ? 0.48 : 1,
+                    cursor: products.length === 0 || loading || !apiKeySet ? "not-allowed" : "pointer",
+                    fontWeight: 600,
+                    background: "#007bff",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "6px",
+                    fontSize: "16px",
+                    transition: "background 0.2s ease"
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!loading && products.length > 0 && apiKeySet) {
+                      e.target.style.background = "#0056b3";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!loading && products.length > 0 && apiKeySet) {
+                      e.target.style.background = "#007bff";
+                    }
+                  }}
+                >
+                  {loading ? "Processing..." : "Run Stock Reorder Point Comparison"}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+        {(items.length > 0 || addingRow) && (
+            <>
+              <h4 style={{ marginTop: 36, textAlign: "center" }}>Items to Reorder</h4>
+              <table style={{ 
+                width: "100%", 
+                borderCollapse: "collapse",
+                marginTop: "20px",
+                background: "#fff"
+              }}>
+                <thead style={{ position: "sticky", top: 0, zIndex: 10 }}>
+                  <tr style={{ backgroundColor: "#f3f7fb" }}>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center", 
+                      width: 40,
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.length === items.length}
+                        onChange={() => {
+                          if (selectedRows.length === items.length) {
+                            setSelectedRows([]);
+                          } else {
+                            setSelectedRows(items.map((_, idx) => idx));
+                          }
+                        }}
+                      />
+                    </th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Product Name</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Supplier Name</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Stock</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>On Order</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Total Stock</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Reorder Level</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>No. to Order</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Unit Cost</th>
+                    <th style={{ 
+                      padding: "12px 8px", 
+                      border: "1px solid #dee2e6", 
+                      textAlign: "center",
+                      position: "sticky",
+                      top: 0,
+                      backgroundColor: "#f3f7fb",
+                      zIndex: 11,
+                      fontWeight: 600,
+                      color: "#246aa8"
+                    }}>Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, idx) => {
+                    const prodName = item["Product Name"] || item.name;
+                    const supplier = item["Supplier Name"] || item.supplier_name;
+                    const stock = item["Stock"] ?? item.stock ?? 0;
+                    const reorderLevel = item["Reorder Level"] ?? item.reorder_level ?? 0;
+                    const noToOrder = item["No. to Order"] ?? item.no_to_order ?? 0;
+                    const onOrderQty = item["On Order"] ?? (onOrderMap[prodName] || 0);
+                    const totalStock = item["Total Stock"] ?? ((parseInt(stock, 10) || 0) + (parseInt(onOrderQty, 10) || 0));
+                    return (
+                      <tr key={idx} style={{ 
+                        backgroundColor: idx % 2 === 0 ? "#fff" : "#f9fafb"
+                      }}>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedRows.includes(idx)}
+                            onChange={() => handleSelectRow(idx)}
+                          />
+                        </td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6" 
+                        }}>{prodName}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6" 
+                        }}>{supplier}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>{stock}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>{onOrderQty}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>{totalStock}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>{reorderLevel}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>
+                          <input
+                            type="number"
+                            value={noToOrder}
+                            min={0}
+                            style={{ width: 65, textAlign: "center" }}
+                            onChange={(e) => handleNoToOrderChange(idx, e.target.value)}
+                          />
+                        </td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              value={Number(item.unit_cost ?? item.unitCost ?? item.unit_price ?? item.unitPrice ?? 0)}
+                              readOnly
+                              style={{ width: 90, textAlign: "center", background: "#f5f7fa", border: "1px solid #e6e9ee" }}
+                            />
+                        </td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          border: "1px solid #dee2e6", 
+                          textAlign: "center" 
+                        }}>{fmtCurrency(computeLineTotal(item))}</td>
+                      </tr>
+                    );
+                  })}
+                  {addingRow && (
+                    <tr style={{ backgroundColor: "#f9fafb" }}>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6" 
+                      }}></td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6",
+                        minWidth: 220, 
+                        maxWidth: 240, 
+                        width: 240 
+                      }}>
+                        <AsyncSelect
+                          cacheOptions
+                          loadOptions={loadProductOptions}
+                          value={
+                            addRow.product
+                              ? {
+                                  label: addRow.product.name,
+                                  value: addRow.product.id,
+                                  data: addRow.product
+                                }
+                              : null
+                          }
+                          onChange={handleProductSelect}
+                          placeholder="Select Product..."
+                          styles={{
+                            container: base => ({
+                              ...base,
+                              minWidth: 200,
+                              maxWidth: 240,
+                              width: "100%"
+                            }),
+                            menu: base => ({
+                              ...base,
+                              zIndex: 9999
+                            }),
+                            control: base => ({
+                              ...base,
+                              minHeight: 32,
+                              fontSize: 15
+                            })
+                          }}
+                          isClearable
+                          menuPortalTarget={typeof document !== "undefined" ? document.body : undefined}
+                          menuPlacement="auto"
+                        />
+                      </td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6" 
+                      }}>{addRow.product ? addRow.product.supplier_name : "-"}</td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        textAlign: "center" 
+                      }}>{addRow.product ? addRow.product.stock : "-"}</td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        textAlign: "center" 
+                      }}>{addRow.product ? (onOrderMap[addRow.product.name] || 0) : "-"}</td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        textAlign: "center" 
+                      }}>{addRow.product ? ((parseInt(addRow.product.stock, 10) || 0) + (onOrderMap[addRow.product.name] || 0)) : "-"}</td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        textAlign: "center" 
+                      }}>{addRow.product ? addRow.product.reorder_level : "-"}</td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        verticalAlign: "top", 
+                        width: 90, 
+                        minWidth: 90 
+                      }}>
+                          <input
+                            type="number"
+                            min={1}
+                            value={addRow.noToOrder}
+                            onChange={handleAddRowNoToOrder}
+                            style={{ width: 65, textAlign: "center" }}
+                            disabled={!addRow.product}
+                            placeholder="Qty"
+                          />
+                      </td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        textAlign: "center" 
+                      }}>
+                        <input type="number" step="0.01" min={0} value={Number(addRow.product ? (addRow.product.unit_price ?? addRow.product.unitPrice ?? 0) : 0)} readOnly style={{ width: 90, textAlign: 'center', background: '#f5f7fa', border: '1px solid #e6e9ee' }} />
+                      </td>
+                      <td style={{ 
+                        padding: "12px 8px", 
+                        border: "1px solid #dee2e6", 
+                        textAlign: "center" 
+                      }}>{fmtCurrency(Number(addRow.product ? (addRow.product.unit_price ?? addRow.product.unitPrice ?? 0) : 0) * Number(addRow.noToOrder || 0))}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {addingRow && (
+                <div style={{ display: "flex", gap: 12, marginTop: 10, justifyContent: "flex-start" }}>
+                  <button
+                    type="button"
+                    onClick={handleAddRowSubmit}
+                    style={{
+                      background: "#eafbe7",
+                      border: "1px solid #14B800",
+                      borderRadius: "6px",
+                      padding: "8px 24px",
+                      cursor: addRow.product && addRow.noToOrder > 0 ? "pointer" : "not-allowed",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: 600,
+                      fontSize: "0.95em"
+                    }}
+                    disabled={!addRow.product || !addRow.noToOrder}
+                  >
+                    <TickIcon /> Add Item
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingRow(false);
+                      setAddRow({ product: null, noToOrder: "" });
+                    }}
+                    style={{
+                      background: "#fff0f0",
+                      border: "1px solid #FF4D4F",
+                      borderRadius: "6px",
+                      padding: "8px 24px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: 600,
+                      fontSize: "0.95em"
+                    }}
+                  >
+                    <CrossIcon /> Cancel
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        {error && <div className="error-msg" style={{ marginTop: 28 }}>{error}</div>}
+        
+        {/* Action Buttons Row */}
+        {(items.length > 0 || addingRow) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+            {!addingRow && (
+              <button
+                onClick={handleAddLineClick}
+                style={{
+                  background: "#28a745",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "10px 20px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  height: 40
+                }}
+              >
+                Add Line
+              </button>
+            )}
+            {selectedRows.length > 0 && (
+              <button
+                onClick={handleDelete}
+                style={{
+                  background: "#ff5b5b",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "10px 20px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  height: 40
+                }}
+              >
+                Delete Selected
+              </button>
+            )}
+            <button
+              onClick={handleCreatePR}
+              disabled={loading || selectedRows.length === 0}
+              style={{
+                background: selectedRows.length === 0 ? "#ccc" : "#006bb6",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                padding: "10px 24px",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: selectedRows.length === 0 ? "not-allowed" : "pointer",
+                height: 40
+              }}
+            >
+              {location.state?.guidedMode
+                ? "✓ Create PO & Continue to Generate Files"
+                : "Create Purchase Order"}
+            </button>
+          </div>
+        )}
+        {/* Estimated total displayed under the table */}
+        {(items.length > 0 || addingRow) && (
+          <div style={{ marginTop: 14, marginBottom: 8, textAlign: 'right', width: '100%' }}>
+            <span style={{ color: '#374151', fontSize: 14 }}>Estimated total: <strong>{fmtCurrency(computePrTotal())}</strong></span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+export default CreatePurchaseRequests;

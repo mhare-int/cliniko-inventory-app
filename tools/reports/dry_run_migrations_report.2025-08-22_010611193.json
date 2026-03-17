@@ -1,0 +1,9 @@
+{
+  "timestamp": "2025-08-22T01:06:11.306Z",
+  "copyPath": "C:\\Users\\mhare\\Documents\\cliniko-inventory-app-2.0.5\\backend\\appdata.db.dryrun.2025-08-22_010611193.sqlite",
+  "beforeVersion": 20,
+  "afterVersion": 20,
+  "applied": [],
+  "stdout": "Opening DB at C:\\Users\\mhare\\Documents\\cliniko-inventory-app-2.0.5\\backend\\appdata.db.dryrun.2025-08-22_010611193.sqlite\nCurrent DB version: 20 Expected: 20\nNo migrations needed\n",
+  "stderr": ""
+}

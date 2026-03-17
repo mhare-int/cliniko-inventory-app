@@ -1,0 +1,76 @@
+REVAMPED CLINIKO APP - DESCRIPTION
+=====================================
+
+OVERVIEW
+--------
+This is a comprehensive healthcare inventory management application that integrates with the Cliniko practice management system. The app helps healthcare practices manage their stock procurement, track purchase orders, and analyze sales data.
+
+MAIN FEATURES
+-------------
+
+1. HOME (Stock Procurement)
+   - Main dashboard for managing stock procurement activities
+   - Centralized view of inventory operations
+
+2. PURCHASE ORDER MANAGEMENT
+   - Active Purchase Orders: Track ongoing procurement orders
+   - Archived Purchase Orders: Historical view of completed orders
+   - Create new purchase orders for medical supplies and equipment
+
+3. MASTER STOCK LIST
+   - Comprehensive database of all available stock items
+   - Product catalog with detailed information
+   - Stock level tracking and management
+
+4. SALES INSIGHTS
+   - Analytics and reporting on sales performance
+   - Data visualization for sales trends
+   - Integration with Cliniko sales data
+
+5. KNOWLEDGE BASE
+   - Documentation and help resources
+   - User guides and best practices
+   - Training materials for staff
+
+6. ADMIN PANEL
+   - User Management: Create and manage user accounts
+   - API Key Management: Configure Cliniko API integration
+   - Session Timeout: Security settings for user sessions
+   - Settings: System configuration including Cliniko stock updates
+   - Sales Data Sync: Synchronize sales data from Cliniko
+   - User Analytics: Track user behavior and system usage
+
+TECHNICAL FEATURES
+------------------
+- User authentication and authorization
+- Role-based access control (admin/regular users)
+- Real-time data synchronization with Cliniko
+- Automated supplier order file generation
+- Receipt tracking and item receiving workflow
+- Smart prompts for enhanced user experience
+- Comprehensive logging and error tracking
+
+INTEGRATIONS
+------------
+- Cliniko Practice Management System
+- Automated supplier systems
+- Excel/spreadsheet import/export functionality
+- File upload and processing capabilities
+
+TARGET USERS
+------------
+- Healthcare practice managers
+- Inventory coordinators
+- Administrative staff
+- Practice owners
+- Medical supply coordinators
+
+BENEFITS
+--------
+- Streamlined inventory management
+- Reduced manual data entry
+- Better tracking of purchase orders
+- Improved supplier relationships
+- Real-time visibility into stock levels
+- Data-driven decision making through analytics
+- Integration with existing Cliniko workflows

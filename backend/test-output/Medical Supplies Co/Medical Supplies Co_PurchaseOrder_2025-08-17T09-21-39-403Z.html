@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Purchase Order - Medical Supplies Co</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color:#222 }
+    .po-header { display:flex; justify-content:space-between; align-items:flex-start }
+    .company { font-weight:700; font-size:18px }
+    .meta { text-align:right }
+    table { width:100%; border-collapse: collapse; margin-top:16px }
+    th, td { border:1px solid #ddd; padding:8px }
+    th { background:#f3f3f3; text-align:left }
+    .notes { margin-top:16px; font-size:0.95em }
+  </style>
+</head>
+<body>
+  <div class="po-header">
+    <div>
+      <div class="company">Good Life Clinic</div>
+      <div>Purchase Order to: <strong>Medical Supplies Co</strong></div>
+      <div>Account Number: <strong>MSC-77</strong></div>
+    </div>
+    <div class="meta">
+      <div>PO Number: <strong>PO1001</strong></div>
+      <div>Date: <strong>17/08/2025</strong></div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:8%">Line</th>
+        <th style="width:12%">Qty</th>
+        <th>Product</th>
+        <th style="width:20%">Account Number</th>
+      </tr>
+    </thead>
+    <tbody>
+<tr><td>1</td><td>50</td><td>Gloves Nitrile Medium</td><td>MSC-77</td></tr><tr><td>2</td><td>100</td><td>Surgical Mask</td><td></td></tr>
+    </tbody>
+  </table>
+  <div class="notes">
+    <strong>Notes / Special Instructions:</strong>
+    <div></div>
+  </div>
+</body>
+</html>
